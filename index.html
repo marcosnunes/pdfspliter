@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Separar PDF Offline</title>
+    <style>
+        body { font-family: Arial, sans-serif; }
+        #links { margin-top: 20px; }
+    </style>
+    <script src="src/pdf.js" type="module"></script>
+</head>
+<body>
+    <h1>Separar PDF Offline</h1>
+
+    <input type="file" id="pdfUpload" accept=".pdf">
+    <button onclick="splitPDF()">Processar PDF</button>
+
+    <div id="links"></div>
+
+    <script type="module">
+        // Inicializa o worker do PDF.js imediatamente após o carregamento
+        if (typeof pdfjsLib !== 'undefined') {
+            pdfjsLib.GlobalWorkerOptions.workerSrc = 'src/pdf.worker.js';
+        } else {
+            alert('Erro: A biblioteca PDF.js não foi carregada corretamente.');
+        }
+
+        async function splitPDF() {
+            const pdfUpload = document.getElementById('pdfUpload');
+            const linksDiv = document.getElementById('links');
+            const file = pdfUpload.files[0];
+
+            if (!file) {
+                alert('Por favor, selecione um arquivo PDF.');
+                return;
+            }
+
+            const fileReader = new FileReader();
+
+            fileReader.onload = async function() {
+                const typedArray = new Uint8Array(this.result);
+
+                try {
+                    const pdf = await pdfjsLib.getDocument(typedArray).promise;
+                    linksDiv.innerHTML = '';
+
+                    for (let i = 1; i <= pdf.numPages; i++) {
+                        const page = await pdf.getPage(i);
+                        const pageContent = await page.getTextContent();
+                        const textContent = pageContent.items.map(s => s.str).join(' ');
+
+                        // Extrai o nome do prestador
+                        const nomePrestador = extractPrestadorName(textContent);
+
+                        // Cria o link para download
+                        const link = document.createElement('a');
+                        link.href = URL.createObjectURL(new Blob([typedArray.subarray(0, typedArray.length)], { type: 'application/pdf' }));
+                        link.download = `${nomePrestador}.pdf`;
+                        link.innerText = `Download Página ${i} (${nomePrestador}.pdf)`;
+                        linksDiv.appendChild(link);
+                        linksDiv.appendChild(document.createElement('br'));
+                    }
+                } catch (error) {
+                    console.error('Erro ao processar o PDF:', error);
+                    alert('Erro ao processar o PDF. Verifique o console para mais detalhes.');
+                }
+            };
+
+            fileReader.readAsArrayBuffer(file);
+        }
+
+        function extractPrestadorName(text) {
+            // Lógica para extrair o nome do prestador
+
+            let nomeMatch = text.match(/Prestador:\s*([A-Za-z\s]+)/i);
+            let nome = nomeMatch ? nomeMatch[1].trim() : null;
+
+            if (!nome) {
+                nomeMatch = text.match(/Nome:\s*([A-Za-z\s]+)/i);
+                nome = nomeMatch ? nomeMatch[1].trim() : null;
+            }
+
+            return nome || 'Nome_Não_Encontrado';
+        }
+    </script>
+</body>
+</html>
