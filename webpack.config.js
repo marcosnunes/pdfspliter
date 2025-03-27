@@ -11,7 +11,7 @@ module.exports = {
   plugins: [
     new CopyPlugin({
       patterns: [
-        { from: 'node_modules/pdfjs-dist/build/pdf.worker.mjs', to: 'pdf.worker.js' },
+        { from: 'node_modules/pdfjs-dist/build/pdf.worker.mjs', to: 'pdf.worker.mjs' },
       ],
     }),
   ],
