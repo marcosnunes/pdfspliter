@@ -1,10 +1,18 @@
 const path = require('path');
+const CopyPlugin = require('copy-webpack-plugin');
 
 module.exports = {
-  entry: './index.js', // Caminho para o seu arquivo de entrada
+  entry: './index.js',
   output: {
-    filename: 'bundle.js', // Nome do arquivo de saída
-    path: path.resolve(__dirname, 'dist'), // Diretório de saída
+    filename: 'bundle.js',
+    path: path.resolve(__dirname, 'dist'),
   },
-  mode: 'development', // Modo de desenvolvimento (ou 'production' para produção)
+  mode: 'development',
+  plugins: [
+    new CopyPlugin({
+      patterns: [
+        { from: 'node_modules/pdfjs-dist/build/pdf.worker.mjs', to: 'pdf.worker.js' },
+      ],
+    }),
+  ],
 };
