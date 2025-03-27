@@ -2,18 +2,23 @@
 <html>
 <head>
     <title>Separar PDF Offline</title>
-    <style>
-        body { font-family: Arial, sans-serif; }
-        #links { margin-top: 20px; }
-    </style>
+    <link rel="stylesheet" type="text/css" href="style.css">
 </head>
 <body>
-    <h1>Separar PDF Offline</h1>
+    <header>
+        <h1>Separar PDF Offline</h1>
+    </header>
 
-    <input type="file" id="pdfUpload" accept=".pdf">
-    <button onclick="splitPDF()">Processar PDF</button>
+    <div class="container">
+        <input type="file" id="pdfUpload" accept=".pdf">
+        <button onclick="splitPDF()">Processar PDF</button>
 
-    <div id="links"></div>
+        <div id="links"></div>
+    </div>
+
+    <footer>
+        <p>&copy; 2024 Separador de PDF. Todos os direitos reservados.</p>
+    </footer>
 
     <script src="dist/bundle.js"></script>
 </body>
