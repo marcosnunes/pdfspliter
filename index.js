@@ -13,13 +13,16 @@ async function splitPDF() {
     const fileReader = new FileReader();
 
     fileReader.onload = async function() {
-        const typedArray = new Uint8Array(this.result);
-
         try {
             // Define o caminho para o worker do PDF.js (necessário)
-            pdfjsLib.GlobalWorkerOptions.workerSrc = 'node_modules/pdfjs-dist/build/pdf.worker.mjs';
+            pdfjsLib.GlobalWorkerOptions.workerSrc = 'pdf.worker.mjs';
 
-            const pdf = await pdfjsLib.getDocument(typedArray).promise;
+            const originalArray = new Uint8Array(this.result);
+            const copiedArrayBuffer = new ArrayBuffer(originalArray.length);
+            const copiedArray = new Uint8Array(copiedArrayBuffer);
+            copiedArray.set(originalArray);
+
+            const pdf = await pdfjsLib.getDocument(copiedArray).promise;
             linksDiv.innerHTML = '';
 
             for (let i = 1; i <= pdf.numPages; i++) {
@@ -30,9 +33,10 @@ async function splitPDF() {
                 // Extrai o nome do prestador
                 const nomePrestador = extractPrestadorName(textContent);
 
-                // Cria o link para download
+                // Cria o Blob e o link imediatamente usando o ArrayBuffer temporário
+                const blob = new Blob([copiedArrayBuffer], { type: 'application/pdf' });
                 const link = document.createElement('a');
-                link.href = URL.createObjectURL(new Blob([typedArray.subarray(0, typedArray.length)], { type: 'application/pdf' }));
+                link.href = URL.createObjectURL(blob);
                 link.download = `${nomePrestador}.pdf`;
                 link.innerText = `Download Página ${i} (${nomePrestador}.pdf)`;
                 linksDiv.appendChild(link);
