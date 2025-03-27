@@ -17,8 +17,7 @@ async function splitPDF() {
 
         try {
             // Define o caminho para o worker do PDF.js (necessário)
-            pdfjsLib.GlobalWorkerOptions.workerSrc =
-              'node_modules/pdfjs-dist/build/pdf.worker.mjs';
+            pdfjsLib.GlobalWorkerOptions.workerSrc = 'pdf.worker.mjs';
 
             const pdf = await pdfjsLib.getDocument(typedArray).promise;
             linksDiv.innerHTML = '';
