@@ -74,11 +74,10 @@ async function createSinglePagePDF(originalArray, pageNumber) {
 }
 
 function extractPrestadorName(text) {
-    // Expressão regular mais flexível
-    let nomeMatch = text.match(/(Prestador|Nome)\s*de\s*serviço:?\s*(.*)/i);
+    let nomeMatch = text.match(/(Prestador|Nome)\s*de\s*serviço:\s*([A-Za-zÀ-ú\s.]+)/i);
     console.log("nomeMatch:", nomeMatch); // Debug
 
-    let nome = nomeMatch ? nomeMatch[2].trim() : null;
+    let nome = nomeMatch && nomeMatch[2] ? nomeMatch[2].trim() : null;
 
     if (!nome) {
         console.warn("Nome do prestador não encontrado na página. Usando 'Nome_Não_Encontrado'. Texto da página:", text);
