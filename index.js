@@ -1,6 +1,5 @@
 import { PDFDocument } from 'pdf-lib';
 import * as pdfjsLib from 'pdfjs-dist';
-import natural from 'natural';
 
 async function splitPDF() {
   try {
@@ -90,7 +89,7 @@ async function splitPDF() {
 
       } catch (error) {
         console.error('Erro ao processar o PDF:', error);
-        alert('Erro ao processar o PDF. Verifique o console para mais detalhes.');
+        alert('Erro ao processar o PDF. Verifique o console para obter mais detalhes.');
       }
     };
 
@@ -129,25 +128,15 @@ async function createSinglePagePDF(pdfDoc, pageNumber) {
 }
 
 function extractPrestadorName(text) {
-  const tokenizer = new natural.WordTokenizer();
-  const tokens = tokenizer.tokenize(text);
+    const textoLimpo = text.replace(/[\u200B-\u200D\uFEFF]/g, '').replace(/\s+/g, ' ');
+    let nomeMatch =  textoLimpo.substring(0, 300); // Busca apenas nos primeiros 300 caracteres
+        nomeMatch = areaDeBusca.match(/(Prestador|Nome)\s*de\s*serviço:?\s*([A-Za-zÀ-ÿ\s.]*)/i);
 
-  const index = tokens.findIndex(token => token.toLowerCase() === 'prestador' || token.toLowerCase() === 'nome');
-
-  if (index !== -1 && tokens[index + 1] === 'de' && tokens[index + 2] === 'serviço:') {
-      // Encontrar o nome após "serviço:"
-      let prestadorName = "";
-      for (let i = index + 3; i < tokens.length; i++) {
-          if (tokens[i].match(/^[A-Za-zÀ-ÿ\s]+$/)) {
-              prestadorName += tokens[i] + " ";
-          } else {
-              break; // Parar quando encontrar algo que não parece ser parte do nome
-          }
-      }
-      return prestadorName.trim();
+  if (nomeMatch && nomeMatch[2]) {
+    return nomeMatch[2].trim();
   } else {
-      console.warn("Nome do prestador não encontrado na página. Usando 'Nome_Não_Encontrado'. Texto da página:", text);
-      return 'Nome_Não_Encontrado';
+    console.warn("Nome do prestador não encontrado na página. Usando 'Nome_Não_Encontrado'. Texto da página:", text);
+    return 'Nome_Não_Encontrado';
   }
 }
 
