@@ -16,12 +16,12 @@ async function splitPDF() {
 
     fileReader.onload = async function() {
       try {
-        pdfjsLib.GlobalWorkerOptions.workerSrc = 'dist/pdf.worker.js'; // Caminho corrigido para pdf.worker.js
-        console.log('PDF.js worker source:', pdfjsLib.GlobalWorkerOptions.workerSrc); // Debug
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'dist/pdf.worker.js';
+        console.log('PDF.js worker source:', pdfjsLib.GlobalWorkerOptions.workerSrc);
 
         const originalArray = new Uint8Array(this.result);
-        const pdfDoc = await pdfjsLib.getDocument(originalArray).promise;  // Alterado 'pdf' para 'pdfDoc' para evitar conflito de nomes
-        console.log('PDF carregado com sucesso:', pdfDoc); // Debug
+        const pdfDoc = await pdfjsLib.getDocument(originalArray).promise;
+        console.log('PDF carregado com sucesso:', pdfDoc);
         linksDiv.innerHTML = '';
 
         for (let i = 1; i <= pdfDoc.numPages; i++) {
@@ -29,22 +29,30 @@ async function splitPDF() {
             const page = await pdfDoc.getPage(i);
             const pageContent = await page.getTextContent();
             const textContent = pageContent.items.map(s => s.str).join(' ');
-            console.log(`Texto da página ${i}:`, textContent); // Debug
+            console.log(`Texto da página ${i}:`, textContent);
 
-            const nomePrestador = extractPrestadorName(textContent);
-            console.log(`Nome do prestador extraído da página ${i}:`, nomePrestador); // Debug
+            let nomePrestador = extractPrestadorName(textContent);
+            console.log(`Nome do prestador extraído da página ${i}:`, nomePrestador);
+
+            if (!nomePrestador) {
+              nomePrestador = 'Nome_Não_Encontrado'; // Use um valor padrão
+            }
 
             // Cria um novo PDF contendo apenas a página atual
-            const pdfBytes = await createSinglePagePDF(originalArray, i, pdfDoc);  // Passando pdfDoc para a função
-            console.log('pdfBytes:', pdfBytes); // Verificando o conteúdo de pdfBytes
+            const pdfBytes = await createSinglePagePDF(pdfDoc, i); // Passando pdfDoc primeiro
+            console.log('pdfBytes:', pdfBytes);
 
-            const blob = new Blob([pdfBytes], { type: 'application/pdf' });
-            const link = document.createElement('a');
-            link.href = URL.createObjectURL(blob);
-            link.download = `${nomePrestador}.pdf`;
-            link.innerText = `Download Página ${i} (${nomePrestador}.pdf)`;
-            linksDiv.appendChild(link);
-            linksDiv.appendChild(document.createElement('br'));
+            if (pdfBytes) {  // Verifique se pdfBytes não é nulo
+              const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+              const link = document.createElement('a');
+              link.href = URL.createObjectURL(blob);
+              link.download = `${nomePrestador}.pdf`;
+              link.innerText = `Download Página ${i} (${nomePrestador}.pdf)`;
+              linksDiv.appendChild(link);
+              linksDiv.appendChild(document.createElement('br'));
+            } else {
+              linksDiv.innerHTML += `<p style="color: red;">Erro ao criar PDF para a página ${i}.</p>`;
+            }
 
           } catch (pageError) {
             console.error(`Erro ao processar a página ${i}:`, pageError);
@@ -65,24 +73,29 @@ async function splitPDF() {
 }
 
 // Nova função para criar um PDF de uma única página
-async function createSinglePagePDF(originalArray, pageNumber, pdfDoc) {  // Recebendo pdfDoc como parâmetro
+async function createSinglePagePDF(pdfDoc, pageNumber) { // pdfDoc primeiro
   try {
     const newPdf = await PDFDocument.create();
     const [copiedPages] = await newPdf.copyPages(pdfDoc, [pageNumber - 1]);
+
+    if (!copiedPages) {
+      console.warn(`Não foi possível copiar a página ${pageNumber}.`);
+      return null;  // Retorna null se a cópia falhar
+    }
+
     newPdf.addPage(copiedPages);
 
     const pdfBytes = await newPdf.save();
     return pdfBytes;
   } catch (error) {
     console.error("Erro ao criar PDF de página única:", error);
-    throw error; // Re-lançar o erro para que ele seja capturado na função splitPDF
+    return null; // Retorna null em caso de erro
   }
 }
 
 function extractPrestadorName(text) {
-  // Expressão regular mais flexível
   let nomeMatch = text.match(/(Prestador|Nome)\s*de\s*serviço:?\s*(.*)/i);
-  console.log("nomeMatch:", nomeMatch); // Debug
+  console.log("nomeMatch:", nomeMatch);
 
   let nome = nomeMatch ? nomeMatch[2].trim() : null;
 
