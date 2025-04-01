@@ -1,6 +1,6 @@
 import { PDFDocument } from 'pdf-lib';
 import * as pdfjsLib from 'pdfjs-dist';
-import nlp from 'compromise';
+import natural from 'natural';
 
 async function splitPDF() {
   try {
@@ -129,14 +129,25 @@ async function createSinglePagePDF(pdfDoc, pageNumber) {
 }
 
 function extractPrestadorName(text) {
-  const doc = nlp(text);
-  const match = doc.match('(prestador|nome) de serviço: #ProperNoun+').last();
+  const tokenizer = new natural.WordTokenizer();
+  const tokens = tokenizer.tokenize(text);
 
-  if (match.found) {
-    return match.text();
+  const index = tokens.findIndex(token => token.toLowerCase() === 'prestador' || token.toLowerCase() === 'nome');
+
+  if (index !== -1 && tokens[index + 1] === 'de' && tokens[index + 2] === 'serviço:') {
+      // Encontrar o nome após "serviço:"
+      let prestadorName = "";
+      for (let i = index + 3; i < tokens.length; i++) {
+          if (tokens[i].match(/^[A-Za-zÀ-ÿ\s]+$/)) {
+              prestadorName += tokens[i] + " ";
+          } else {
+              break; // Parar quando encontrar algo que não parece ser parte do nome
+          }
+      }
+      return prestadorName.trim();
   } else {
-    console.warn("Nome do prestador não encontrado na página. Usando 'Nome_Não_Encontrado'. Texto da página:", text);
-    return 'Nome_Não_Encontrado';
+      console.warn("Nome do prestador não encontrado na página. Usando 'Nome_Não_Encontrado'. Texto da página:", text);
+      return 'Nome_Não_Encontrado';
   }
 }
 

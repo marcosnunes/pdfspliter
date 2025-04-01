@@ -1,24 +1,17 @@
 import path from 'path';
-import CopyPlugin from 'copy-webpack-plugin';
-import { fileURLToPath } from 'url';
-import { dirname } from 'path';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
 
 export default {
-  mode: 'production',
   entry: './index.js',
   output: {
-    filename: 'bundle.js',
     path: path.resolve(__dirname, 'dist'),
-    publicPath: '',
+    filename: 'bundle.js',
   },
+  mode: 'development',
   module: {
     rules: [
       {
-        test: /\.m?js$/,
-        exclude: /(node_modules|bower_components)/,
+        test: /\.js$/,
+        exclude: /node_modules/,
         use: {
           loader: 'babel-loader',
           options: {
@@ -27,16 +20,28 @@ export default {
         }
       },
       {
-        test: /\.css$/i,
-        use: ['style-loader', 'css-loader'],
-      },
-    ],
+        test: /\.css$/,
+        use: [
+          'style-loader',
+          'css-loader'
+        ]
+      }
+    ]
   },
-  plugins: [
-    new CopyPlugin({
-      patterns: [
-        { from: 'node_modules/pdfjs-dist/build/pdf.worker.mjs', to: 'pdf.worker.js' },
-      ],
-    }),
-  ],
+  resolve: {
+    fallback: {
+      "fs": false,
+      "tls": false,
+      "net": false,
+      "path": false,
+      "zlib": false,
+      "http": false,
+      "https": false,
+      "stream": false,
+      "crypto": false,
+      "util": false,
+      "os": false,
+      "url": 'url' 
+    }
+  }
 };
