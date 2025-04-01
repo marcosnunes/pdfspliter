@@ -28,10 +28,10 @@ async function splitPDF() {
                         const page = await pdf.getPage(i);
                         const pageContent = await page.getTextContent();
                         const textContent = pageContent.items.map(s => s.str).join(' ');
-                        console.log(`Texto da página ${i}:`, textContent); // Debug
+                        console.log('Texto da página ${i}:', textContent); // Debug
 
                         const nomePrestador = extractPrestadorName(textContent);
-                        console.log(`Nome do prestador extraído da página ${i}:`, nomePrestador); // Debug
+                        console.log('Nome do prestador extraído da página ${i}:', nomePrestador); // Debug
 
                         // Cria um novo PDF contendo apenas a página atual
                         const pdfBytes = await createSinglePagePDF(originalArray, i);
@@ -47,7 +47,7 @@ async function splitPDF() {
 
                     } catch (pageError) {
                         console.error(`Erro ao processar a página ${i}:`, pageError);
-                        linksDiv.innerHTML += `<p style="color: red;">Erro ao processar a página ${i}. Veja o console.</p>`;
+                        linksDiv.innerHTML += '<p style="color: red;">Erro ao processar a página ${i}. Veja o console.</p>';
                     }
                 }
             } catch (error) {
