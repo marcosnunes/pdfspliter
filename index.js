@@ -1,5 +1,6 @@
 import { PDFDocument } from 'pdf-lib';
 import * as pdfjsLib from 'pdfjs-dist';
+import nlp from 'compromise';
 
 async function splitPDF() {
   try {
@@ -128,10 +129,11 @@ async function createSinglePagePDF(pdfDoc, pageNumber) {
 }
 
 function extractPrestadorName(text) {
-  const nomeMatch = text.match(/Prestador\s*de\s*serviço:?\s*([\w\sÀ-ÿ]+)/i);
+  const doc = nlp(text);
+  const match = doc.match('(prestador|nome) de serviço: #ProperNoun+').last();
 
-  if (nomeMatch && nomeMatch[2]) {
-    return nomeMatch[2].trim();
+  if (match.found) {
+    return match.text();
   } else {
     console.warn("Nome do prestador não encontrado na página. Usando 'Nome_Não_Encontrado'. Texto da página:", text);
     return 'Nome_Não_Encontrado';

@@ -11,6 +11,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "compromise": "^14.14.4",
     "pdf": "file:",
     "pdf-lib": "file:pdf-lib-1.4.0.tgz",
     "pdfjs-dist": "^5.1.91"
