@@ -128,7 +128,8 @@ async function createSinglePagePDF(pdfDoc, pageNumber) {
 }
 
 function extractPrestadorName(text) {
-  const nomeMatch = text.match(/(Prestador|Nome)\s+de\s+serviço:?\s*([A-Za-zÀ-ÿ\s]+)/i);
+  const areaDeBusca = text.substring(0, 300); // Busca apenas nos primeiros 300 caracteres
+  const nomeMatch = areaDeBusca.match(/(Prestador|Nome)\s+de\s*serviço:?\s*([A-Za-zÀ-ÿ\s]+)/i);
 
   if (nomeMatch && nomeMatch[2]) {
     return nomeMatch[2].trim();
