@@ -34,6 +34,7 @@ async function splitPDF() {
 
                     // Cria um novo PDF contendo apenas a página atual
                     const pdfBytes = await createSinglePagePDF(originalArray, i);
+                    console.log('pdfBytes:', pdfBytes); // Verificando o conteúdo de pdfBytes
 
                     const blob = new Blob([pdfBytes], { type: 'application/pdf' });
                     const link = document.createElement('a');
@@ -57,15 +58,14 @@ async function splitPDF() {
     fileReader.readAsArrayBuffer(file);
 }
 
-// Nova função para criar um PDF de uma única página
 async function createSinglePagePDF(originalArray, pageNumber) {
     try {
         const pdfDoc = await pdfjsLib.getDocument(originalArray).promise;
-        const newDoc = await pdfjsLib.PDFDocument.create();
-        const [copiedPage] = await newDoc.copyPages(pdfDoc, [pageNumber - 1]); // pageNumber é baseado em 1, mas copyPages usa indexação baseada em 0
-        newDoc.addPage(copiedPage);
-
-        const pdfBytes = await newDoc.save();
+        const newDoc = await pdfjsLib.getDocument({url: URL.createObjectURL(new Blob([originalArray], { type: 'application/pdf' }))}).promise;
+        const [copiedPage] = await newDoc.copyPages(pdfDoc, [pageNumber - 1]);
+        const newPdf = await pdfjsLib.PDFDocument.create();
+        newPdf.addPage(copiedPage);
+        const pdfBytes = await newPdf.save();
         return pdfBytes;
     } catch (error) {
         console.error("Erro ao criar PDF de página única:", error);
@@ -73,12 +73,12 @@ async function createSinglePagePDF(originalArray, pageNumber) {
     }
 }
 
-
 function extractPrestadorName(text) {
-    // Expressão regular mais robusta
-    let nomeMatch = text.match(/(Prestador|Nome)\s*de\s*serviço:?\s*([A-Za-zÀ-ú\s]+)/i); // Case-insensitive, aceita acentos
+    // Expressão regular mais flexível
+    let nomeMatch = text.match(/(Prestador|Nome)\s*de\s*serviço:?\s*(.*)/i);
+    console.log("nomeMatch:", nomeMatch); // Debug
 
-    let nome = nomeMatch ? nomeMatch[2].trim() : null; // Usar o grupo 2 (o nome)
+    let nome = nomeMatch ? nomeMatch[2].trim() : null;
 
     if (!nome) {
         console.warn("Nome do prestador não encontrado na página. Usando 'Nome_Não_Encontrado'. Texto da página:", text);
