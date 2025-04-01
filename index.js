@@ -128,11 +128,14 @@ async function createSinglePagePDF(pdfDoc, pageNumber) {
 }
 
 function extractPrestadorName(text) {
-  let nomeMatch = text.match(/(Prestador|Nome)\s*de\s*serviço:?\s*(.*)/i);
-  console.log("nomeMatch:", nomeMatch);
+  const nomeMatch = text.match(/(Prestador|Nome)\s+de\s+serviço:?\s*([A-Za-zÀ-ÿ\s]+)/i);
 
-  let nome = nomeMatch ? nomeMatch[2].trim() : null;
-  return nome;
+  if (nomeMatch && nomeMatch[2]) {
+    return nomeMatch[2].trim();
+  } else {
+    console.warn("Nome do prestador não encontrado na página. Usando 'Nome_Não_Encontrado'. Texto da página:", text);
+    return 'Nome_Não_Encontrado';
+  }
 }
 
 window.splitPDF = splitPDF;
