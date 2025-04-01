@@ -21,28 +21,49 @@ async function splitPDF() {
 
         const originalArray = new Uint8Array(this.result);
         const pdfDoc = await pdfjsLib.getDocument(originalArray).promise;
+
+        if (!pdfDoc || typeof pdfDoc.numPages !== 'number') {
+          console.error('Falha ao carregar o documento PDF.');
+          linksDiv.innerHTML = '<p style="color: red;">Falha ao carregar o documento PDF.</p>';
+          return;
+        }
+
         console.log('PDF carregado com sucesso:', pdfDoc);
         linksDiv.innerHTML = '';
+
+        let hasErrors = false; // Variável para rastrear erros gerais
 
         for (let i = 1; i <= pdfDoc.numPages; i++) {
           try {
             const page = await pdfDoc.getPage(i);
-            const pageContent = await page.getTextContent();
-            const textContent = pageContent.items.map(s => s.str).join(' ');
-            console.log(`Texto da página ${i}:`, textContent);
 
-            let nomePrestador = extractPrestadorName(textContent);
+            if (!page) {
+              console.warn(`Não foi possível obter a página ${i}.`);
+              linksDiv.innerHTML += `<p style="color: red;">Erro ao obter página ${i}.</p>`;
+              hasErrors = true; // Registra um erro na página
+              continue; // Ir para a próxima iteração
+            }
+
+            const pageContent = await page.getTextContent();
+
+            if (!pageContent || !pageContent.items) {
+              console.warn(`Não foi possível obter o conteúdo da página ${i}.`);
+              linksDiv.innerHTML += `<p style="color: red;">Erro ao obter conteúdo da página ${i}.</p>`;
+              hasErrors = true; // Registra um erro na página
+              continue; // Ir para a próxima iteração
+            }
+
+            let nomePrestador = extractPrestadorName(pageContent.items.map(s => s.str).join(' '));
             console.log(`Nome do prestador extraído da página ${i}:`, nomePrestador);
 
             if (!nomePrestador) {
-              nomePrestador = 'Nome_Não_Encontrado'; // Use um valor padrão
+              nomePrestador = 'Nome_Não_Encontrado';
             }
 
             // Cria um novo PDF contendo apenas a página atual
-            const pdfBytes = await createSinglePagePDF(pdfDoc, i); // Passando pdfDoc primeiro
-            console.log('pdfBytes:', pdfBytes);
+            const pdfBytes = await createSinglePagePDF(pdfDoc, i);
 
-            if (pdfBytes) {  // Verifique se pdfBytes não é nulo
+            if (pdfBytes) {
               const blob = new Blob([pdfBytes], { type: 'application/pdf' });
               const link = document.createElement('a');
               link.href = URL.createObjectURL(blob);
@@ -52,13 +73,20 @@ async function splitPDF() {
               linksDiv.appendChild(document.createElement('br'));
             } else {
               linksDiv.innerHTML += `<p style="color: red;">Erro ao criar PDF para a página ${i}.</p>`;
+              hasErrors = true; // Registra um erro na página
             }
 
           } catch (pageError) {
             console.error(`Erro ao processar a página ${i}:`, pageError);
             linksDiv.innerHTML += `<p style="color: red;">Erro ao processar a página ${i}. Veja o console.</p>`;
+            hasErrors = true; // Registra um erro na página
           }
         }
+
+        if (hasErrors) {
+          alert('Um ou mais erros ocorreram durante o processamento. Verifique o console para obter mais detalhes.');
+        }
+
       } catch (error) {
         console.error('Erro ao processar o PDF:', error);
         alert('Erro ao processar o PDF. Verifique o console para mais detalhes.');
@@ -73,14 +101,20 @@ async function splitPDF() {
 }
 
 // Nova função para criar um PDF de uma única página
-async function createSinglePagePDF(pdfDoc, pageNumber) { // pdfDoc primeiro
+async function createSinglePagePDF(pdfDoc, pageNumber) {
   try {
     const newPdf = await PDFDocument.create();
+
+    if (!newPdf) {
+      console.warn('Falha ao criar um novo documento PDF.');
+      return null;
+    }
+
     const [copiedPages] = await newPdf.copyPages(pdfDoc, [pageNumber - 1]);
 
-    if (!copiedPages) {
+    if (!copiedPages || copiedPages.length === 0) {
       console.warn(`Não foi possível copiar a página ${pageNumber}.`);
-      return null;  // Retorna null se a cópia falhar
+      return null;
     }
 
     newPdf.addPage(copiedPages);
@@ -89,7 +123,7 @@ async function createSinglePagePDF(pdfDoc, pageNumber) { // pdfDoc primeiro
     return pdfBytes;
   } catch (error) {
     console.error("Erro ao criar PDF de página única:", error);
-    return null; // Retorna null em caso de erro
+    return null;
   }
 }
 
@@ -98,12 +132,6 @@ function extractPrestadorName(text) {
   console.log("nomeMatch:", nomeMatch);
 
   let nome = nomeMatch ? nomeMatch[2].trim() : null;
-
-  if (!nome) {
-    console.warn("Nome do prestador não encontrado na página. Usando 'Nome_Não_Encontrado'. Texto da página:", text);
-    return 'Nome_Não_Encontrado';
-  }
-
   return nome;
 }
 
