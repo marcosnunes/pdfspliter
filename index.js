@@ -14,10 +14,12 @@ async function splitPDF() {
 
     fileReader.onload = async function() {
         try {
-            pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf/dist/pdf.worker.mjs';
+            pdfjsLib.GlobalWorkerOptions.workerSrc = 'dist/pdf.worker.mjs'; // Caminho relativo (verifique se está correto)
+            console.log('PDF.js worker source:', pdfjsLib.GlobalWorkerOptions.workerSrc); // Debug
 
             const originalArray = new Uint8Array(this.result);
             const pdf = await pdfjsLib.getDocument(originalArray).promise;
+            console.log('PDF carregado com sucesso:', pdf); // Debug
             linksDiv.innerHTML = '';
 
             for (let i = 1; i <= pdf.numPages; i++) {
@@ -25,8 +27,10 @@ async function splitPDF() {
                     const page = await pdf.getPage(i);
                     const pageContent = await page.getTextContent();
                     const textContent = pageContent.items.map(s => s.str).join(' ');
+                    console.log(`Texto da página ${i}:`, textContent); // Debug
 
                     const nomePrestador = extractPrestadorName(textContent);
+                    console.log(`Nome do prestador extraído da página ${i}:`, nomePrestador); // Debug
 
                     // Cria um novo PDF contendo apenas a página atual
                     const pdfBytes = await createSinglePagePDF(originalArray, i);
@@ -55,14 +59,20 @@ async function splitPDF() {
 
 // Nova função para criar um PDF de uma única página
 async function createSinglePagePDF(originalArray, pageNumber) {
-    const pdfDoc = await pdfjsLib.getDocument(originalArray).promise;
-    const newDoc = await pdfjsLib.PDFDocument.create();
-    const [copiedPage] = await newDoc.copyPages(pdfDoc, [pageNumber - 1]); // pageNumber é baseado em 1, mas copyPages usa indexação baseada em 0
-    newDoc.addPage(copiedPage);
+    try {
+        const pdfDoc = await pdfjsLib.getDocument(originalArray).promise;
+        const newDoc = await pdfjsLib.PDFDocument.create();
+        const [copiedPage] = await newDoc.copyPages(pdfDoc, [pageNumber - 1]); // pageNumber é baseado em 1, mas copyPages usa indexação baseada em 0
+        newDoc.addPage(copiedPage);
 
-    const pdfBytes = await newDoc.save();
-    return pdfBytes;
+        const pdfBytes = await newDoc.save();
+        return pdfBytes;
+    } catch (error) {
+        console.error("Erro ao criar PDF de página única:", error);
+        throw error; // Re-lançar o erro para que ele seja capturado na função splitPDF
+    }
 }
+
 
 function extractPrestadorName(text) {
     // Expressão regular mais robusta
