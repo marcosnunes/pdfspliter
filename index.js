@@ -16,7 +16,7 @@ async function splitPDF() {
 
     fileReader.onload = async function() {
       try {
-        pdfjsLib.GlobalWorkerOptions.workerSrc = 'pdf.worker.js'; // Caminho corrigido para pdf.worker.js
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'dist/pdf.worker.js'; // Caminho corrigido para pdf.worker.js
         console.log('PDF.js worker source:', pdfjsLib.GlobalWorkerOptions.workerSrc); // Debug
 
         const originalArray = new Uint8Array(this.result);
