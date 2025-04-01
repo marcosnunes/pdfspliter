@@ -11,7 +11,7 @@ console.log("Arquivo bundle.js carregado!");
 /******/ 	"use strict";
 /******/ 	var __webpack_modules__ = ({
 
-/***/ "./index.js":
+/***/ "index.js":
 /*!******************!*\
   !*** ./index.js ***!
   \******************/
