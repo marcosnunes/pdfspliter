@@ -121,7 +121,7 @@ async function createSinglePagePDF(pdfDocProxy, pageNumber, pdfPage) {
             canvasContext: context,
             viewport: pdfPage.getViewport({ scale: 1 })
         };
-        await pdfPage.render(renderContext).promise; // Usando pdfPage
+        await pdfPage.render(renderContext).promise();
 
         // Adicionar o canvas ao novo PDF usando pdf-lib
         const imageBytes = canvas.toDataURL().split(',')[1]; // Remover o prefixo data:image/png;base64,
