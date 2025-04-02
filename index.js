@@ -30,13 +30,17 @@ async function splitPDF() {
         console.log("Tamanho da cópia do ArrayBuffer:", arrayBufferCopy.byteLength);
 
         // Chame createSinglePagePDF com a cópia do ArrayBuffer
+        // Obter o nome do prestador da primeira página para teste
+        const nomePrestador = await getPrestadorNameFromPage(originalArrayBuffer, 1);
+        console.log("Nome do prestador (para teste):", nomePrestador);
+
         const pdfBytes = await createSinglePagePDF(arrayBufferCopy, 1); // Página 1 para teste
 
         if (pdfBytes) {
             const blob = new Blob([pdfBytes], { type: 'application/pdf' });
             const link = document.createElement('a');
             link.href = URL.createObjectURL(blob);
-            link.download = "pagina_teste.pdf";
+            link.download = `${nomePrestador || "pagina_teste"}.pdf`;
             link.innerText = "Download Página de Teste";
             linksDiv.appendChild(link);
             linksDiv.appendChild(document.createElement('br'));
@@ -119,10 +123,26 @@ async function createSinglePagePDF(originalArrayBuffer, pageNumber) {
     }
 }
 
+async function getPrestadorNameFromPage(arrayBuffer, pageNumber) {
+    try {
+        // Carrega o PDF usando pdfjsLib
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'dist/pdf.worker.js';
+        const pdfDocProxy = await pdfjsLib.getDocument(new Uint8Array(arrayBuffer)).promise;
+        const page = await pdfDocProxy.getPage(pageNumber);
+        const pageContent = await page.getTextContent();
+
+        // Extrai o nome do prestador
+        return extractPrestadorName(pageContent.items);
+    } catch (error) {
+        console.error("Erro ao obter o nome do prestador da página:", error);
+        return null;
+    }
+}
+
 function extractPrestadorName(items) {
     for (let i = 0; i < items.length; i++) {
         const item = items[i].str;
-        const regex = /Prestador\s*de\s*Serviço:?\s*([A-Za-zÀ-ÿ\s]+)/i;
+        const regex = /Prestador\sde\sserviço:\s*([A-Za-zÀ-ÿ\s]+)/i;
         const match = item.match(regex);
 
         if (match && match[1]) {
