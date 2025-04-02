@@ -60,11 +60,6 @@ async function splitPDF() {
                             nomePrestador = 'Nome_Não_Encontrado';
                         }
 
-                        console.log("Antes de createSinglePagePDF:", {
-                            i: i,
-                            pdfDoc: pdfDoc,
-                            typeofPdfDoc: typeof pdfDoc
-                        });
                         const pdfBytes = await createSinglePagePDF(pdfDoc, i);
 
                         if (pdfBytes) {
@@ -113,12 +108,19 @@ async function createSinglePagePDF(pdfDocProxy, pageNumber) {
             return null;
         }
 
-        console.log("createSinglePagePDF - Antes de getPage:", { pageNumber, pdfDocProxy });
+        // Obter os bytes da página do PDF original
         const page = await pdfDocProxy.getPage(pageNumber);
-        console.log("createSinglePagePDF - Depois de getPage:", { page });
+        const originalPageBytes = await pdfDocProxy.getData();
+        const originalPdf = await PDFDocument.load(originalPageBytes);
 
-        const [copiedPages] = await newPdf.copyPages(pdfDocProxy, [pageNumber - 1]);
-        newPdf.addPage(copiedPages[0]);
+        const [copiedPage] = await newPdf.copyPages(originalPdf, [pageNumber - 1]);
+
+        if (!copiedPage) {
+            console.warn(`Não foi possível copiar a página ${pageNumber}.`);
+            return null;
+        }
+
+        newPdf.addPage(copiedPage[0]);
 
         const pdfBytes = await newPdf.save();
         return pdfBytes;
