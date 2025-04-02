@@ -60,7 +60,7 @@ async function splitPDF() {
                             nomePrestador = 'Nome_Não_Encontrado';
                         }
 
-                        const pdfBytes = await createSinglePagePDF(pdfDoc, i);
+                        const pdfBytes = await createSinglePagePDF(pdfDoc, i, page);
 
                         if (pdfBytes) {
                             const blob = new Blob([pdfBytes], { type: 'application/pdf' });
@@ -99,7 +99,7 @@ async function splitPDF() {
     }
 }
 
-async function createSinglePagePDF(pdfDocProxy, pageNumber) {
+async function createSinglePagePDF(pdfDocProxy, pageNumber, pdfPage) {
     try {
         const newPdf = await PDFDocument.create();
 
@@ -108,9 +108,11 @@ async function createSinglePagePDF(pdfDocProxy, pageNumber) {
             return null;
         }
 
+        const { width, height } = pdfPage.getViewport({ scale: 1 });
+        const newPage = newPdf.addPage([width, height]);
+
         const originalPageBytes = await pdfDocProxy.getData();
         const originalPdf = await PDFDocument.load(originalPageBytes);
-
         const [copiedPage] = await newPdf.copyPages(originalPdf, [pageNumber - 1]);
 
         if (!copiedPage) {
@@ -118,7 +120,7 @@ async function createSinglePagePDF(pdfDocProxy, pageNumber) {
             return null;
         }
 
-        newPdf.addPage(copiedPage[0]);
+       
 
         const pdfBytes = await newPdf.save();
         return pdfBytes;
