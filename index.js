@@ -30,6 +30,7 @@ async function processPDF(file, linksDiv) {
                 console.log('PDF.js worker source:', pdfjsLib.GlobalWorkerOptions.workerSrc);
 
                 const originalArrayBuffer = this.result; // ArrayBuffer
+
                 const originalArray = new Uint8Array(originalArrayBuffer); // Uint8Array para pdfjsLib
 
                 const pdfDocProxy = await pdfjsLib.getDocument(originalArray).promise;
@@ -72,7 +73,9 @@ async function processPDF(file, linksDiv) {
                             nomePrestador = 'Nome_Não_Encontrado';
                         }
 
-                        const pdfBytes = await createSinglePagePDF(originalArrayBuffer, i); // Passa ArrayBuffer
+                        // Copia o ArrayBuffer antes de passá-lo para createSinglePagePDF
+                        const arrayBufferCopy = originalArrayBuffer.slice(0);
+                        const pdfBytes = await createSinglePagePDF(arrayBufferCopy, i);
 
                         if (pdfBytes) {
                             const blob = new Blob([pdfBytes], { type: 'application/pdf' });
@@ -112,7 +115,7 @@ async function processPDF(file, linksDiv) {
 }
 
 async function createSinglePagePDF(originalArrayBuffer, pageNumber) {
-  try {
+    try {
         console.log("createSinglePagePDF chamada para a página:", pageNumber);
         console.log("ArrayBuffer recebido:", originalArrayBuffer);
 
@@ -129,8 +132,11 @@ async function createSinglePagePDF(originalArrayBuffer, pageNumber) {
         console.log("Tamanho do ArrayBuffer:", originalArrayBuffer.byteLength);
 
         try {
-            const pdfDoc = await PDFDocument.load(originalArrayBuffer); // Carrega o documento original
-             console.log("PDFDocument.load executado com sucesso");
+            // Crie uma cópia do ArrayBuffer como Uint8Array
+            const uint8Array = new Uint8Array(originalArrayBuffer);
+            const pdfDoc = await PDFDocument.load(uint8Array); // Carrega o documento original
+
+            console.log("PDFDocument.load executado com sucesso");
             const newPdf = await PDFDocument.create();
 
             if (!newPdf) {
