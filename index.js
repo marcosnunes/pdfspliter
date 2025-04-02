@@ -1,4 +1,4 @@
-import { PDFDocument, rgb } from 'pdf-lib';
+import { PDFDocument } from 'pdf-lib';
 import * as pdfjsLib from 'pdfjs-dist';
 
 async function splitPDF() {
@@ -20,7 +20,7 @@ async function splitPDF() {
                 console.log('PDF.js worker source:', pdfjsLib.GlobalWorkerOptions.workerSrc);
 
                 const originalArray = new Uint8Array(this.result);
-                const pdfDocProxy = await pdfjsLib.getDocument(originalArray).promise; // Renomeado para evitar conflito
+                const pdfDocProxy = await pdfjsLib.getDocument(originalArray).promise;
 
                 if (!pdfDocProxy || typeof pdfDocProxy.numPages !== 'number') {
                     console.error('Falha ao carregar o documento PDF.');
@@ -53,14 +53,14 @@ async function splitPDF() {
                             continue;
                         }
 
-                        let nomePrestador = extractPrestadorName(pageContent.items); // Passa o array diretamente
+                        let nomePrestador = extractPrestadorName(pageContent.items);
                         console.log(`Nome do prestador extraído da página ${i}:`, nomePrestador);
 
                         if (!nomePrestador) {
                             nomePrestador = 'Nome_Não_Encontrado';
                         }
 
-                        const pdfBytes = await createSinglePagePDF(originalArray, i); //Passa o ArrayBuffer
+                        const pdfBytes = await createSinglePagePDF(originalArray, i);
 
                         if (pdfBytes) {
                             const blob = new Blob([pdfBytes], { type: 'application/pdf' });
@@ -111,9 +111,9 @@ async function createSinglePagePDF(originalArrayBuffer, pageNumber) {
 
         const [copiedPage] = await newPdf.copyPages(pdfDoc, [pageNumber - 1]); // Copia a página do documento original
 
-        if (!copiedPage) {
-            console.warn(`Não foi possível copiar a página ${pageNumber}.`);
-            return null;
+        if (!copiedPage || copiedPage.length === 0) {
+          console.warn(`Não foi possível copiar a página ${pageNumber}.`);
+          return null;
         }
 
         newPdf.addPage(copiedPage[0]);
@@ -127,24 +127,18 @@ async function createSinglePagePDF(originalArrayBuffer, pageNumber) {
 }
 
 function extractPrestadorName(items) {
-    let nomePrestador = null;
     for (let i = 0; i < items.length; i++) {
-        if (items[i].str.toLowerCase().includes("prestador de serviço")) {
-            // Encontrou a linha "Prestador de Serviço"
-            if (i + 1 < items.length) {
-                // Verifica se existe um próximo item
-                nomePrestador = items[i + 1].str.trim(); // Pega o próximo item como nome
-                break; // Termina a busca
-            }
+        const item = items[i].str;
+        const regex = /Prestador\s*de\s*Serviço:?\s*([A-Za-zÀ-ÿ\s]+)/i;
+        const match = item.match(regex);
+
+        if (match && match[1]) {
+            return match[1].trim();
         }
     }
-    if (nomePrestador) {
-        return nomePrestador;
-    } else {
-        console.warn("Nome do prestador não encontrado na página.");
-        return 'Nome_Não_Encontrado';
-    }
-}
 
+    console.warn("Nome do prestador não encontrado na página.");
+    return 'Nome_Não_Encontrado';
+}
 
 window.splitPDF = splitPDF;
