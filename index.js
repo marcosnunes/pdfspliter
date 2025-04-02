@@ -121,7 +121,11 @@ async function createSinglePagePDF(pdfDocProxy, pageNumber, pdfPage) {
             canvasContext: context,
             viewport: pdfPage.getViewport({ scale: 1 })
         };
-        await pdfPage.render(renderContext).promise();
+
+        // Use Promise para garantir que a renderização seja concluída antes de prosseguir
+        await new Promise((resolve, reject) => {
+            pdfPage.render(renderContext).promise.then(resolve, reject);
+        });
 
         // Adicionar o canvas ao novo PDF usando pdf-lib
         const imageBytes = canvas.toDataURL().split(',')[1]; // Remover o prefixo data:image/png;base64,
@@ -142,7 +146,7 @@ async function createSinglePagePDF(pdfDocProxy, pageNumber, pdfPage) {
 }
 
 function extractPrestadorName(text) {
-    const nomeMatch = text.match(/Prestador\s*de\s*serviço:?\s*([\w\sÀ-ÿ]+)/i);
+    const nomeMatch = text.match(/Prestador\s*de\s*serviço:?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)/i);
 
     if (nomeMatch && nomeMatch[1]) {
         // Tentar extrair apenas o nome próprio (primeira parte antes de vírgulas ou títulos)
