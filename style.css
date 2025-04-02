@@ -1,110 +1,243 @@
 body {
-    font-family: Arial, sans-serif;
+    font-family: sans-serif;
     margin: 0;
-    padding: 0;
-    background-color: #f4f4f4;
-    color: #333;
+}
+
+.row {
     display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: flex-start;
-    min-height: 100vh;
+    flex-wrap: wrap;
+    margin: 0px;
+    /* Removido margin padrão para evitar espaços extras */
 }
 
-header {
-    background-color: #007bff;
-    color: white;
-    text-align: center;
-    padding: 2em 0;
-    width: 100%;
-}
-
-h1 {
-    font-size: 2.5em;
-    margin: 0;
+.sectionBlockLayout {
+    padding: 8px;
+    /* margin: 0px;  Já definido em .row */
+    /* display: flex; Já definido em .row */
+    /* flex-wrap: wrap; Já definido em .row */
 }
 
 .container {
-    width: 90%;
-    max-width: 800px;
-    margin: 20px 0;
-    background-color: white;
-    padding: 2em;
-    border-radius: 8px;
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    width: 100%;
+    max-width: 1140px;
+    /* Largura máxima comum para containers */
+    margin: 0 auto;
+    /* Centralizar container */
+    padding: 0 15px;
+    /* Espaçamento lateral */
+    box-sizing: border-box;
+}
+
+.col-md-12 {
+    width: 100%;
+}
+
+.columnBlockLayout {
+    min-width: 250px;
     flex-grow: 1;
     display: flex;
     flex-direction: column;
+    box-sizing: border-box;
+    /* Incluir padding/border no tamanho */
+}
+
+h1,
+h2,
+h4,
+p,
+span {
+    color: #333;
+    /* Cor padrão para texto, sobrescrita onde necessário */
+}
+
+/* Estilos específicos do primeiro bloco (com imagem) */
+.hero-section {
+    padding: 8px;
+    margin: 0px;
+    display: flex;
+    flex-wrap: wrap;
+    min-height: 50vh;
+    /* Altura mínima relativa à viewport */
+    background-image: linear-gradient(0deg,
+            rgba(0, 0, 0, 0.5),
+            rgba(0, 0, 0, 0.5)),
+        url("https://cdn.hubblecontent.osi.office.net/m365content/publish/26f1035c-f169-4e0c-948a-0d5c861becc9/thumbnails/xxlarge.jpg");
+    background-position: center center;
+    background-repeat: no-repeat;
+    background-size: cover;
+    align-items: center;
+    /* Centralizar verticalmente o conteúdo */
     justify-content: center;
-}
-
-input[type="file"] {
-    margin-bottom: 1.5em;
-    padding: 1em;
-    font-size: 1.2em;
-    width: calc(100% - 2.2em);
-    border: 1px solid #ddd;
-    border-radius: 5px;
-}
-
-button {
-    background-color: #007bff;
+    /* Centralizar horizontalmente o conteúdo */
     color: white;
-    padding: 1em 2em;
+    /* Cor do texto para o bloco com fundo escuro */
+}
+
+.hero-section h1,
+.hero-section h4,
+.hero-section span#file-selected-name {
+    color: white;
+    /* Garante cor branca para textos específicos */
+}
+
+.hero-section span#file-selected-name {
+    color: #ffc107;
+    /* Cor específica para nome do arquivo */
+    margin-bottom: 10px;
+    display: block;
+    /* Para ocupar a linha e centralizar corretamente */
+    text-align: center;
+}
+
+.hero-section .columnBlockLayout {
+    margin: 40px 0px;
+    /* Ajuste de margem vertical */
+    align-items: center;
+    /* Centralizar itens na coluna */
+}
+
+/* Estilos para melhorar a interface */
+.button1 {
+    background-color: #ff9800;
+    /* Tom de laranja */
     border: none;
-    border-radius: 5px;
+    color: white;
+    padding: 10px 20px;
+    text-align: center;
+    text-decoration: none;
+    display: inline-block;
+    font-size: 16px;
+    margin: 4px 2px;
     cursor: pointer;
-    font-size: 1.2em;
-    width: 100%;
+    border-radius: 5px;
+    transition: background-color 0.3s ease;
+    /* Transição suave */
 }
 
-button:hover {
-    background-color: #0056b3;
+.button1:disabled {
+    background-color: #cccccc;
+    /* Cor quando desabilitado */
+    cursor: not-allowed;
 }
 
-#links {
-    margin-top: 2em;
-    font-size: 1.2em;
+.button1:hover:not(:disabled) {
+    background-color: #fb8c00;
+    /* Laranja mais escuro no hover */
+}
+
+#pdf-pages-container {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    /* Alinha os itens à esquerda */
+    gap: 15px;
+    /* Espaçamento entre os itens */
+    margin-top: 20px;
+    /* Espaço acima do container de páginas */
+}
+
+.custom-pdf-page-item {
+    width: 180px;
+    /* Largura ajustada */
+    padding: 15px;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    /* Bordas arredondadas */
     text-align: center;
+    background-color: #f9f9f9;
+    /* Fundo leve */
+    box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.1);
+    /* Sombra sutil */
+    transition: transform 0.2s ease;
+    /* Efeito ao passar o mouse */
 }
 
-footer {
+.custom-pdf-page-item:hover {
+    transform: translateY(-3px);
+    /* Leve elevação no hover */
+}
+
+.custom-pdf-page-item a {
+    display: block;
+    /* Faz o link ocupar todo o espaço do item */
+    text-decoration: none;
+    color: #337ab7;
+    font-weight: bold;
+    /* Destacar o link */
+    word-wrap: break-word;
+    /* Quebrar palavras longas se necessário */
+}
+
+.custom-pdf-page-item a:hover {
+    color: #23527c;
+    /* Cor do link no hover */
+}
+
+/* Estilo para o input de arquivo personalizado */
+.custom-file-upload {
+    border: none;
+    /* Remover borda padrão */
+    display: inline-block;
+    padding: 10px 20px;
+    /* Mesmo padding do botão */
+    cursor: pointer;
+    background-color: #ffc107;
+    /* Tom de laranja mais claro */
+    color: #333;
+    border-radius: 5px;
+    margin-bottom: 15px;
+    /* Aumentar espaço abaixo */
     text-align: center;
-    padding: 1em 0;
-    background-color: #ddd;
-    width: 100%;
-    margin-top: auto;
+    font-size: 16px;
+    /* Mesmo tamanho de fonte do botão */
+    transition: background-color 0.3s ease;
+    /* Transição suave */
 }
 
-/* Responsividade */
-@media (max-width: 600px) {
-    .container {
-        width: 90%;
-        max-width: 800px;
-        margin: 20px 0;
-        background-color: white;
-        padding: 2em;
-        border-radius: 8px;
-        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
-        flex-grow: 1;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-    }
+.custom-file-upload:hover {
+    background-color: #ffd54f;
+    /* Tom de laranja mais claro no hover */
+}
 
-    h1 {
-        font-size: 2em;
-    }
+#log-messages {
+    font-style: italic;
+    color: white;
+    /* Mantido branco para o bloco hero */
+    font-size: 16px;
+    /* Tamanho ajustado */
+    margin-top: 10px;
+    /* Espaço acima da mensagem de log */
+    text-align: center;
+    min-height: 20px;
+    /* Para evitar "pulo" quando a mensagem aparece */
+}
 
-    input[type="file"],
-    button,
-    #links {
-        font-size: 1em;
-    }
+/* Bloco de Instruções e Páginas Processadas */
+.info-section {
+    padding: 8px;
+    margin: 0px;
+    display: flex;
+    flex-wrap: wrap;
+    min-height: auto;
+    background-color: #f8f9fa;
+    /* Fundo levemente cinza */
+}
 
-    #links {
-        margin-top: 2em;
-        font-size: 1.2em;
-        text-align: center;
-    }
+.info-section .columnBlockLayout {
+    margin: 30px 0px;
+    padding: 30px;
+    background-color: white;
+    border-radius: 5px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.info-section h2 {
+    color: #ff9800;
+    /* Título em laranja */
+    margin-bottom: 15px;
+}
+
+.info-section p {
+    line-height: 1.6;
+    /* Espaçamento entre linhas */
 }
