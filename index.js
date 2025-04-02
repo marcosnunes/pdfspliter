@@ -1,31 +1,142 @@
-async function createSinglePagePDF(pdfDocProxy, pageNumber) {
-  try {
-      const newPdf = await PDFDocument.create();
+import { PDFDocument } from 'pdf-lib';
+import * as pdfjsLib from 'pdfjs-dist';
 
-      if (!newPdf) {
-          console.warn('Falha ao criar um novo documento PDF.');
-          return null;
-      }
+async function splitPDF() {
+    try {
+        const pdfUpload = document.getElementById('pdfUpload');
+        const linksDiv = document.getElementById('links');
+        const file = pdfUpload.files[0];
 
-      // Obter os bytes da página do PDF original
-      const page = await pdfDocProxy.getPage(pageNumber);
-      const originalPageBytes = await pdfDocProxy.getData();
-      const originalPdf = await PDFDocument.load(originalPageBytes);
+        if (!file) {
+            alert('Por favor, selecione um arquivo PDF.');
+            return;
+        }
 
-      const [copiedPage] = await newPdf.copyPages(originalPdf, [pageNumber - 1]);
+        const fileReader = new FileReader();
 
+        fileReader.onload = async function() {
+            try {
+                pdfjsLib.GlobalWorkerOptions.workerSrc = 'dist/pdf.worker.js';
+                console.log('PDF.js worker source:', pdfjsLib.GlobalWorkerOptions.workerSrc);
 
-      if (!copiedPage) {
-          console.warn(`Não foi possível copiar a página ${pageNumber}.`);
-          return null;
-      }
+                const originalArray = new Uint8Array(this.result);
+                const pdfDoc = await pdfjsLib.getDocument(originalArray).promise;
 
-      newPdf.addPage(copiedPage);
+                if (!pdfDoc || typeof pdfDoc.numPages !== 'number') {
+                    console.error('Falha ao carregar o documento PDF.');
+                    linksDiv.innerHTML = '<p style="color: red;">Falha ao carregar o documento PDF.</p>';
+                    return;
+                }
 
-      const pdfBytes = await newPdf.save();
-      return pdfBytes;
-  } catch (error) {
-      console.error("Erro ao criar PDF de página única:", error);
-      return null;
-  }
+                console.log('PDF carregado com sucesso:', pdfDoc);
+                linksDiv.innerHTML = '';
+
+                let hasErrors = false; // Variável para rastrear erros gerais
+
+                for (let i = 1; i <= pdfDoc.numPages; i++) {
+                    try {
+                        const page = await pdfDoc.getPage(i);
+
+                        if (!page) {
+                            console.warn(`Não foi possível obter a página ${i}.`);
+                            linksDiv.innerHTML += `<p style="color: red;">Erro ao obter página ${i}.</p>`;
+                            hasErrors = true; // Registra um erro na página
+                            continue; // Ir para a próxima iteração
+                        }
+
+                        const pageContent = await page.getTextContent();
+
+                        if (!pageContent || !pageContent.items) {
+                            console.warn(`Não foi possível obter o conteúdo da página ${i}.`);
+                            linksDiv.innerHTML += `<p style="color: red;">Erro ao obter conteúdo da página ${i}.</p>`;
+                            hasErrors = true; // Registra um erro na página
+                            continue; // Ir para a próxima iteração
+                        }
+
+                        let nomePrestador = extractPrestadorName(pageContent.items.map(s => s.str).join(' '));
+                        console.log(`Nome do prestador extraído da página ${i}:`, nomePrestador);
+
+                        if (!nomePrestador) {
+                            nomePrestador = 'Nome_Não_Encontrado';
+                        }
+
+                        console.log("Antes de createSinglePagePDF:", {
+                            i: i,
+                            pdfDoc: pdfDoc,
+                            typeofPdfDoc: typeof pdfDoc
+                        });
+                        const pdfBytes = await createSinglePagePDF(pdfDoc, i);
+
+                        if (pdfBytes) {
+                            const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+                            const link = document.createElement('a');
+                            link.href = URL.createObjectURL(blob);
+                            link.download = `${nomePrestador}.pdf`;
+                            link.innerText = `Download Página ${i} (${nomePrestador}.pdf)`;
+                            linksDiv.appendChild(link);
+                            linksDiv.appendChild(document.createElement('br'));
+                        } else {
+                            linksDiv.innerHTML += `<p style="color: red;">Erro ao criar PDF para a página ${i}.</p>`;
+                            hasErrors = true; // Registra um erro na página
+                        }
+
+                    } catch (pageError) {
+                        console.error(`Erro ao processar a página ${i}:`, pageError);
+                        linksDiv.innerHTML += `<p style="color: red;">Erro ao processar a página ${i}. Veja o console.</p>`;
+                        hasErrors = true; // Registra um erro na página
+                    }
+                }
+
+                if (hasErrors) {
+                    alert('Um ou mais erros ocorreram durante o processamento. Verifique o console para obter mais detalhes.');
+                }
+
+            } catch (error) {
+                console.error('Erro ao processar o PDF:', error);
+                alert('Erro ao processar o PDF. Verifique o console para obter mais detalhes.');
+            }
+        };
+
+        fileReader.readAsArrayBuffer(file);
+    } catch (error) {
+        console.error("Erro ao executar splitPDF:", error);
+        alert("Ocorreu um erro ao processar o PDF. Verifique o console.");
+    }
 }
+
+async function createSinglePagePDF(pdfDocProxy, pageNumber) {
+    try {
+        const newPdf = await PDFDocument.create();
+
+        if (!newPdf) {
+            console.warn('Falha ao criar um novo documento PDF.');
+            return null;
+        }
+
+        console.log("createSinglePagePDF - Antes de getPage:", { pageNumber, pdfDocProxy });
+        const page = await pdfDocProxy.getPage(pageNumber);
+        console.log("createSinglePagePDF - Depois de getPage:", { page });
+
+        const [copiedPages] = await newPdf.copyPages(pdfDocProxy, [pageNumber - 1]);
+        newPdf.addPage(copiedPages[0]);
+
+        const pdfBytes = await newPdf.save();
+        return pdfBytes;
+    } catch (error) {
+        console.error("Erro ao criar PDF de página única:", error);
+        return null;
+    }
+}
+
+function extractPrestadorName(text) {
+    const nomeMatch = text.match(/Prestador\s*de\s*serviço:?\s*([a-zA-ZÀ-ÿ\s]+)/i);
+
+    if (nomeMatch && nomeMatch[1]) { // Alterado para nomeMatch[1]
+        return nomeMatch[1].trim(); // Alterado para nomeMatch[1]
+    } else {
+        console.warn("Nome do prestador não encontrado na página. Usando 'Nome_Não_Encontrado'. Texto da página:", text);
+        return 'Nome_Não_Encontrado';
+    }
+}
+
+window.splitPDF = splitPDF;
