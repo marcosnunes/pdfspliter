@@ -108,8 +108,6 @@ async function createSinglePagePDF(pdfDocProxy, pageNumber) {
             return null;
         }
 
-        // Obter os bytes da página do PDF original
-        const page = await pdfDocProxy.getPage(pageNumber);
         const originalPageBytes = await pdfDocProxy.getData();
         const originalPdf = await PDFDocument.load(originalPageBytes);
 
