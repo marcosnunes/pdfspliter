@@ -35,16 +35,16 @@ async function splitPDF() {
 
                 for (let i = 1; i <= pdfDoc.numPages; i++) {
                     try {
-                        const page = await pdfDoc.getPage(i);
+                        const pdfPage = await pdfDoc.getPage(i); // Alterado: Nome da variável para pdfPage
 
-                        if (!page) {
+                        if (!pdfPage) {
                             console.warn(`Não foi possível obter a página ${i}.`);
                             linksDiv.innerHTML += `<p style="color: red;">Erro ao obter página ${i}.</p>`;
                             hasErrors = true; // Registra um erro na página
                             continue; // Ir para a próxima iteração
                         }
 
-                        const pageContent = await page.getTextContent();
+                        const pageContent = await pdfPage.getTextContent();
 
                         if (!pageContent || !pageContent.items) {
                             console.warn(`Não foi possível obter o conteúdo da página ${i}.`);
@@ -60,7 +60,7 @@ async function splitPDF() {
                             nomePrestador = 'Nome_Não_Encontrado';
                         }
 
-                        const pdfBytes = await createSinglePagePDF(pdfDoc, i, page);
+                        const pdfBytes = await createSinglePagePDF(pdfDoc, i, pdfPage); // Passando pdfPage
 
                         if (pdfBytes) {
                             const blob = new Blob([pdfBytes], { type: 'application/pdf' });
@@ -121,7 +121,7 @@ async function createSinglePagePDF(pdfDocProxy, pageNumber, pdfPage) {
             canvasContext: context,
             viewport: pdfPage.getViewport({ scale: 1 })
         };
-        await page.render(renderContext).promise();
+        await pdfPage.render(renderContext).promise; // Usando pdfPage
 
         // Adicionar o canvas ao novo PDF usando pdf-lib
         const imageBytes = canvas.toDataURL().split(',')[1]; // Remover o prefixo data:image/png;base64,
