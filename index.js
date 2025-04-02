@@ -30,6 +30,8 @@ async function processPDF(file, linksDiv) {
                 console.log('PDF.js worker source:', pdfjsLib.GlobalWorkerOptions.workerSrc);
 
                 const originalArrayBuffer = this.result; // ArrayBuffer
+                console.log("ArrayBuffer após a leitura do arquivo:", originalArrayBuffer);
+                console.log("Tamanho do ArrayBuffer após a leitura do arquivo:", originalArrayBuffer.byteLength);
 
                 const originalArray = new Uint8Array(originalArrayBuffer); // Uint8Array para pdfjsLib
 
@@ -69,12 +71,9 @@ async function processPDF(file, linksDiv) {
                         let nomePrestador = extractPrestadorName(pageContent.items);
                         console.log(`Nome do prestador extraído da página ${i}:`, nomePrestador);
 
-                        if (!nomePrestador) {
-                            nomePrestador = 'Nome_Não_Encontrado';
-                        }
-
-                        // Copia o ArrayBuffer antes de passá-lo para createSinglePagePDF
+                       // Copia o ArrayBuffer antes de passá-lo para createSinglePagePDF
                         const arrayBufferCopy = originalArrayBuffer.slice(0);
+                        console.log("Tamanho da cópia do ArrayBuffer antes de createSinglePagePDF:", arrayBufferCopy.byteLength);
                         const pdfBytes = await createSinglePagePDF(arrayBufferCopy, i);
 
                         if (pdfBytes) {
