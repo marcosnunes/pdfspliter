@@ -1,4 +1,4 @@
-import { PDFDocument } from 'pdf-lib';
+import { PDFDocument, rgb } from 'pdf-lib';
 import * as pdfjsLib from 'pdfjs-dist';
 
 async function splitPDF() {
@@ -20,28 +20,28 @@ async function splitPDF() {
                 console.log('PDF.js worker source:', pdfjsLib.GlobalWorkerOptions.workerSrc);
 
                 const originalArray = new Uint8Array(this.result);
-                const pdfDoc = await pdfjsLib.getDocument(originalArray).promise;
+                const pdfDocProxy = await pdfjsLib.getDocument(originalArray).promise; // Renomeado para evitar conflito
 
-                if (!pdfDoc || typeof pdfDoc.numPages !== 'number') {
+                if (!pdfDocProxy || typeof pdfDocProxy.numPages !== 'number') {
                     console.error('Falha ao carregar o documento PDF.');
                     linksDiv.innerHTML = '<p style="color: red;">Falha ao carregar o documento PDF.</p>';
                     return;
                 }
 
-                console.log('PDF carregado com sucesso:', pdfDoc);
+                console.log('PDF carregado com sucesso:', pdfDocProxy);
                 linksDiv.innerHTML = '';
 
-                let hasErrors = false; // Variável para rastrear erros gerais
+                let hasErrors = false;
 
-                for (let i = 1; i <= pdfDoc.numPages; i++) {
+                for (let i = 1; i <= pdfDocProxy.numPages; i++) {
                     try {
-                        const page = await pdfDoc.getPage(i);
+                        const page = await pdfDocProxy.getPage(i);
 
                         if (!page) {
                             console.warn(`Não foi possível obter a página ${i}.`);
                             linksDiv.innerHTML += `<p style="color: red;">Erro ao obter página ${i}.</p>`;
-                            hasErrors = true; // Registra um erro na página
-                            continue; // Ir para a próxima iteração
+                            hasErrors = true;
+                            continue;
                         }
 
                         const pageContent = await page.getTextContent();
@@ -49,18 +49,18 @@ async function splitPDF() {
                         if (!pageContent || !pageContent.items) {
                             console.warn(`Não foi possível obter o conteúdo da página ${i}.`);
                             linksDiv.innerHTML += `<p style="color: red;">Erro ao obter conteúdo da página ${i}.</p>`;
-                            hasErrors = true; // Registra um erro na página
-                            continue; // Ir para a próxima iteração
+                            hasErrors = true;
+                            continue;
                         }
 
-                        let nomePrestador = extractPrestadorName(pageContent.items.map(s => s.str).join(' '));
+                        let nomePrestador = extractPrestadorName(pageContent.items); // Passa o array diretamente
                         console.log(`Nome do prestador extraído da página ${i}:`, nomePrestador);
 
                         if (!nomePrestador) {
                             nomePrestador = 'Nome_Não_Encontrado';
                         }
 
-                        const pdfBytes = await createSinglePagePDF(pdfDoc, i);
+                        const pdfBytes = await createSinglePagePDF(originalArray, i); //Passa o ArrayBuffer
 
                         if (pdfBytes) {
                             const blob = new Blob([pdfBytes], { type: 'application/pdf' });
@@ -72,13 +72,13 @@ async function splitPDF() {
                             linksDiv.appendChild(document.createElement('br'));
                         } else {
                             linksDiv.innerHTML += `<p style="color: red;">Erro ao criar PDF para a página ${i}.</p>`;
-                            hasErrors = true; // Registra um erro na página
+                            hasErrors = true;
                         }
 
                     } catch (pageError) {
                         console.error(`Erro ao processar a página ${i}:`, pageError);
                         linksDiv.innerHTML += `<p style="color: red;">Erro ao processar a página ${i}. Veja o console.</p>`;
-                        hasErrors = true; // Registra um erro na página
+                        hasErrors = true;
                     }
                 }
 
@@ -99,8 +99,9 @@ async function splitPDF() {
     }
 }
 
-async function createSinglePagePDF(pdfDocProxy, pageNumber) {
+async function createSinglePagePDF(originalArrayBuffer, pageNumber) {
     try {
+        const pdfDoc = await PDFDocument.load(originalArrayBuffer); // Carrega o documento original
         const newPdf = await PDFDocument.create();
 
         if (!newPdf) {
@@ -108,10 +109,7 @@ async function createSinglePagePDF(pdfDocProxy, pageNumber) {
             return null;
         }
 
-        const originalPageBytes = await pdfDocProxy.getData();
-        const originalPdf = await PDFDocument.load(originalPageBytes);
-
-        const [copiedPage] = await newPdf.copyPages(originalPdf, [pageNumber - 1]);
+        const [copiedPage] = await newPdf.copyPages(pdfDoc, [pageNumber - 1]); // Copia a página do documento original
 
         if (!copiedPage) {
             console.warn(`Não foi possível copiar a página ${pageNumber}.`);
@@ -128,15 +126,25 @@ async function createSinglePagePDF(pdfDocProxy, pageNumber) {
     }
 }
 
-function extractPrestadorName(text) {
-    const nomeMatch = text.match(/Prestador\s*de\s*serviço:?\s*([a-zA-ZÀ-ÿ\s]+)/i);
-
-    if (nomeMatch && nomeMatch[1]) {
-        return nomeMatch[1].trim(); // Remove espaços extras
+function extractPrestadorName(items) {
+    let nomePrestador = null;
+    for (let i = 0; i < items.length; i++) {
+        if (items[i].str.toLowerCase().includes("prestador de serviço")) {
+            // Encontrou a linha "Prestador de Serviço"
+            if (i + 1 < items.length) {
+                // Verifica se existe um próximo item
+                nomePrestador = items[i + 1].str.trim(); // Pega o próximo item como nome
+                break; // Termina a busca
+            }
+        }
+    }
+    if (nomePrestador) {
+        return nomePrestador;
     } else {
-        console.warn("Nome do prestador não encontrado na página. Usando 'Nome_Não_Encontrado'. Texto da página:", text);
+        console.warn("Nome do prestador não encontrado na página.");
         return 'Nome_Não_Encontrado';
     }
 }
+
 
 window.splitPDF = splitPDF;
