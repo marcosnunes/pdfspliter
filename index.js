@@ -60,7 +60,7 @@ async function splitPDF() {
                             nomePrestador = 'Nome_Não_Encontrado';
                         }
 
-                        const pdfBytes = await createSinglePagePDF(originalArray, i);
+                        const pdfBytes = await createSinglePagePDF(this.result, i); // Passa this.result (ArrayBuffer)
 
                         if (pdfBytes) {
                             const blob = new Blob([pdfBytes], { type: 'application/pdf' });
@@ -100,30 +100,43 @@ async function splitPDF() {
 }
 
 async function createSinglePagePDF(originalArrayBuffer, pageNumber) {
-    try {
-        const pdfDoc = await PDFDocument.load(originalArrayBuffer); // Carrega o documento original
-        const newPdf = await PDFDocument.create();
+  try {
+    console.log("ArrayBuffer recebido:", originalArrayBuffer); // Adicionado log
 
-        if (!newPdf) {
-            console.warn('Falha ao criar um novo documento PDF.');
-            return null;
-        }
-
-        const [copiedPage] = await newPdf.copyPages(pdfDoc, [pageNumber - 1]); // Copia a página do documento original
-
-        if (!copiedPage || copiedPage.length === 0) {
-          console.warn(`Não foi possível copiar a página ${pageNumber}.`);
-          return null;
-        }
-
-        newPdf.addPage(copiedPage[0]);
-
-        const pdfBytes = await newPdf.save();
-        return pdfBytes;
-    } catch (error) {
-        console.error("Erro ao criar PDF de página única:", error);
-        return null;
+    if (!originalArrayBuffer) {
+      console.error("ArrayBuffer is null or undefined");
+      return null;
     }
+
+    // Verifica se é um ArrayBuffer válido
+    if (!(originalArrayBuffer instanceof ArrayBuffer)) {
+      console.error("originalArrayBuffer is not an ArrayBuffer");
+      return null;
+    }
+
+    const pdfDoc = await PDFDocument.load(originalArrayBuffer); // Carrega o documento original
+    const newPdf = await PDFDocument.create();
+
+    if (!newPdf) {
+      console.warn('Falha ao criar um novo documento PDF.');
+      return null;
+    }
+
+    const [copiedPage] = await newPdf.copyPages(pdfDoc, [pageNumber - 1]); // Copia a página do documento original
+
+    if (!copiedPage || copiedPage.length === 0) {
+      console.warn(`Não foi possível copiar a página ${pageNumber}.`);
+      return null;
+    }
+
+    newPdf.addPage(copiedPage[0]);
+
+    const pdfBytes = await newPdf.save();
+    return pdfBytes;
+  } catch (error) {
+    console.error("Erro ao criar PDF de página única:", error);
+    return null;
+  }
 }
 
 function extractPrestadorName(items) {
