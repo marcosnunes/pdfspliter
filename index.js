@@ -35,7 +35,7 @@ async function splitPDF() {
 
                 for (let i = 1; i <= pdfDoc.numPages; i++) {
                     try {
-                        const pdfPage = await pdfDoc.getPage(i); // Alterado: Nome da variável para pdfPage
+                        const pdfPage = await pdfDoc.getPage(i);
 
                         if (!pdfPage) {
                             console.warn(`Não foi possível obter a página ${i}.`);
@@ -60,7 +60,7 @@ async function splitPDF() {
                             nomePrestador = 'Nome_Não_Encontrado';
                         }
 
-                        const pdfBytes = await createSinglePagePDF(pdfDoc, i, pdfPage); // Passando pdfPage
+                        const pdfBytes = await createSinglePagePDF(pdfDoc, i, pdfPage);
 
                         if (pdfBytes) {
                             const blob = new Blob([pdfBytes], { type: 'application/pdf' });
@@ -142,7 +142,7 @@ async function createSinglePagePDF(pdfDocProxy, pageNumber, pdfPage) {
 }
 
 function extractPrestadorName(text) {
-   const nomeMatch = text.match(/Prestador\s*de\s*serviço:?\s*([a-zA-ZÀ-ÿ\s]+)/i);
+    const nomeMatch = text.match(/Prestador\s*de\s*serviço:?\s*([\w\sÀ-ÿ]+)/i);
 
     if (nomeMatch && nomeMatch[1]) {
         // Tentar extrair apenas o nome próprio (primeira parte antes de vírgulas ou títulos)
