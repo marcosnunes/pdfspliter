@@ -133,8 +133,8 @@ async function createSinglePagePDF(pdfDocProxy, pageNumber) {
 function extractPrestadorName(text) {
     const nomeMatch = text.match(/Prestador\s*de\s*serviço:?\s*([a-zA-ZÀ-ÿ\s]+)/i);
 
-    if (nomeMatch && nomeMatch[1]) { // Alterado para nomeMatch[1]
-        return nomeMatch[1].trim(); // Alterado para nomeMatch[1]
+    if (nomeMatch && nomeMatch[1]) {
+        return nomeMatch[1].trim(); // Remove espaços extras
     } else {
         console.warn("Nome do prestador não encontrado na página. Usando 'Nome_Não_Encontrado'. Texto da página:", text);
         return 'Nome_Não_Encontrado';
