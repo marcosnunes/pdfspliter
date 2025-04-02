@@ -1,4 +1,9 @@
 import path from 'path';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 export default {
   entry: './index.js',
@@ -10,12 +15,12 @@ export default {
   module: {
     rules: [
       {
-        test: /\.js$/,
-        exclude: /node_modules/,
+        test: /\.m?js$/,
+        exclude: /(node_modules|bower_components)/,
         use: {
           loader: 'babel-loader',
           options: {
-            presets: ['@babel/preset-env']
+            presets: ['@babel/preset-env'],
           }
         }
       },
@@ -41,7 +46,7 @@ export default {
       "crypto": false,
       "util": false,
       "os": false,
-      "url": 'url' 
+      "url": false 
     }
   }
 };
