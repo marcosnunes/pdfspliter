@@ -1,160 +1,31 @@
-import { PDFDocument } from 'pdf-lib';
-import * as pdfjsLib from 'pdfjs-dist';
+async function createSinglePagePDF(pdfDocProxy, pageNumber) {
+  try {
+      const newPdf = await PDFDocument.create();
 
-async function splitPDF() {
-    try {
-        const pdfUpload = document.getElementById('pdfUpload');
-        const linksDiv = document.getElementById('links');
-        const file = pdfUpload.files[0];
+      if (!newPdf) {
+          console.warn('Falha ao criar um novo documento PDF.');
+          return null;
+      }
 
-        if (!file) {
-            alert('Por favor, selecione um arquivo PDF.');
-            return;
-        }
+      // Obter os bytes da página do PDF original
+      const page = await pdfDocProxy.getPage(pageNumber);
+      const originalPageBytes = await pdfDocProxy.getData();
+      const originalPdf = await PDFDocument.load(originalPageBytes);
 
-        const fileReader = new FileReader();
+      const [copiedPage] = await newPdf.copyPages(originalPdf, [pageNumber - 1]);
 
-        fileReader.onload = async function() {
-            try {
-                pdfjsLib.GlobalWorkerOptions.workerSrc = 'dist/pdf.worker.js';
-                console.log('PDF.js worker source:', pdfjsLib.GlobalWorkerOptions.workerSrc);
 
-                const originalArray = new Uint8Array(this.result);
-                const pdfDoc = await pdfjsLib.getDocument(originalArray).promise;
+      if (!copiedPage) {
+          console.warn(`Não foi possível copiar a página ${pageNumber}.`);
+          return null;
+      }
 
-                if (!pdfDoc || typeof pdfDoc.numPages !== 'number') {
-                    console.error('Falha ao carregar o documento PDF.');
-                    linksDiv.innerHTML = '<p style="color: red;">Falha ao carregar o documento PDF.</p>';
-                    return;
-                }
+      newPdf.addPage(copiedPage);
 
-                console.log('PDF carregado com sucesso:', pdfDoc);
-                linksDiv.innerHTML = '';
-
-                let hasErrors = false; // Variável para rastrear erros gerais
-
-                for (let i = 1; i <= pdfDoc.numPages; i++) {
-                    try {
-                        const pdfPage = await pdfDoc.getPage(i);
-
-                        if (!pdfPage) {
-                            console.warn(`Não foi possível obter a página ${i}.`);
-                            linksDiv.innerHTML += `<p style="color: red;">Erro ao obter página ${i}.</p>`;
-                            hasErrors = true; // Registra um erro na página
-                            continue; // Ir para a próxima iteração
-                        }
-
-                        const pageContent = await pdfPage.getTextContent();
-
-                        if (!pageContent || !pageContent.items) {
-                            console.warn(`Não foi possível obter o conteúdo da página ${i}.`);
-                            linksDiv.innerHTML += `<p style="color: red;">Erro ao obter conteúdo da página ${i}.</p>`;
-                            hasErrors = true; // Registra um erro na página
-                            continue; // Ir para a próxima iteração
-                        }
-
-                        let nomePrestador = extractPrestadorName(pageContent.items.map(s => s.str).join(' '));
-                        console.log(`Nome do prestador extraído da página ${i}:`, nomePrestador);
-
-                        if (!nomePrestador) {
-                            nomePrestador = 'Nome_Não_Encontrado';
-                        }
-
-                        const pdfBytes = await createSinglePagePDF(pdfDoc, i, pdfPage);
-
-                        if (pdfBytes) {
-                            const blob = new Blob([pdfBytes], { type: 'application/pdf' });
-                            const link = document.createElement('a');
-                            link.href = URL.createObjectURL(blob);
-                            link.download = `${nomePrestador}.pdf`;
-                            link.innerText = `Download Página ${i} (${nomePrestador}.pdf)`;
-                            linksDiv.appendChild(link);
-                            linksDiv.appendChild(document.createElement('br'));
-                        } else {
-                            linksDiv.innerHTML += `<p style="color: red;">Erro ao criar PDF para a página ${i}.</p>`;
-                            hasErrors = true; // Registra um erro na página
-                        }
-
-                    } catch (pageError) {
-                        console.error(`Erro ao processar a página ${i}:`, pageError);
-                        linksDiv.innerHTML += `<p style="color: red;">Erro ao processar a página ${i}. Veja o console.</p>`;
-                        hasErrors = true; // Registra um erro na página
-                    }
-                }
-
-                if (hasErrors) {
-                    alert('Um ou mais erros ocorreram durante o processamento. Verifique o console para obter mais detalhes.');
-                }
-
-            } catch (error) {
-                console.error('Erro ao processar o PDF:', error);
-                alert('Erro ao processar o PDF. Verifique o console para obter mais detalhes.');
-            }
-        };
-
-        fileReader.readAsArrayBuffer(file);
-    } catch (error) {
-        console.error("Erro ao executar splitPDF:", error);
-        alert("Ocorreu um erro ao processar o PDF. Verifique o console.");
-    }
+      const pdfBytes = await newPdf.save();
+      return pdfBytes;
+  } catch (error) {
+      console.error("Erro ao criar PDF de página única:", error);
+      return null;
+  }
 }
-
-async function createSinglePagePDF(pdfDocProxy, pageNumber, pdfPage) {
-    try {
-        const newPdf = await PDFDocument.create();
-
-        if (!newPdf) {
-            console.warn('Falha ao criar um novo documento PDF.');
-            return null;
-        }
-
-        const { width, height } = pdfPage.getViewport({ scale: 1 });
-        const newPage = newPdf.addPage([width, height]);
-
-        // Renderizar a página do pdfjsLib em um canvas
-        const canvas = document.createElement('canvas');
-        const context = canvas.getContext('2d');
-        canvas.width = width;
-        canvas.height = height;
-
-        const renderContext = {
-            canvasContext: context,
-            viewport: pdfPage.getViewport({ scale: 1 })
-        };
-
-        // Adaptação para versões mais antigas do pdfjs-dist
-        const renderTask = pdfPage.render(renderContext);
-        await renderTask.promise; // Aguarda a conclusão da renderização
-
-        // Adicionar o canvas ao novo PDF usando pdf-lib
-        const imageBytes = canvas.toDataURL().split(',')[1]; // Remover o prefixo data:image/png;base64,
-        const image = await newPdf.embedPng(imageBytes);
-        newPage.drawImage(image, {
-            x: 0,
-            y: 0,
-            width: width,
-            height: height,
-        });
-
-        const pdfBytes = await newPdf.save();
-        return pdfBytes;
-    } catch (error) {
-        console.error("Erro ao criar PDF de página única:", error);
-        return null;
-    }
-}
-
-function extractPrestadorName(text) {
-     const nomeMatch = text.match(/Prestador\s*de\s*serviço:?\s*([A-Z][a-zÀ-ÿ]+(?:\s+[A-Z][a-zÀ-ÿ]+)+)/i);
-
-    if (nomeMatch && nomeMatch[1]) {
-        // Tentar extrair apenas o nome próprio (primeira parte antes de vírgulas ou títulos)
-        let nome = nomeMatch[1].trim().split(',')[0].trim();
-        return nome;
-    } else {
-        console.warn("Nome do prestador não encontrado na página. Usando 'Nome_Não_Encontrado'. Texto da página:", text);
-        return 'Nome_Não_Encontrado';
-    }
-}
-
-window.splitPDF = splitPDF;
