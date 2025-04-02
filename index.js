@@ -12,7 +12,38 @@ async function splitPDF() {
             return;
         }
 
-        await processPDF(file, linksDiv);
+        // Usando uma função async para ler o arquivo e obter o ArrayBuffer
+        const originalArrayBuffer = await readFileAsArrayBuffer(file);
+
+        if (!originalArrayBuffer) {
+            console.error("Falha ao ler o arquivo como ArrayBuffer.");
+            alert("Falha ao ler o arquivo PDF.");
+            return;
+        }
+
+        console.log("ArrayBuffer após a leitura do arquivo:", originalArrayBuffer);
+        console.log("Tamanho do ArrayBuffer após a leitura do arquivo:", originalArrayBuffer.byteLength);
+
+        // Crie uma cópia do ArrayBuffer
+        const arrayBufferCopy = originalArrayBuffer.slice(0);
+
+        console.log("Tamanho da cópia do ArrayBuffer:", arrayBufferCopy.byteLength);
+
+        // Chame createSinglePagePDF com a cópia do ArrayBuffer
+        const pdfBytes = await createSinglePagePDF(arrayBufferCopy, 1); // Página 1 para teste
+
+        if (pdfBytes) {
+            const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = "pagina_teste.pdf";
+            link.innerText = "Download Página de Teste";
+            linksDiv.appendChild(link);
+            linksDiv.appendChild(document.createElement('br'));
+        } else {
+            console.error("Falha ao criar o PDF da página.");
+            alert("Falha ao criar o PDF da página.");
+        }
 
     } catch (error) {
         console.error("Erro ao executar splitPDF:", error);
@@ -20,97 +51,22 @@ async function splitPDF() {
     }
 }
 
-async function processPDF(file, linksDiv) {
-    try {
-        const fileReader = new FileReader();
+// Função auxiliar para ler o arquivo como ArrayBuffer usando FileReader e Promise
+function readFileAsArrayBuffer(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
 
-        fileReader.onload = async function() {
-            try {
-                pdfjsLib.GlobalWorkerOptions.workerSrc = 'dist/pdf.worker.js';
-                console.log('PDF.js worker source:', pdfjsLib.GlobalWorkerOptions.workerSrc);
-
-                const originalArrayBuffer = this.result; // ArrayBuffer
-                console.log("ArrayBuffer após a leitura do arquivo:", originalArrayBuffer);
-                console.log("Tamanho do ArrayBuffer após a leitura do arquivo:", originalArrayBuffer.byteLength);
-
-                const originalArray = new Uint8Array(originalArrayBuffer); // Uint8Array para pdfjsLib
-
-                const pdfDocProxy = await pdfjsLib.getDocument(originalArray).promise;
-
-                if (!pdfDocProxy || typeof pdfDocProxy.numPages !== 'number') {
-                    console.error('Falha ao carregar o documento PDF.');
-                    linksDiv.innerHTML = '<p style="color: red;">Falha ao carregar o documento PDF.</p>';
-                    return;
-                }
-
-                console.log('PDF carregado com sucesso:', pdfDocProxy);
-                linksDiv.innerHTML = '';
-
-                let hasErrors = false;
-
-                for (let i = 1; i <= pdfDocProxy.numPages; i++) {
-                    try {
-                        const page = await pdfDocProxy.getPage(i);
-
-                        if (!page) {
-                            console.warn(`Não foi possível obter a página ${i}.`);
-                            linksDiv.innerHTML += `<p style="color: red;">Erro ao obter página ${i}.</p>`;
-                            hasErrors = true;
-                            continue;
-                        }
-
-                        const pageContent = await page.getTextContent();
-
-                        if (!pageContent || !pageContent.items) {
-                            console.warn(`Não foi possível obter o conteúdo da página ${i}.`);
-                            linksDiv.innerHTML += `<p style="color: red;">Erro ao obter conteúdo da página ${i}.</p>`;
-                            hasErrors = true;
-                            continue;
-                        }
-
-                        let nomePrestador = extractPrestadorName(pageContent.items);
-                        console.log(`Nome do prestador extraído da página ${i}:`, nomePrestador);
-
-                       // Copia o ArrayBuffer antes de passá-lo para createSinglePagePDF
-                        const arrayBufferCopy = originalArrayBuffer.slice(0);
-                        console.log("Tamanho da cópia do ArrayBuffer antes de createSinglePagePDF:", arrayBufferCopy.byteLength);
-                        const pdfBytes = await createSinglePagePDF(arrayBufferCopy, i);
-
-                        if (pdfBytes) {
-                            const blob = new Blob([pdfBytes], { type: 'application/pdf' });
-                            const link = document.createElement('a');
-                            link.href = URL.createObjectURL(blob);
-                            link.download = `${nomePrestador}.pdf`;
-                            link.innerText = `Download Página ${i} (${nomePrestador}.pdf)`;
-                            linksDiv.appendChild(link);
-                            linksDiv.appendChild(document.createElement('br'));
-                        } else {
-                            linksDiv.innerHTML += `<p style="color: red;">Erro ao criar PDF para a página ${i}.</p>`;
-                            hasErrors = true;
-                        }
-
-                    } catch (pageError) {
-                        console.error(`Erro ao processar a página ${i}:`, pageError);
-                        linksDiv.innerHTML += `<p style="color: red;">Erro ao processar a página ${i}. Veja o console.</p>`;
-                        hasErrors = true;
-                    }
-                }
-
-                if (hasErrors) {
-                    alert('Um ou mais erros ocorreram durante o processamento. Verifique o console para obter mais detalhes.');
-                }
-
-            } catch (error) {
-                console.error('Erro ao processar o PDF:', error);
-                alert('Erro ao processar o PDF. Verifique o console para obter mais detalhes.');
-            }
+        reader.onload = function(event) {
+            resolve(event.target.result);
         };
 
-        fileReader.readAsArrayBuffer(file);
-    }  catch (error) {
-        console.error("Erro na função processPDF:", error);
-        alert("Ocorreu um erro ao processar o PDF. Verifique o console.");
-    }
+        reader.onerror = function(error) {
+            console.error("Erro ao ler o arquivo:", error);
+            reject(error);
+        };
+
+        reader.readAsArrayBuffer(file);
+    });
 }
 
 async function createSinglePagePDF(originalArrayBuffer, pageNumber) {
@@ -131,7 +87,6 @@ async function createSinglePagePDF(originalArrayBuffer, pageNumber) {
         console.log("Tamanho do ArrayBuffer:", originalArrayBuffer.byteLength);
 
         try {
-            // Crie uma cópia do ArrayBuffer como Uint8Array
             const uint8Array = new Uint8Array(originalArrayBuffer);
             const pdfDoc = await PDFDocument.load(uint8Array); // Carrega o documento original
 
