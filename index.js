@@ -111,16 +111,27 @@ async function createSinglePagePDF(pdfDocProxy, pageNumber, pdfPage) {
         const { width, height } = pdfPage.getViewport({ scale: 1 });
         const newPage = newPdf.addPage([width, height]);
 
-        const originalPageBytes = await pdfDocProxy.getData();
-        const originalPdf = await PDFDocument.load(originalPageBytes);
-        const [copiedPage] = await newPdf.copyPages(originalPdf, [pageNumber - 1]);
+        // Renderizar a página do pdfjsLib em um canvas
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d');
+        canvas.width = width;
+        canvas.height = height;
 
-        if (!copiedPage) {
-            console.warn(`Não foi possível copiar a página ${pageNumber}.`);
-            return null;
-        }
+        const renderContext = {
+            canvasContext: context,
+            viewport: pdfPage.getViewport({ scale: 1 })
+        };
+        await page.render(renderContext).promise();
 
-       
+        // Adicionar o canvas ao novo PDF usando pdf-lib
+        const imageBytes = canvas.toDataURL().split(',')[1]; // Remover o prefixo data:image/png;base64,
+        const image = await newPdf.embedPng(imageBytes);
+        newPage.drawImage(image, {
+            x: 0,
+            y: 0,
+            width: width,
+            height: height,
+        });
 
         const pdfBytes = await newPdf.save();
         return pdfBytes;
@@ -131,10 +142,12 @@ async function createSinglePagePDF(pdfDocProxy, pageNumber, pdfPage) {
 }
 
 function extractPrestadorName(text) {
-    const nomeMatch = text.match(/Prestador\s*de\s*serviço:?\s*([a-zA-ZÀ-ÿ\s]+)/i);
+   const nomeMatch = text.match(/Prestador\s*de\s*serviço:?\s*([a-zA-ZÀ-ÿ\s]+)/i);
 
     if (nomeMatch && nomeMatch[1]) {
-        return nomeMatch[1].trim(); // Remove espaços extras
+        // Tentar extrair apenas o nome próprio (primeira parte antes de vírgulas ou títulos)
+        let nome = nomeMatch[1].trim().split(',')[0].trim();
+        return nome;
     } else {
         console.warn("Nome do prestador não encontrado na página. Usando 'Nome_Não_Encontrado'. Texto da página:", text);
         return 'Nome_Não_Encontrado';
