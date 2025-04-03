@@ -241,3 +241,27 @@ span {
     line-height: 1.6;
     /* Espaçamento entre linhas */
 }
+
+.custom-pdf-page-item.error-item {
+    background-color: #f8d7da; /* Light red background */
+    color: #721c24; /* Dark red text */
+    border-color: #f5c6cb; /* Reddish border */
+    font-weight: bold;
+    text-align: center;
+    padding: 20px 15px; /* Adjust padding */
+}
+
+#log-messages {
+    /* ... existing styles ... */
+    min-height: 20px; /* Ensure space is reserved */
+    display: block; /* Ensure it takes full width for centering */
+    text-align: center;
+    width: 100%; /* Ensure it spans width */
+}
+
+/* Ensure button text centers when disabled/loading */
+.button1:disabled {
+    background-color: #cccccc;
+    cursor: not-allowed;
+    text-align: center; /* Add this */
+}
