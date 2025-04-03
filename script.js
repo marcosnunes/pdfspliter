@@ -1,5 +1,3 @@
-// --- START OF FILE script.js ---
-
 // Carrega o jsPDF, pdf.js e pdf-lib de forma assíncrona
 let jsPDF; // Variável global para jsPDF (mantido, pode ser útil)
 let Tesseract; // Variável global para Tesseract
@@ -544,6 +542,4 @@ document.addEventListener('DOMContentLoaded', function() {
              }, 'pdf-lib-script');
         }, 'jspdf-script');
     }, 'pdfjs-script');
-}); // Fim do DOMContentLoaded
-
-// --- END OF FILE script.js ---
+});
