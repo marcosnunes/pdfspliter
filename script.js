@@ -32,7 +32,7 @@ function loadScript(url, callback, id = null) {
         console.error(`Erro ao carregar o script: ${url}`);
         displayLogMessage(`Erro ao carregar biblioteca essencial: ${url}. Recarregue a página.`);
         const processButton = document.getElementById("processarPDF");
-        if(processButton) processButton.disabled = true;
+        if (processButton) processButton.disabled = true;
     };
     document.head.appendChild(script);
 }
@@ -75,14 +75,14 @@ function updateFileName() {
 
     // Atualiza mensagem de log baseado no estado das libs e do botão
     if (Tesseract && pdfjsLib && PDFLib && processButton && !processButton.disabled) {
-       // Só mostra pronto se TUDO carregou e botão está habilitado
-       displayLogMessage("Pronto para processar. Selecione um PDF.");
+        // Só mostra pronto se TUDO carregou e botão está habilitado
+        displayLogMessage("Pronto para processar. Selecione um PDF.");
     } else if (!Tesseract || !pdfjsLib || !PDFLib) {
-       // Se alguma lib ainda não carregou
-       displayLogMessage("Carregando bibliotecas, aguarde...");
+        // Se alguma lib ainda não carregou
+        displayLogMessage("Carregando bibliotecas, aguarde...");
     } else {
-       // Se libs carregaram mas botão ainda está desabilitado (durante inicialização final)
-       displayLogMessage("Inicializando...");
+        // Se libs carregaram mas botão ainda está desabilitado (durante inicialização final)
+        displayLogMessage("Inicializando...");
     }
 };
 
@@ -154,7 +154,7 @@ async function processarPdf() {
 
         // --- Etapa 3: Processamento das páginas ---
         if (!pdfLibDoc) {
-             throw new Error("Documento pdf-lib não foi carregado. Impossível processar páginas.");
+            throw new Error("Documento pdf-lib não foi carregado. Impossível processar páginas.");
         }
 
         displayLogMessage(`Iniciando processamento das ${numPages} páginas...`);
@@ -185,12 +185,12 @@ async function processarPdf() {
     } catch (error) {
         console.error("Erro durante o processamento do PDF:", error);
         if (error instanceof TypeError && error.message.includes('detached ArrayBuffer')) {
-             console.error("DETAILED STACK TRACE (DETACHED BUFFER):", error.stack);
-             displayLogMessage("Erro crítico: Ocorreu um problema de acesso aos dados do PDF (detached ArrayBuffer). Verifique o console.");
-             alert("Erro interno crítico (detached ArrayBuffer) ao processar o PDF. Recarregue a página ou tente outro arquivo.");
+            console.error("DETAILED STACK TRACE (DETACHED BUFFER):", error.stack);
+            displayLogMessage("Erro crítico: Ocorreu um problema de acesso aos dados do PDF (detached ArrayBuffer). Verifique o console.");
+            alert("Erro interno crítico (detached ArrayBuffer) ao processar o PDF. Recarregue a página ou tente outro arquivo.");
         } else {
-             displayLogMessage(`Erro: ${error.message || 'Ocorreu um erro desconhecido.'}`);
-             alert("Ocorreu um erro ao processar o PDF. Verifique o console para mais detalhes.");
+            displayLogMessage(`Erro: ${error.message || 'Ocorreu um erro desconhecido.'}`);
+            alert("Ocorreu um erro ao processar o PDF. Verifique o console para mais detalhes.");
         }
     } finally {
         processarPDFButton.textContent = "Processar PDF";
@@ -216,9 +216,9 @@ async function processarPagina(pdfJsDoc, pdfLibDoc, pageNum, pageIndex, totalPag
                 const textContent = await page.getTextContent();
                 const textoExtraidoTemp = textContent.items.map(item => item.str).join('\n');
                 const infoTemp = extractNameInfo(textoExtraidoTemp, pageNum);
-                 if (!infoTemp.nome || textoExtraidoTemp.replace(/\s/g, '').length < 150) {
-                     if (Tesseract) needCanvas = true; // Precisa de canvas se for tentar OCR
-                 }
+                if (!infoTemp.nome || textoExtraidoTemp.replace(/\s/g, '').length < 150) {
+                    if (Tesseract) needCanvas = true; // Precisa de canvas se for tentar OCR
+                }
             } catch (e) {
                 // Se extração direta falhar, tentar OCR (precisa de canvas)
                 if (Tesseract) needCanvas = true;
@@ -282,8 +282,8 @@ async function processarPagina(pdfJsDoc, pdfLibDoc, pageNum, pageIndex, totalPag
             } catch (textExtractError) {
                 console.error(`Erro ao extrair texto direto da pág ${pageNum} com pdf.js:`, textExtractError);
                 displayLogMessage(`Erro extraindo texto direto pág ${pageNum}. Tentando OCR fallback...`);
-                 // Tenta OCR como fallback se Tesseract e Canvas estiverem disponíveis
-                 if (Tesseract && canvas) {
+                // Tenta OCR como fallback se Tesseract e Canvas estiverem disponíveis
+                if (Tesseract && canvas) {
                     console.log(`Iniciando OCR (fallback) para a página ${pageNum}`);
                     ocrRealizado = true;
                     let worker = null;
@@ -300,11 +300,11 @@ async function processarPagina(pdfJsDoc, pdfLibDoc, pageNum, pageIndex, totalPag
                     } finally {
                         if (worker) await worker.terminate();
                     }
-                 } else if (!canvas) {
-                     displayLogMessage(`Canvas não disponível para OCR fallback na Pág ${pageNum}.`);
-                 } else {
+                } else if (!canvas) {
+                    displayLogMessage(`Canvas não disponível para OCR fallback na Pág ${pageNum}.`);
+                } else {
                     displayLogMessage(`Tesseract não disponível para OCR na Pág ${pageNum}.`);
-                 }
+                }
             }
         } else {
             // Se pdfJsDoc não carregou, não podemos extrair nome
@@ -339,8 +339,8 @@ async function processarPagina(pdfJsDoc, pdfLibDoc, pageNum, pageIndex, totalPag
 
         // Adiciona um listener para revogar o Object URL após o clique (melhor que timeout)
         downloadLink.addEventListener('click', () => {
-             // Pequeno delay para garantir que o download iniciou antes de revogar
-             setTimeout(() => URL.revokeObjectURL(pdfDataUri), 100);
+            // Pequeno delay para garantir que o download iniciou antes de revogar
+            setTimeout(() => URL.revokeObjectURL(pdfDataUri), 100);
         }, { once: true }); // O listener só precisa rodar uma vez
 
         const pageItem = document.createElement("div");
@@ -352,25 +352,24 @@ async function processarPagina(pdfJsDoc, pdfLibDoc, pageNum, pageIndex, totalPag
     } catch (error) {
         console.error(`Erro fatal ao processar a página ${pageNum}:`, error);
         if (error.message.includes('PDFDocument') || error.message.includes('copyPages') || error.message.includes('save')) {
-             displayLogMessage(`Erro crítico (pdf-lib) ao gerar PDF para pág ${pageNum}: ${error.message}`);
+            displayLogMessage(`Erro crítico (pdf-lib) ao gerar PDF para pág ${pageNum}: ${error.message}`);
         } else {
-             displayLogMessage(`Erro grave ao processar página ${pageNum}.`);
+            displayLogMessage(`Erro grave ao processar página ${pageNum}.`);
         }
         return { pageNum: pageNum, element: null };
     } finally {
         // Limpa o canvas se foi usado
         if (canvas) {
-             canvas.width = 0;
-             canvas.height = 0;
-             // Não é necessário remover do DOM pois não foi adicionado
-             canvas = null;
+            canvas.width = 0;
+            canvas.height = 0;
+            // Não é necessário remover do DOM pois não foi adicionado
+            canvas = null;
         }
     }
 }
 
 /**
- * Extrai informações de nome de um bloco de texto.
- * (Função extractNameInfo - sem alterações, usando a versão robusta anterior)
+ * Extrai informações de nome de um bloco de texto, com foco aprimorado em nomes de pessoas.
  * @param {string} textToSearch O texto completo extraído da página (direto ou OCR).
  * @param {number} pageNumber O número da página (para logging).
  * @param {boolean} isOcr Indica se o texto veio do OCR (para logging).
@@ -383,72 +382,186 @@ function extractNameInfo(textToSearch, pageNumber, isOcr = false) {
 
     console.log(`Iniciando extração de nome na pág ${pageNumber} (${isOcr ? 'OCR' : 'Texto Direto'}).`);
 
-    const namePart = "[A-ZÀ-ÖØ-ÞÁÉÍÓÚÂÊÎÔÛÃÕÇÑ][a-zà-öø-ÿáéíóúâêîôûãõçñ']+";
-    const preposition = "(?:\\s+(?:de|da|do|dos|das)\\s+)";
-    const nameCaptureGroup = `(${namePart}(?:${preposition}?${namePart}){1,5})`; // 2 a 6 partes
+    // --- Definições Refinadas ---
+    // namePart: Palavra capitalizada, permitindo apóstrofos e hífens internos, seguida por minúsculas/acentuadas.
+    const namePart = "[A-ZÀ-ÖØ-ÞÁÉÍÓÚÂÊÎÔÛÃÕÇÑ][a-zà-öø-ÿáéíóúâêîôûãõçñ'-]+";
+    // preposition: Preposições comuns em nomes, cercadas por espaços.
+    const preposition = "(?:\\s+(?:de|da|do|dos|das|e)\\s+)";
+    // nameCaptureGroup: Captura de 2 a 6 partes de nome, opcionalmente ligadas por preposições.
+    // Captura nomes como "João da Silva", "Maria Helena de Souza", "Pedro Álvares Cabral"
+    const nameCaptureGroup = `(${namePart}(?:${preposition}?${namePart}){1,5})`; // Pega de 2 a 6 "pedaços"
 
+    // --- Padrões de Regex (com prioridade implícita pela ordem) ---
     const patterns = [
-        { regex: new RegExp(`(?:NOME\\s*DO\\s*PACIENTE|PACIENTE|NOME\\s*DO\\s*CLIENTE|CLIENTE|NOME\\s*DO\\s*SEGURADO|SEGURADO|NOME\\s*DO\\s*BENEFICIÁRIO|BENEFICIÁRIO|NOME\\s*COMPLETO|NOME\\s*DO\\s*CONTRATANTE|CONTRATANTE)\\s*[:\\-]?\\s*$`, 'gim'), captureNextLine: true, label: "Nome (Paciente/Cliente/Etc Label)" },
-        { regex: new RegExp(`(?:NOME\\s*DO\\s*PACIENTE|PACIENTE|NOME\\s*DO\\s*CLIENTE|CLIENTE|NOME\\s*DO\\s*SEGURADO|SEGURADO|NOME\\s*DO\\s*BENEFICIÁRIO|BENEFICIÁRIO|NOME\\s*COMPLETO|NOME\\s*DO\\s*CONTRATANTE|CONTRATANTE)\\s*[:\\-]?\\s*${nameCaptureGroup}`, 'gim'), captureNextLine: false, label: "Nome (Paciente/Cliente/Etc)" },
-        { regex: new RegExp(`PRESTADOR\\s*(?:DE\\s*SERVIÇO(?:S)?)?\\s*[:\\-]?\\s*$`, 'gim'), captureNextLine: true, label: "Prestador (Label)" },
-        { regex: new RegExp(`PRESTADOR\\s*(?:DE\\s*SERVIÇO(?:S)?)?\\s*[:\\-]?\\s*${nameCaptureGroup}`, 'gim'), captureNextLine: false, label: "Prestador" },
-        { regex: new RegExp(`(?:NOME|REMETENTE|DESTINATÁRIO)\\s*[:\\-]?\\s*$`, 'gim'), captureNextLine: true, label: "Nome/Remetente/Destinatário Genérico (Label)" },
-        { regex: new RegExp(`(?:NOME|REMETENTE|DESTINATÁRIO)\\s*[:\\-]?\\s*${nameCaptureGroup}`, 'gim'), captureNextLine: false, label: "Nome/Remetente/Destinatário Genérico" },
-        { regex: new RegExp(`(?:^|\\s|:)${nameCaptureGroup}`, 'gim'), captureNextLine: false, label: "Nome Composto Capitalizado" }
+        // 1. Rótulos MUITO específicos (Paciente, Beneficiário, Segurado, Contratante) - Maior prioridade
+        //    Procura o rótulo no início da linha (^) seguido opcionalmente por : ou - e depois o nome.
+        { regex: new RegExp(`^\\s*(?:NOME\\s*DO\\s*PACIENTE|PACIENTE|NOME\\s*DO\\s*CLIENTE|CLIENTE|NOME\\s*DO\\s*SEGURADO|SEGURADO|NOME\\s*DO\\s*BENEFICIÁRIO|BENEFICIÁRIO|NOME\\s*COMPLETO|NOME\\s*DO\\s*CONTRATANTE|CONTRATANTE)\\s*[:\\-]?\\s*${nameCaptureGroup}`, 'gim'), captureNextLine: false, label: "Nome (Paciente/Cliente/Etc Direto)" },
+        //    Procura o rótulo sozinho no final da linha, esperando o nome na linha seguinte.
+        { regex: new RegExp(`^\\s*(?:NOME\\s*DO\\s*PACIENTE|PACIENTE|NOME\\s*DO\\s*CLIENTE|CLIENTE|NOME\\s*DO\\s*SEGURADO|SEGURADO|NOME\\s*DO\\s*BENEFICIÁRIO|BENEFICIÁRIO|NOME\\s*COMPLETO|NOME\\s*DO\\s*CONTRATANTE|CONTRATANTE)\\s*[:\\-]?\\s*$`, 'gim'), captureNextLine: true, label: "Nome (Paciente/Cliente/Etc Label)" },
+
+        // 2. Rótulo "Prestador" (Pode ser pessoa ou empresa - validação é crucial)
+        { regex: new RegExp(`^\\s*PRESTADOR\\s*(?:DE\\s*SERVIÇO(?:S)?)?\\s*[:\\-]?\\s*${nameCaptureGroup}`, 'gim'), captureNextLine: false, label: "Prestador (Direto)" },
+        { regex: new RegExp(`^\\s*PRESTADOR\\s*(?:DE\\s*SERVIÇO(?:S)?)?\\s*[:\\-]?\\s*$`, 'gim'), captureNextLine: true, label: "Prestador (Label)" },
+
+        // 3. Rótulos mais genéricos (Nome, Remetente, Destinatário)
+        { regex: new RegExp(`^\\s*(?:NOME|REMETENTE|DESTINATÁRIO)\\s*[:\\-]?\\s*${nameCaptureGroup}`, 'gim'), captureNextLine: false, label: "Nome/Remetente/Destinatário Genérico (Direto)" },
+        { regex: new RegExp(`^\\s*(?:NOME|REMETENTE|DESTINATÁRIO)\\s*[:\\-]?\\s*$`, 'gim'), captureNextLine: true, label: "Nome/Remetente/Destinatário Genérico (Label)" },
+
+        // 4. Fallback: Nome composto capitalizado no início da linha ou após espaço/dois-pontos.
+        //    Este é o mais arriscado e depende MUITO da validação `isValidName`.
+        //    Não usamos '^' aqui para permitir nomes que não estejam exatamente no início.
+        { regex: new RegExp(`(?:^|\\s|:)${nameCaptureGroup}`, 'gim'), captureNextLine: false, label: "Nome Composto Capitalizado (Fallback)" }
     ];
 
     const lines = textToSearch.split('\n');
-    let bestMatch = null;
+    let potentialMatches = []; // Armazena todas as correspondências válidas encontradas
 
     for (let i = 0; i < lines.length; i++) {
         const currentLine = lines[i].trim();
         if (!currentLine) continue;
 
         for (const pattern of patterns) {
-            pattern.regex.lastIndex = 0; // Reset regex index
+            pattern.regex.lastIndex = 0; // Resetar índice da regex global
             let match;
+
+            // Testar regex na linha atual
             while ((match = pattern.regex.exec(currentLine)) !== null) {
-                let potentialMatch = null;
+                let potentialName = null;
                 if (pattern.captureNextLine) {
-                    for (let j = i + 1; j < lines.length; j++) {
+                    // Procurar na(s) próxima(s) linha(s) não vazia(s)
+                    for (let j = i + 1; j < lines.length && j < i + 3; j++) { // Olha até 2 linhas abaixo
                         const nextLine = lines[j].trim();
                         if (nextLine) {
+                            // Tenta encontrar um nome composto no início da próxima linha
                             const nameMatchNextLine = nextLine.match(new RegExp(`^${nameCaptureGroup}`, "i"));
                             if (nameMatchNextLine && nameMatchNextLine[1]) {
-                                potentialMatch = nameMatchNextLine[1].trim();
-                                if (isValidName(potentialMatch)) {
-                                    console.log(`Nome encontrado (linha seguinte) via '${pattern.label}' na pág ${pageNumber}: ${potentialMatch}`);
-                                    bestMatch = potentialMatch;
-                                    break;
-                                } else { potentialMatch = null; }
+                                potentialName = nameMatchNextLine[1].trim();
+                                break; // Achou na próxima linha, para de procurar mais abaixo
                             }
-                           break;
+                            // Se a próxima linha não parece um nome, talvez não seja o que procuramos
+                            if (!/^[A-ZÀ-ÖØ-ÞÁÉÍÓÚÂÊÎÔÛÃÕÇÑ]/.test(nextLine)) break;
                         }
                     }
                 } else if (match[1]) {
-                     potentialMatch = match[1].trim();
-                     if (isValidName(potentialMatch)) {
-                         console.log(`Nome encontrado via '${pattern.label}' na pág ${pageNumber}: ${potentialMatch}`);
-                         bestMatch = potentialMatch;
-                     } else { potentialMatch = null; }
+                    // Captura direta do grupo na linha atual
+                    potentialName = match[1].trim();
                 }
-                if (bestMatch && pattern.captureNextLine) break;
-            }
-            if (bestMatch) break;
+
+                // Validar o nome encontrado
+                if (potentialName && isValidName(potentialName)) {
+                    const cleanedName = potentialName.replace(/\s\s+/g, ' ').trim();
+                    console.log(`Nome válido encontrado via '${pattern.label}' na pág ${pageNumber}: ${cleanedName}`);
+                    potentialMatches.push({ name: cleanedName, label: pattern.label });
+                    // Não paramos aqui, podemos encontrar um match melhor (com label mais específico) depois
+                }
+            } // fim while match
+        } // fim for patterns
+    } // fim for lines
+
+    // Escolher o melhor match (priorizar labels mais específicos se houver múltiplos matches)
+    let bestMatch = null;
+    if (potentialMatches.length > 0) {
+        // Dar prioridade para rótulos de Paciente/Cliente/etc.
+        bestMatch = potentialMatches.find(m => m.label.includes("Paciente") || m.label.includes("Cliente") || m.label.includes("Beneficiário") || m.label.includes("Segurado") || m.label.includes("Contratante"));
+        if (bestMatch) return { nome: bestMatch.name };
+
+        // Depois, Prestador (se validado como nome e não empresa)
+        bestMatch = potentialMatches.find(m => m.label.includes("Prestador"));
+        if (bestMatch) return { nome: bestMatch.name };
+
+        // Depois, Nome/Remetente/Destinatário genérico
+        bestMatch = potentialMatches.find(m => m.label.includes("Nome/Remetente/Destinatário"));
+        if (bestMatch) return { nome: bestMatch.name };
+
+        // Por último, o fallback genérico
+        bestMatch = potentialMatches.find(m => m.label.includes("Fallback"));
+        if (bestMatch) return { nome: bestMatch.name };
+
+        // Se nenhum dos acima, pega o primeiro encontrado (improvável chegar aqui)
+        return { nome: potentialMatches[0].name };
+    }
+
+    console.warn(`Nenhum nome válido encontrado com os padrões e validação na página ${pageNumber}.`);
+    return { nome: null };
+}
+
+/**
+ * Validação mais rigorosa de um nome potencial para filtrar não-pessoas.
+ * @param {string} name String a ser validada.
+ * @returns {boolean} True se parece um nome de pessoa válido, False caso contrário.
+ */
+function isValidName(name) {
+    if (!name) return false;
+    const trimmedName = name.replace(/\s\s+/g, ' ').trim(); // Limpa espaços extras
+
+    // 1. Verificações de Comprimento e Estrutura Básica
+    if (trimmedName.length < 5 || trimmedName.length > 80) return false; // Muito curto ou muito longo
+    if (!trimmedName.includes(' ')) return false; // Exige pelo menos um espaço (nome composto)
+    if (trimmedName.split(' ').length > 7) return false; // Mais de 7 palavras é improvável ser só nome
+    if (/\d/.test(trimmedName)) return false; // Não deve conter dígitos
+    if (/[.,;!?@#$%&*()_+=§°/<>]/.test(trimmedName)) return false; // Sem pontuação comum (exceto apóstrofo/hífen já tratados)
+
+    // 2. Verifica se é TODO MAIÚSCULO (comum em formulários, mas suspeito se longo ou contém certas palavras)
+    const isAllCaps = trimmedName.toUpperCase() === trimmedName;
+    if (isAllCaps && trimmedName.length > 30) return false; // Nomes longos todos em maiúsculas são menos prováveis
+
+    // 3. Lista de Palavras-chave de Exclusão (Empresas, Endereços, Documentos, etc.)
+    //    Usamos \b para garantir que são palavras inteiras. Case-insensitive (/i).
+    const exclusionKeywords = [
+        // Endereço
+        'RUA\\b', 'AV\\b', 'AVENIDA', 'ALAMEDA', 'TRAVESSA', 'ESTRADA', 'RODOVIA', 'PRAÇA', 'LARGO',
+        'N[º°]', 'S/N', 'KM\\b', 'BLOCO', 'APTO', 'APARTAMENTO', 'CONJUNTO', 'ANDAR', 'SALA', 'LOJA',
+        'BAIRRO', 'DISTRITO', 'CIDADE', 'MUNIC[ÍI]PIO', 'ESTADO', 'UF\\b', 'CEP\\b', 'CAIXA\\sPOSTAL', 'C\\.P\\.',
+        'ENDERE[ÇC]O', 'LOCALIDADE', 'COMPLEMENTO', 'REFER[ÊE]NCIA', 'PR[ÓO]XIMO',
+        // Empresa / Organização
+        'LTDA', 'S\\.A', 'S/A', 'CIA', 'EIRELI', 'MEI\\b', 'EPP\\b', 'ASSOCIA[ÇC][ÃA]O', 'INSTITUTO',
+        'FUNDA[ÇC][ÃA]O', 'EMPRESA', 'SERVI[ÇC]OS', 'CONSULTORIA', 'COM[ÉE]RCIO', 'IND[ÚU]STRIA',
+        'CL[ÍI]NICA', 'HOSPITAL', 'LABORAT[ÓO]RIO', 'CONSULT[ÓO]RIO', 'CENTRO', 'GRUPO', 'COOPERATIVA',
+        // Documentos / Seções / Outros
+        'CPF\\b', 'CNPJ\\b', 'RG\\b', 'INSC', 'ESTADUAL', 'MUNICIPAL', 'IM\\b', 'IE\\b', 'C[ÓO]DIGO',
+        'N[ÚU]MERO', 'PROTOCOLO', 'PROCESSO', 'PEDIDO', 'GUIA\\b', 'RECIBO', 'NOTA\\sFISCAL', 'NF-E',
+        'COMPROVANTE', 'DECLARA[ÇC][ÃA]O', 'DECLARO', 'ASSINATURA', 'CARIMBO', 'TESTEMUNHA',
+        'DATA\\b', 'HORA\\b', 'VALOR', 'TOTAL', 'SUBTOTAL', 'DESCONTO', 'JUROS', 'MULTA',
+        'P[ÁA]GINA', 'FOLHA', 'ANEXO', 'OBSERVA[ÇC][ÕO]ES', 'OBS\\.:?',
+        'PLANO', 'SEGURO', 'AP[ÓO]LICE', 'CONTRATO', 'CONV[ÊE]NIO', 'MATR[ÍI]CULA',
+        'EXAME', 'PROCEDIMENTO', 'SOLICITA[ÇC][ÃA]O', 'AUTORIZA[ÇC][ÃA]O',
+        'PREFEITURA', 'GOVERNO', 'SECRETARIA',
+        // Títulos/Cargos (se aparecerem sozinhos ou de forma estranha) - cuidado para não excluir "Dr. Nome"
+        // Se a string INTEIRA for só isso, exclui.
+        '^DR\\.?$', '^DRA\\.?$', '^SR\\.?$', '^SRA\\.?$', '^ENG\\.?$', '^ADV\\.?$', '^PROF\\.?$'
+    ];
+
+    const exclusionRegex = new RegExp(`\\b(${exclusionKeywords.join('|')})\\b`, 'i');
+
+    if (exclusionRegex.test(trimmedName)) {
+        // Exceção: permitir "DR." ou "DRA." APENAS no início do nome
+        if (!/^(DR|DRA)\.?\s/i.test(trimmedName) && /(DR|DRA)\b/i.test(trimmedName)) {
+            console.log(`Nome inválido: Contém título (DR/DRA) fora do início: "${trimmedName}"`);
+            return false;
         }
-        // Continuar procurando em outras linhas pode achar um rótulo mais específico
-        // if (bestMatch) break; // Descomentar para parar na primeira linha com match
+        // Se não for a exceção do Dr/Dra no início, qualquer outra keyword invalida
+        if (!/^(DR|DRA)\.?\s/i.test(trimmedName)) {
+            console.log(`Nome inválido: Contém keyword de exclusão: "${trimmedName}"`);
+            return false;
+        }
     }
 
-    if (!bestMatch) {
-         console.warn(`Nenhum nome válido encontrado com os padrões na página ${pageNumber}.`);
+    // 4. Verifica se contém palavras muito curtas (ex: preposições sozinhas ou siglas soltas)
+    const words = trimmedName.split(' ');
+    if (words.some(word => word.length === 1 && !/^[AEIOU]$/i.test(word))) { // Permite vogais sozinhas (ex: Maria E Silva)
+        console.log(`Nome inválido: Contém palavra de 1 letra (não vogal): "${trimmedName}"`);
+        return false;
     }
 
-    if (bestMatch) {
-        bestMatch = bestMatch.replace(/\s\s+/g, ' ').trim();
+    // 5. Verifica padrão de capitalização (Nome Sobrenome vs NOME SOBRENOME vs nome sobrenome)
+    //    Já verificamos all caps. Agora verifica se não é tudo minúsculo.
+    if (trimmedName.toLowerCase() === trimmedName) {
+        console.log(`Nome inválido: Tudo minúsculo: "${trimmedName}"`);
+        return false;
     }
 
-    return { nome: bestMatch };
+    // Se passou por todas as validações, é provável que seja um nome válido.
+    return true;
 }
 
 /**
@@ -472,7 +585,7 @@ function isValidName(name) {
 
 
 // --- Inicialização ---
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', function () {
     // URLs das bibliotecas
     const pdfjsLibUrl = "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/";
     const pdfjsWorkerUrl = pdfjsLibUrl + "build/pdf.worker.min.js";
@@ -503,29 +616,29 @@ document.addEventListener('DOMContentLoaded', function() {
     loadScript(pdfjsLibBuildUrl, () => {
         console.log("pdf.js carregado.");
         if (typeof window.pdfjsLib === 'undefined') {
-             console.error("pdfjsLib não está definido."); displayLogMessage("Erro: Falha ao carregar pdf.js."); return;
+            console.error("pdfjsLib não está definido."); displayLogMessage("Erro: Falha ao carregar pdf.js."); return;
         }
         pdfjsLib = window.pdfjsLib;
         pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl;
 
         loadScript(jspdfUrl, () => { // Carrega jsPDF (opcional)
             console.log("jsPDF carregado.");
-             if (typeof window.jspdf !== 'undefined' && typeof window.jspdf.jsPDF !== 'undefined') {
+            if (typeof window.jspdf !== 'undefined' && typeof window.jspdf.jsPDF !== 'undefined') {
                 jsPDF = window.jspdf.jsPDF;
-             } else { console.warn("jsPDF não carregado corretamente."); }
+            } else { console.warn("jsPDF não carregado corretamente."); }
 
-             loadScript(pdfLibUrl, () => { // Carrega pdf-lib (ESSENCIAL)
-                 console.log("pdf-lib carregado.");
-                 if (typeof window.PDFLib === 'undefined') {
+            loadScript(pdfLibUrl, () => { // Carrega pdf-lib (ESSENCIAL)
+                console.log("pdf-lib carregado.");
+                if (typeof window.PDFLib === 'undefined') {
                     console.error("PDFLib não está definido."); displayLogMessage("Erro: Falha ao carregar pdf-lib."); return;
-                 }
-                 PDFLib = window.PDFLib;
+                }
+                PDFLib = window.PDFLib;
 
-                 loadScript(tesseractUrl + '/dist/tesseract.min.js', () => { // Carrega Tesseract (ESSENCIAL para OCR)
+                loadScript(tesseractUrl + '/dist/tesseract.min.js', () => { // Carrega Tesseract (ESSENCIAL para OCR)
                     console.log("Tesseract.js carregado.");
-                     if (typeof window.Tesseract === 'undefined') {
-                         console.error("Tesseract não está definido."); displayLogMessage("Erro: Falha ao carregar Tesseract.js (OCR)."); return;
-                     }
+                    if (typeof window.Tesseract === 'undefined') {
+                        console.error("Tesseract não está definido."); displayLogMessage("Erro: Falha ao carregar Tesseract.js (OCR)."); return;
+                    }
                     Tesseract = window.Tesseract;
 
                     // TUDO CARREGADO - Habilita o botão e define estado final
@@ -538,8 +651,8 @@ document.addEventListener('DOMContentLoaded', function() {
                     } else {
                         console.error("Botão 'processarPDF' não encontrado no DOM após carregamento.");
                     }
-                 }, 'tesseract-script');
-             }, 'pdf-lib-script');
+                }, 'tesseract-script');
+            }, 'pdf-lib-script');
         }, 'jspdf-script');
     }, 'pdfjs-script');
 });
