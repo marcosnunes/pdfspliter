@@ -460,66 +460,6 @@ function isValidName(name, allowOrgKeywords = false, contextLabel = "Desconhecid
 }
 
 
-// 5. Pelo menos UMA palavra significativa (>1 letra OU sigla de 3+ letras maiúsculas para Org)
-const significantWords = allWords.filter(w => w.length > 1 || (allowOrgKeywords && w.length > 0 && w === w.toUpperCase()));
-if (significantWords.length < 1) {
-    // console.log(`[isValidName Debug - ${validationType}] Falha: Nenhuma palavra significativa: "${trimmedName}"`);
-    return false;
-}
-// Para Pessoas, exigir pelo menos duas palavras se não for nome muito curto com numeral romano
-if (!allowOrgKeywords && significantWords.length < 2 && !/\b(II|III|IV|V)$/i.test(trimmedName)) {
-    // console.log(`[isValidName Debug - Pessoa] Falha: < 2 palavras signif.: "${trimmedName}"`);
-    return false;
-}
-
-
-// 6. Muitas palavras curtas (ajustado)
-const shortWords = allWords.filter(word => word.length <= 3);
-// Relaxar esta regra para Org
-if (!allowOrgKeywords && shortWords.length > allWords.length / 2 && allWords.length > 3) {
-    const allowedShortWordsPerson = ['de', 'da', 'do', 'dos', 'das', 'e', 'ii', 'iii', 'iv', 'v', 'vi', 'vii', 'filho', 'neta', 'neto', 'junior', 'jr'];
-    if (!shortWords.every(sw => allowedShortWordsPerson.includes(sw.toLowerCase()) || /^[A-Z]{1,3}$/.test(sw))) { // Permitir siglas curtas tbm
-        // console.log(`[isValidName Debug - Pessoa] Falha: Muitas palavras curtas não permitidas: "${trimmedName}"`);
-        return false;
-    }
-}
-
-// 7. Capitalização (Relaxado para Org)
-// Rejeita Pessoa se palavras longas forem todas minúsculas (mas permite ALL CAPS)
-if (!allowOrgKeywords) {
-    const longWords = allWords.filter(w => w.length > 3);
-    const isAllLowerCaseRelevant = longWords.length > 0 && longWords.every(w => w === w.toLowerCase() && !/\d/.test(w)); // Ignora números
-    if (isAllLowerCaseRelevant && trimmedName !== trimmedName.toUpperCase()) {
-        // console.log(`[isValidName Debug - Pessoa] Falha: Longas minúsculas (não ALL CAPS): "${trimmedName}"`);
-        return false;
-    }
-}
-// Não aplicar essa regra estrita para Organizações devido a OCR e nomes variados.
-
-// 8. Consiste apenas de keywords de exclusão (Verificação Redundante? Já coberto no 4)
-// if (allWords.length > 1 && allWords.every(word => exclusionRegex.test(` ${word} `))) {
-//     console.log(`[isValidName Debug] Falha: Apenas keywords: "${trimmedName}"`);
-//     return false;
-// }
-
-// 9. Verificações Adicionais (Opcional)
-// Ex: Não começar ou terminar com preposições curtas (de, da, do, e)
-if (/^(de|da|do|dos|das|e)\b|\b(de|da|do|dos|das|e)$/i.test(trimmedName) && allWords.length > 1) {
-    // console.log(`[isValidName Debug - ${validationType}] Falha: Começa/Termina com preposição curta: "${trimmedName}"`);
-    return false;
-}
-// Ex: Não ser apenas números e pontuação
-if (/^[\d\s.,\-/\\]+$/.test(trimmedName)) {
-    // console.log(`[isValidName Debug - ${validationType}] Falha: Apenas números/pontuação: "${trimmedName}"`);
-    return false;
-}
-
-
-// Se passou por todas as verificações
-console.log(`[isValidName - ${validationType} - ${contextLabel}] SUCESSO: "${trimmedName}"`);
-return true;
-}
-
 // *** NOVA FUNÇÃO: Pré-processamento da imagem (Upscaling) ***
 async function preprocessImage(image, scaleFactor = 2) {
     return new Promise((resolve) => {
