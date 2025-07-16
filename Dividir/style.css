@@ -12,44 +12,79 @@ body {
 
 .nav-wrapper {
   background-color: #ffc107;
-  /* Cor de fundo azul */
   padding: 10px;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-  /* Sombra sutil */
-  display: flex;
-  justify-content: space-between;
-  /* Espaça os elementos igualmente */
-  align-items: right;
-  /* Alinha verticalmente os itens no centro */
+  text-align: right; /* Alinha o conteúdo (span) à direita */
+  height: 40px; /* Define uma altura fixa para a barra */
+  box-sizing: border-box; /* Garante que padding não adicione altura */
+}
+
+/* Estilos para o ícone de abrir o menu */
+.open-nav {
+    font-size: 24px;
+    cursor: pointer;
+    color: white;
+    padding-right: 15px;
+}
+
+/* Estilos para o menu lateral (Sidenav) */
+.sidenav {
+    height: 100%;
+    width: 0; /* Começa fechado */
+    position: fixed;
+    z-index: 1001; /* Fica acima de outros conteúdos */
+    top: 0;
+    right: 0;
+    background-color: #ff9800; /* Cor de fundo */
+    overflow-x: hidden; /* Desabilita scroll horizontal */
+    transition: 0.5s; /* Efeito de transição */
+    padding-top: 60px; /* Espaço no topo */
+}
+
+/* Estilos para os links do menu lateral */
+.sidenav a {
+    padding: 8px 8px 8px 32px;
+    text-decoration: none;
+    font-size: 22px;
+    color: white;
+    display: block;
+    transition: 0.3s;
+}
+
+/* Efeito hover nos links */
+.sidenav a:hover {
+    color: #f1f1f1;
+    background-color: #fb8c00;
+}
+
+/* Estilo para o botão de fechar (X) */
+.sidenav .closebtn {
+    position: absolute;
+    top: 0;
+    right: 25px;
+    font-size: 36px;
+    margin-left: 50px;
 }
 
 .nav-wrapper span a {
     color: white;
-    
 }
 
 .row {
     display: flex;
     flex-wrap: wrap;
     margin: 0px;
-    /* Removido margin padrão para evitar espaços extras */
 }
 
 .sectionBlockLayout {
     padding: 8px;
-    /* margin: 0px;  Já definido em .row */
-    /* display: flex; Já definido em .row */
-    /* flex-wrap: wrap; Já definido em .row */
 }
 
 .container {
     width: 100%;
     max-width: 1140px;
-    /* Largura máxima comum para containers */
     margin: 0 auto;
-    /* Centralizar container */
     padding: 0 15px;
-    /* Espaçamento lateral */
     box-sizing: border-box;
 }
 
@@ -63,7 +98,6 @@ body {
     display: flex;
     flex-direction: column;
     box-sizing: border-box;
-    /* Incluir padding/border no tamanho */
 }
 
 h1,
@@ -72,17 +106,14 @@ h4,
 p,
 span {
     color: #333;
-    /* Cor padrão para texto, sobrescrita onde necessário */
 }
 
-/* Estilos específicos do primeiro bloco (com imagem) */
 .hero-section {
     padding: 8px;
     margin: 0px;
     display: flex;
     flex-wrap: wrap;
     min-height: 50vh;
-    /* Altura mínima relativa à viewport */
     background-image: linear-gradient(0deg,
             rgba(0, 0, 0, 0.5),
             rgba(0, 0, 0, 0.5)),
@@ -91,40 +122,30 @@ span {
     background-repeat: no-repeat;
     background-size: cover;
     align-items: center;
-    /* Centralizar verticalmente o conteúdo */
     justify-content: center;
-    /* Centralizar horizontalmente o conteúdo */
     color: white;
-    /* Cor do texto para o bloco com fundo escuro */
 }
 
 .hero-section h1,
 .hero-section h4,
 .hero-section span#file-selected-name {
     color: white;
-    /* Garante cor branca para textos específicos */
 }
 
 .hero-section span#file-selected-name {
     color: #ffc107;
-    /* Cor específica para nome do arquivo */
     margin-bottom: 10px;
     display: block;
-    /* Para ocupar a linha e centralizar corretamente */
     text-align: center;
 }
 
 .hero-section .columnBlockLayout {
     margin: 40px 0px;
-    /* Ajuste de margem vertical */
     align-items: center;
-    /* Centralizar itens na coluna */
 }
 
-/* Estilos para melhorar a interface */
 .button1 {
     background-color: #ff9800;
-    /* Tom de laranja */
     border: none;
     color: white;
     padding: 10px 20px;
@@ -136,108 +157,59 @@ span {
     cursor: pointer;
     border-radius: 5px;
     transition: background-color 0.3s ease;
-    /* Transição suave */
 }
 
 .button1:disabled {
     background-color: #cccccc;
-    /* Cor quando desabilitado */
     cursor: not-allowed;
 }
 
 .button1:hover:not(:disabled) {
     background-color: #fb8c00;
-    /* Laranja mais escuro no hover */
 }
 
-#pdf-pages-container {
+#thumbnails-container {
     display: flex;
     flex-wrap: wrap;
     justify-content: flex-start;
-    /* Alinha os itens à esquerda */
-    gap: 15px;
-    /* Espaçamento entre os itens */
-    margin-top: 20px;
-    /* Espaço acima do container de páginas */
+    margin-top: 10px;
 }
 
-.custom-pdf-page-item {
-    width: 180px;
-    /* Largura ajustada */
-    padding: 15px;
+#thumbnails-container img {
+    max-width: 100px;
+    max-height: 100px;
+    margin: 5px;
     border: 1px solid #ccc;
-    border-radius: 5px;
-    /* Bordas arredondadas */
-    text-align: center;
-    background-color: #f9f9f9;
-    /* Fundo leve */
-    box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.1);
-    /* Sombra sutil */
-    transition: transform 0.2s ease;
-    /* Efeito ao passar o mouse */
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
-.custom-pdf-page-item:hover {
-    transform: translateY(-3px);
-    /* Leve elevação no hover */
-}
-
-.custom-pdf-page-item a {
-    display: block;
-    /* Faz o link ocupar todo o espaço do item */
-    text-decoration: none;
-    color: #337ab7;
-    font-weight: bold;
-    /* Destacar o link */
-    word-wrap: break-word;
-    /* Quebrar palavras longas se necessário */
-}
-
-.custom-pdf-page-item a:hover {
-    color: #23527c;
-    /* Cor do link no hover */
-}
-
-/* Estilo para o input de arquivo personalizado */
 .custom-file-upload {
     border: none;
-    /* Remover borda padrão */
     display: inline-block;
     padding: 10px 20px;
-    /* Mesmo padding do botão */
     cursor: pointer;
     background-color: #ffc107;
-    /* Tom de laranja mais claro */
     color: #333;
     border-radius: 5px;
     margin-bottom: 15px;
-    /* Aumentar espaço abaixo */
     text-align: center;
     font-size: 16px;
-    /* Mesmo tamanho de fonte do botão */
     transition: background-color 0.3s ease;
-    /* Transição suave */
 }
 
 .custom-file-upload:hover {
     background-color: #ffd54f;
-    /* Tom de laranja mais claro no hover */
 }
 
 #log-messages {
     font-style: italic;
     color: white;
-    /* Mantido branco para o bloco hero */
     font-size: 16px;
-    /* Tamanho ajustado */
     margin-top: 10px;
-    /* Espaço acima da mensagem de log */
     text-align: center;
     min-height: 20px;
-    /* Para evitar "pulo" quando a mensagem aparece */
 }
 
-/* Bloco de Instruções e Páginas Processadas */
 .info-section {
     padding: 8px;
     margin: 0px;
@@ -245,7 +217,6 @@ span {
     flex-wrap: wrap;
     min-height: auto;
     background-color: #f8f9fa;
-    /* Fundo levemente cinza */
 }
 
 .info-section .columnBlockLayout {
@@ -258,35 +229,26 @@ span {
 
 .info-section h2 {
     color: #ff9800;
-    /* Título em laranja */
     margin-bottom: 15px;
 }
 
 .info-section p {
     line-height: 1.6;
-    /* Espaçamento entre linhas */
 }
 
-.custom-pdf-page-item.error-item {
-    background-color: #f8d7da; /* Light red background */
-    color: #721c24; /* Dark red text */
-    border-color: #f5c6cb; /* Reddish border */
+/* Estilo para o link de download personalizado */
+.custom-download-link {
+    display: inline-block;
+    padding: 10px 20px;
+    background-color: #ff9800;
+    color: white;
+    text-decoration: none;
+    border-radius: 5px;
     font-weight: bold;
-    text-align: center;
-    padding: 20px 15px; /* Adjust padding */
+    transition: background-color 0.3s ease;
+    margin-top: 10px;
 }
 
-#log-messages {
-    /* ... existing styles ... */
-    min-height: 20px; /* Ensure space is reserved */
-    display: block; /* Ensure it takes full width for centering */
-    text-align: center;
-    width: 100%; /* Ensure it spans width */
-}
-
-/* Ensure button text centers when disabled/loading */
-.button1:disabled {
-    background-color: #cccccc;
-    cursor: not-allowed;
-    text-align: center; /* Add this */
+.custom-download-link:hover {
+    background-color: #fb8c00;
 }

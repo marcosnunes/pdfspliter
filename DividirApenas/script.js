@@ -1,3 +1,12 @@
+/* Funções para controlar o Menu Lateral (Sidenav) */
+function openNav() {
+    document.getElementById("mySidenav").style.width = "250px";
+}
+
+function closeNav() {
+    document.getElementById("mySidenav").style.width = "0";
+}
+
 // Carrega o jsPDF e pdf-lib de forma assíncrona
 let jsPDF; // Variável global para jsPDF (mantido, pode ser útil)
 let PDFLib; // Variável global para pdf-lib

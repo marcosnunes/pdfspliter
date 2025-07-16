@@ -12,20 +12,62 @@ body {
 
 .nav-wrapper {
   background-color: #ffc107;
-  /* Cor de fundo azul */
   padding: 10px;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-  /* Sombra sutil */
-  display: flex;
-  justify-content: space-between;
-  /* Espaça os elementos igualmente */
-  align-items: right;
-  /* Alinha verticalmente os itens no centro */
+  text-align: right; /* Alinha o conteúdo (span) à direita */
+  height: 40px; /* Define uma altura fixa para a barra */
+  box-sizing: border-box; /* Garante que padding não adicione altura */
+}
+
+/* Estilos para o ícone de abrir o menu */
+.open-nav {
+    font-size: 24px;
+    cursor: pointer;
+    color: white;
+    padding-right: 15px;
+}
+
+/* Estilos para o menu lateral (Sidenav) */
+.sidenav {
+    height: 100%;
+    width: 0; /* Começa fechado */
+    position: fixed;
+    z-index: 1001; /* Fica acima de outros conteúdos */
+    top: 0;
+    right: 0;
+    background-color: #ff9800; /* Cor de fundo */
+    overflow-x: hidden; /* Desabilita scroll horizontal */
+    transition: 0.5s; /* Efeito de transição */
+    padding-top: 60px; /* Espaço no topo */
+}
+
+/* Estilos para os links do menu lateral */
+.sidenav a {
+    padding: 8px 8px 8px 32px;
+    text-decoration: none;
+    font-size: 22px;
+    color: white;
+    display: block;
+    transition: 0.3s;
+}
+
+/* Efeito hover nos links */
+.sidenav a:hover {
+    color: #f1f1f1;
+    background-color: #fb8c00;
+}
+
+/* Estilo para o botão de fechar (X) */
+.sidenav .closebtn {
+    position: absolute;
+    top: 0;
+    right: 25px;
+    font-size: 36px;
+    margin-left: 50px;
 }
 
 .nav-wrapper span a {
     color: white;
-    
 }
 
 .row {

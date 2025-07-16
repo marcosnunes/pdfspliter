@@ -1,3 +1,12 @@
+/* Funções para controlar o Menu Lateral (Sidenav) */
+function openNav() {
+    document.getElementById("mySidenav").style.width = "250px";
+}
+
+function closeNav() {
+    document.getElementById("mySidenav").style.width = "0";
+}
+
 // Função para carregar scripts dinamicamente
 function loadScript(url, callback, id = null) {
     // Verifica se o script já existe pelo ID (se fornecido)
