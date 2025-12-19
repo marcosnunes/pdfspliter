@@ -94,7 +94,8 @@ loadScript(pdfLibUrl, () => {
     fileInput.addEventListener('change', function () {
         const files = fileInput.files;
         displayLogMessage(`Imagens selecionadas: ${files.length}`);
-        displayThumbnails(files);
+        const sortedFilesForThumbs = Array.from(files).sort((a, b) => a.name.localeCompare(b.name));
+        displayThumbnails(sortedFilesForThumbs);
 
         // Atualiza o nome dos arquivos selecionados
         if (files.length > 0) {
@@ -122,6 +123,8 @@ loadScript(pdfLibUrl, () => {
         try {
             const pdfDoc = await PDFLib.PDFDocument.create();
             let pageCount = 0;
+
+            const sortedFiles = Array.from(files).sort((a, b) => a.name.localeCompare(b.name));
 
             for (const file of files) {
                 displayLogMessage(`Processando imagem: ${file.name}`);
