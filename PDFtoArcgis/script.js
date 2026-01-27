@@ -2047,7 +2047,7 @@ fileInput.addEventListener("change", async (event) => {
   if (!file) return;
 
   fileNameBase = file.name.replace(/\.[^/.]+$/, "");
-  pdfOrigemNomeBase = fileNameBase;
+  pdfOrigemNomeBase = file.name.replace(/\.[^/.]+$/, ""); // sempre sem extensão
   pdfOrigemSrc = file.name;
   document.getElementById("fileNameDisplay").innerText = file.name;
 
@@ -2663,7 +2663,7 @@ saveToFolderBtn.onclick = async () => {
       }
 
       const base = sanitizeFileName(pdfOrigemNomeBase || fileNameBase);
-      const srcNome = pdfOrigemSrc || "src";
+      const srcNome = sanitizeFileName(pdfOrigemNomeBase || fileNameBase);
       const ring = vertices.map(c => [c.east, c.north]);
       // Limite (POLYGON)
       await new Promise((resolve, reject) => {
