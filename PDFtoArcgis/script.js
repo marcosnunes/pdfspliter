@@ -40,6 +40,8 @@ const docMeta = document.getElementById("docMeta");
 
 let extractedCoordinates = [];
 let fileNameBase = "coordenadas_extracao";
+let pdfOrigemNomeBase = "";
+let pdfOrigemSrc = "";
 
 // Resultados por matrícula (PDF unificado)
 let documentsResults = []; // [{docId,pages,projectionKey,manualProjectionKey,projectionInfo,vertices,warnings}]
@@ -2045,6 +2047,8 @@ fileInput.addEventListener("change", async (event) => {
   if (!file) return;
 
   fileNameBase = file.name.replace(/\.[^/.]+$/, "");
+  pdfOrigemNomeBase = fileNameBase;
+  pdfOrigemSrc = file.name;
   document.getElementById("fileNameDisplay").innerText = file.name;
 
   progressContainer.style.display = "block";
@@ -2489,7 +2493,8 @@ downloadBtn.onclick = () => {
 
     const link = document.createElement("a");
     link.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8;" }));
-    link.download = `${fileNameBase}_${crsName}_Validado.csv`;
+    // Novo: incluir nome do PDF de origem e src no nome do arquivo
+    link.download = `${pdfOrigemNomeBase || fileNameBase}_${crsName}_Validado_${pdfOrigemSrc || "src"}.csv`;
     link.click();
 
     // Também exportar relatório se houver validação
@@ -2503,7 +2508,8 @@ downloadBtn.onclick = () => {
       );
       const linkRel = document.createElement("a");
       linkRel.href = URL.createObjectURL(new Blob([relatorio], { type: "text/plain;charset=utf-8;" }));
-      linkRel.download = `${fileNameBase}_${crsName}_Relatorio.txt`;
+      // Novo: incluir nome do PDF de origem e src no nome do arquivo
+      linkRel.download = `${pdfOrigemNomeBase || fileNameBase}_${crsName}_Relatorio_${pdfOrigemSrc || "src"}.txt`;
       linkRel.click();
     }
   } catch (e) {
@@ -2588,13 +2594,15 @@ saveToFolderBtn.onclick = async () => {
               crsName = String(crsName).replace(/[^\w\d]/g, "_");
               await writeFile(`${base}_${crsName}_limite.shp`, toArrayBufferFS(files.shp));
               await new Promise(r => setTimeout(r, 50)); // Pequeno delay
-              await writeFile(`${base}_${crsName}_limite.shx`, toArrayBufferFS(files.shx));
+              const baseNome = pdfOrigemNomeBase || base;
+              const srcNome = pdfOrigemSrc || "src";
+              await writeFile(`${baseNome}_${crsName}_limite_${srcNome}.shp`, toArrayBufferFS(files.shp));
+              await new Promise(r => setTimeout(r, 50)); // Pequeno delay
+              await writeFile(`${baseNome}_${crsName}_limite_${srcNome}.shx`, toArrayBufferFS(files.shx));
               await new Promise(r => setTimeout(r, 50));
-              await writeFile(`${base}_${crsName}_limite.dbf`, toArrayBufferFS(files.dbf));
+              await writeFile(`${baseNome}_${crsName}_limite_${srcNome}.dbf`, toArrayBufferFS(files.dbf));
               await new Promise(r => setTimeout(r, 50));
-              await writeFile(`${base}_${crsName}_limite.prj`, projection.wkt);
-              resolve();
-            } catch (e) { reject(e); }
+              await writeFile(`${baseNome}_${crsName}_limite_${srcNome}.prj`, projection.wkt);
           }
         );
       });
