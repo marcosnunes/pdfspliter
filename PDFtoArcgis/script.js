@@ -2277,82 +2277,80 @@ function processExtractUnified(pagesText) {
   
   // NOVO: Detectar ciclos de polígonos automaticamente
   const cycles = detectPolygonCycles(allVertices);
-  
+
   if (!cycles.length) {
     progressContainer.style.display = "none";
     updateStatus("❌ Não foi possível detectar ciclos de polígonos válidos.", "error");
     return;
   }
-  
+
   documentsResults = [];
-  
-  // Processar cada ciclo como um polígono independente
-  for (let cycleIdx = 0; cycleIdx < cycles.length; cycleIdx++) {
-    const cycleVertices = cycles[cycleIdx];
-    const polygonId = `Polígono_${cycleIdx + 1}`;
-    
-    console.log(`[PDFtoArcgis] 🔍 Processando ${polygonId}...`);
-    
-    // Calcular distâncias e azimutes
-    const vertices = cycleVertices.map((pt, i) => {
-      pt.ordem = i + 1;
-      if (i < cycleVertices.length - 1) {
-        pt.distCalc = calcularDistancia(pt, cycleVertices[i + 1]).toFixed(2);
-        pt.azCalc = calcularAzimute(pt, cycleVertices[i + 1]).toFixed(4);
-      } else {
-        pt.distCalc = "---";
-        pt.azCalc = "---";
-      }
-      return pt;
-    });
-    
-    // Remover duplicados consecutivos
-    const cleaned = [];
-    for (const p of vertices) {
-      const last = cleaned[cleaned.length - 1];
-      if (!last || last.east !== p.east || last.north !== p.north) cleaned.push(p);
+
+  // Salvar apenas o primeiro ciclo detectado como o único polígono do documento
+  const cycleVertices = cycles[0];
+  const polygonId = `Polígono_1`;
+
+  console.log(`[PDFtoArcgis] 🔍 Processando ${polygonId}...`);
+
+  // Calcular distâncias e azimutes
+  const vertices = cycleVertices.map((pt, i) => {
+    pt.ordem = i + 1;
+    if (i < cycleVertices.length - 1) {
+      pt.distCalc = calcularDistancia(pt, cycleVertices[i + 1]).toFixed(2);
+      pt.azCalc = calcularAzimute(pt, cycleVertices[i + 1]).toFixed(4);
+    } else {
+      pt.distCalc = "---";
+      pt.azCalc = "---";
     }
-    
-    // Validação topológica
-    const topologyValidation = validatePolygonTopology(cleaned, projKey);
-    
-    // Extração de dados do memorial
-    const memorialData = extractAzimuthDistanceFromText(fullText);
-    const memorialValidation = memorialData.azimutes.length > 0 
-      ? validateMemorialCoherence(cleaned, memorialData, projKey)
-      : null;
-    
-    // Construir warnings
-    const warnings = [];
-    if (!projKey) warnings.push("⚠️ CRS não identificado; use o modo avançado.");
-    if (fixes.length) warnings.push(`✓ ${fixes.length} correção(ões) automática(s) aplicada(s)`);
-    warnings.push(...validateCoords(cleaned, projKey));
-    
-    if (!topologyValidation.isValid) {
-      warnings.push(...topologyValidation.errors.map(e => `❌ ${e}`));
-    }
-    warnings.push(...topologyValidation.warnings);
-    
-    if (memorialValidation && memorialValidation.issues.length > 0) {
-      warnings.push(...memorialValidation.issues.map(i => `⚠️ ${i}`));
-    }
-    
-    const finalVertices = topologyValidation.corrected || cleaned;
-    
-    documentsResults.push({
-      docId: polygonId,
-      polygonIndex: cycleIdx + 1,
-      pages: "Todas",
-      projectionKey: projKey,
-      manualProjectionKey: null,
-      projectionInfo: det,
-      vertices: finalVertices,
-      warnings,
-      topology: topologyValidation,
-      memorialValidation,
-      memorialData
-    });
+    return pt;
+  });
+
+  // Remover duplicados consecutivos
+  const cleaned = [];
+  for (const p of vertices) {
+    const last = cleaned[cleaned.length - 1];
+    if (!last || last.east !== p.east || last.north !== p.north) cleaned.push(p);
   }
+
+  // Validação topológica
+  const topologyValidation = validatePolygonTopology(cleaned, projKey);
+
+  // Extração de dados do memorial
+  const memorialData = extractAzimuthDistanceFromText(fullText);
+  const memorialValidation = memorialData.azimutes.length > 0 
+    ? validateMemorialCoherence(cleaned, memorialData, projKey)
+    : null;
+
+  // Construir warnings
+  const warnings = [];
+  if (!projKey) warnings.push("⚠️ CRS não identificado; use o modo avançado.");
+  if (fixes.length) warnings.push(`✓ ${fixes.length} correção(ões) automática(s) aplicada(s)`);
+  warnings.push(...validateCoords(cleaned, projKey));
+
+  if (!topologyValidation.isValid) {
+    warnings.push(...topologyValidation.errors.map(e => `❌ ${e}`));
+  }
+  warnings.push(...topologyValidation.warnings);
+
+  if (memorialValidation && memorialValidation.issues.length > 0) {
+    warnings.push(...memorialValidation.issues.map(i => `⚠️ ${i}`));
+  }
+
+  const finalVertices = topologyValidation.corrected || cleaned;
+
+  documentsResults.push({
+    docId: polygonId,
+    polygonIndex: 1,
+    pages: "Todas",
+    projectionKey: projKey,
+    manualProjectionKey: null,
+    projectionInfo: det,
+    vertices: finalVertices,
+    warnings,
+    topology: topologyValidation,
+    memorialValidation,
+    memorialData
+  });
 
   progressContainer.style.display = "none";
 
@@ -2360,7 +2358,7 @@ function processExtractUnified(pagesText) {
   const totalPolygons = documentsResults.length;
   const validPolygons = documentsResults.filter(d => (d.vertices || []).length >= 3 && d.topology?.isValid).length;
   const warningPolygons = documentsResults.filter(d => (d.vertices || []).length >= 3 && !d.topology?.isValid).length;
-  
+
   updateStatus(
     `✅ PDF processado. Polígonos encontrados: ${totalPolygons} | Válidos: ${validPolygons} | Com avisos: ${warningPolygons}`,
     validPolygons === totalPolygons ? "success" : (warningPolygons > 0 ? "warning" : "info")
