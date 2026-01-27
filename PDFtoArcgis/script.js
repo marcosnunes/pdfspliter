@@ -3249,8 +3249,16 @@ if (generateDocxBtn) {
         ) || "Curitiba-PR";
       }
 
-      const nomeArea = shpPoligonoNome || "ÁREA";
-      const dataBR   = new Date().toLocaleDateString("pt-BR");
+      const nomeArea = shpPoligonoNome || "gleba";
+      // Data por extenso: "21 de janeiro de 2026"
+      function formatarDataPorExtenso(date) {
+        const meses = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"];
+        const d = date.getDate();
+        const m = meses[date.getMonth()];
+        const y = date.getFullYear();
+        return `${d} de ${m} de ${y}`;
+      }
+      const dataBR = formatarDataPorExtenso(new Date());
 
       // 8) Área (ha) e perímetro (m)
       let signed = 0;
@@ -3276,7 +3284,39 @@ if (generateDocxBtn) {
       // const memorialTxt = montarTextoMemorial(vertsForDoc, crsKey);
 
       // 10) Geração do DOCX - AJUSTADO PARA O MODELO
-      const { Document, Packer, Paragraph, TextRun, AlignmentType } = window.docx;
+      const { Document, Packer, Paragraph, TextRun, AlignmentType, LineSpacingType } = window.docx;
+
+      // Função para espaçamento entre letras (2 espaços)
+      function espacarLetras(texto) {
+        return texto.split("").join(" ");
+      }
+
+      // Função para garantir valor numérico válido
+      function safeNumber(val, casas = 2) {
+        const n = Number(val);
+        return Number.isFinite(n) ? n.toFixed(casas) : "0.00";
+      }
+
+      // Garante que o último segmento (azimute/distância) seja incluído
+      const memorialRuns = [];
+      for (let i = 0; i < vertsForDoc.length - 1; i++) {
+        const vAtual = vertsForDoc[i];
+        const vProx = vertsForDoc[i + 1];
+        memorialRuns.push(
+          new TextRun({
+            text: ` Do vértice ${i + 1} segue até o vértice ${i + 2}, com coordenadas `,
+            size: 24, font: "Arial"
+          }),
+          new TextRun({
+            text: `U T M E=${safeNumber(vProx.east, 3)} e N=${safeNumber(vProx.north, 3)}`,
+            bold: true, size: 24, font: "Arial"
+          }),
+          new TextRun({
+            text: `, no azimute de ${vProx.azCalc || "00°00'00\""}, na extensão de ${safeNumber(vProx.distCalc)} m;`,
+            size: 24, font: "Arial"
+          })
+        );
+      }
 
       const doc = new Document({
         sections: [{
@@ -3286,27 +3326,26 @@ if (generateDocxBtn) {
             new Paragraph({
               alignment: AlignmentType.CENTER,
               children: [
-                new TextRun({ text: "M E M O R I A L   D E S C R I T I V O", bold: true, size: 24, font: "Calibri" })
+                new TextRun({
+                  text: espacarLetras("MEMORIAL DESCRITIVO"),
+                  bold: true,
+                  size: 28, // Times New Roman 14pt = 28 half-points
+                  font: "Times New Roman",
+                  allCaps: true
+                })
               ]
             }),
-            new Paragraph({
-              alignment: AlignmentType.CENTER,
-              spacing: { after: 100 },
-              children: [
-                new TextRun({ text: nomeArea, bold: true, size: 22, font: "Calibri" })
-              ]
-            }),
-            new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: ".", size: 22, font: "Calibri" })] }),
+            new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: ".", size: 22, font: "Times New Roman" })] }),
 
             // ITEM 1 - DESCRIÇÃO
             new Paragraph({
               alignment: AlignmentType.JUSTIFIED,
               spacing: { before: 200 },
               children: [
-                new TextRun({ text: "1. Descrição da Área: ", bold: true, size: 22, font: "Calibri" }),
+                new TextRun({ text: "1. Descrição da Área: ", bold: true, size: 24, font: "Arial" }),
                 new TextRun({ 
-                  text: `A referida ${nomeArea} é delimitada por um polígono irregular cuja descrição se inicia no vértice 1, seguindo sentido horário com coordenadas planas no sistema U T M Este (X) ${BRNumber3.format(vertsForDoc[0].east)} e Norte (Y) ${BRNumber3.format(vertsForDoc[0].north)}, como segue:`, 
-                  size: 22, font: "Calibri" 
+                  text: `A referida gleba é delimitada por um polígono irregular cuja descrição se inicia no vértice 1, seguindo sentido horário com coordenadas planas no sistema U T M Este (X) ${safeNumber(vertsForDoc[0].east, 3)} e Norte (Y) ${safeNumber(vertsForDoc[0].north, 3)}, como segue:`,
+                  size: 24, font: "Arial" 
                 })
               ]
             }),
@@ -3315,24 +3354,18 @@ if (generateDocxBtn) {
             new Paragraph({
               alignment: AlignmentType.JUSTIFIED,
               children: [
-                new TextRun({ text: "Sistema de Referência (CRS): ", bold: true, size: 22, font: "Calibri" }),
-                new TextRun({ text: ` ${crsText}`, size: 22, font: "Calibri" })
+                new TextRun({ text: "Sistema de Referência (CRS): ", bold: true, size: 24, font: "Arial" }),
+                new TextRun({ text: ` ${crsText}`, size: 24, font: "Arial" })
               ]
             }),
 
             // ITEM 2 - MEMORIAL (BLOCO ÚNICO)
             new Paragraph({
               alignment: AlignmentType.JUSTIFIED,
-              spacing: { before: 200 },
+              spacing: { before: 200, line: 360, lineRule: LineSpacingType.AUTO }, // 1,5 espaçamento
               children: [
-                new TextRun({ text: "2. Memorial da Área: ", bold: true, size: 22, font: "Calibri" }),
-                ...vertsForDoc.slice(0, -1).map((v, i) => {
-                  const proximo = vertsForDoc[i + 1];
-                  return new TextRun({
-                    text: ` Do vértice ${i + 1} segue até o vértice ${i + 2}, com coordenadas U T M E=${BRNumber3.format(proximo.east)} e N=${BRNumber3.format(proximo.north)}, no azimute de ${proximo.azCalc || "00°00'00\""}, na extensão de ${BRNumber2.format(proximo.distCalc)} m;`,
-                    size: 22, font: "Calibri"
-                  });
-                })
+                new TextRun({ text: "2. Memorial da Área: ", bold: true, size: 24, font: "Arial" }),
+                ...memorialRuns
               ]
             }),
 
@@ -3343,27 +3376,27 @@ if (generateDocxBtn) {
               children: [
                 new TextRun({ 
                   text: `Finalmente, fechando o polígono acima descrito, abrangendo uma área de ${areaTxt} ha e um perímetro de ${perTxt} m.`, 
-                  size: 22, font: "Calibri" 
+                  size: 24, font: "Arial" 
                 })
               ]
             }),
 
-            new Paragraph({ alignment: AlignmentType.CENTER, spacing: { before: 200 }, children: [new TextRun({ text: ".", size: 22, font: "Calibri" })] }),
+            new Paragraph({ alignment: AlignmentType.CENTER, spacing: { before: 200 }, children: [new TextRun({ text: ".", size: 22, font: "Times New Roman" })] }),
 
             // DATA E ASSINATURA
             new Paragraph({
               alignment: AlignmentType.CENTER,
               spacing: { before: 400 },
-              children: [new TextRun({ text: `${cidade}, ${dataBR}`, size: 22, font: "Calibri" })]
+              children: [new TextRun({ text: `${cidade}, ${dataBR}`, size: 24, font: "Arial" })]
             }),
             new Paragraph({
               alignment: AlignmentType.CENTER,
               spacing: { before: 800 },
               children: [
-                new TextRun({ text: "______________________________________________", size: 22, font: "Calibri" }),
-                new TextRun({ text: resp || "Responsável Técnico", break: 1, size: 22, font: "Calibri" }),
-                new TextRun({ text: `CREA: ${crea || ""}`, break: 1, size: 22, font: "Calibri" })
-              ]
+                new TextRun({ text: "______________________________________________", size: 24, font: "Arial" }),
+                new TextRun({ text: resp || "Responsável Técnico", break: 1, size: 24, font: "Arial" }),
+                crea ? new TextRun({ text: crea, break: 1, size: 24, font: "Arial" }) : null
+              ].filter(Boolean)
             })
           ]
         }]
