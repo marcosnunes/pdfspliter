@@ -1,0 +1,219 @@
+/* =========================================
+ 1. BASE E LAYOUT GLOBAL
+========================================= */
+body {
+  font-family: sans-serif;
+  margin: 0;
+  background-color: #f8f9fa;
+  color: #333;
+  line-height: 1.6;
+}
+.row { display: flex; flex-wrap: wrap; margin: 0px; }
+.sectionBlockLayout { padding: 8px; }
+.container {
+  width: 100%;
+  max-width: 1140px;
+  margin: 0 auto;
+  padding: 0 15px;
+  box-sizing: border-box;
+}
+.col-md-12 { width: 100%; }
+.columnBlockLayout {
+  min-width: 250px;
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+}
+
+/* =========================================
+ 2. HERO SECTION
+========================================= */
+.hero-section {
+  padding: 8px;
+  margin: 0px;
+  display: flex;
+  flex-wrap: wrap;
+  min-height: 50vh;
+  background-image: linear-gradient(0deg, rgba(0, 0, 0, 0.7), rgba(0, 0, 0, 0.7)),
+    url("https://cdn.hubblecontent.osi.office.net/m365content/publish/26f1035c-f169-4e0c-948a-0d5c861becc9/thumbnails/xxlarge.jpg");
+  background-position: center center;
+  background-repeat: no-repeat;
+  background-size: cover;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: white;
+}
+.hero-section .columnBlockLayout {
+  margin: 40px 0px;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+.hero-section h1,
+.hero-section p,
+.hero-section span {
+  color: white;
+}
+.hero-section p {
+  font-size: 1.5rem;
+  max-width: 900px;
+  margin-bottom: 30px;
+  line-height: 1.4;
+}
+
+/* =========================================
+ 3. NAVEGAÇÃO E SIDENAV
+========================================= */
+.navigation {
+  position: sticky;
+  width: 100%;
+  top: 0;
+  z-index: 1000;
+}
+.nav-wrapper {
+  background-color: #ffc107;
+  padding: 10px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  text-align: right;
+  height: 60px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+.open-nav {
+  font-size: 28px;
+  cursor: pointer;
+  color: white;
+  padding-right: 20px;
+}
+.sidenav {
+  height: 100%;
+  width: 0;
+  position: fixed;
+  z-index: 1001;
+  top: 0;
+  right: 0;
+  background-color: #ff9800;
+  overflow-x: hidden;
+  transition: 0.5s;
+  padding-top: 60px;
+  text-align: left;
+}
+.sidenav a {
+  padding: 8px 8px 8px 32px;
+  text-decoration: none;
+  font-size: 22px;
+  color: white;
+  display: block;
+  transition: 0.3s;
+}
+.sidenav a:hover {
+  color: #f1f1f1;
+  background-color: #fb8c00;
+}
+.sidenav .closebtn {
+  position: absolute;
+  top: 0;
+  right: 25px;
+  font-size: 36px;
+}
+
+/* =========================================
+ 4. BOTÕES E INPUTS
+========================================= */
+.custom-file-upload {
+  border: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 15px 40px;
+  cursor: pointer;
+  background-color: #ffc107;
+  color: #333;
+  border-radius: 50px;
+  margin-bottom: 15px;
+  text-align: center;
+  font-size: 16px;
+  font-weight: bold;
+  transition: background-color 0.3s ease;
+  box-shadow: 0 4px 6px rgba(0,0,0,0.2);
+}
+.custom-file-upload:hover { background-color: #ffd54f; }
+
+.btn-gold {
+  background-color: #ff9800;
+  color: white;
+  border: none;
+  padding: 15px 25px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-weight: bold;
+  width: 100%;
+  font-size: 1.1rem;
+  transition: 0.2s;
+}
+.btn-gold:hover { background-color: #fb8c00; }
+
+/* =========================================
+ 5. STATUS, PROGRESSO E TABELA
+========================================= */
+#progressContainer { margin: 20px 0; width: 100%; }
+progress { width: 100%; height: 15px; accent-color: #ff9800; display: block; }
+
+#status {
+  padding: 15px;
+  border-radius: 5px;
+  margin: 15px 0;
+  font-weight: bold;
+  border-left: 5px solid #ccc;
+  width: 100%;
+  box-sizing: border-box;
+  white-space: pre-line;
+}
+.status-info { background: #e3f2fd; border-color: #2196f3 !important; }
+.status-success { background: #e8f5e9; border-color: #4caf50 !important; }
+.status-warning { background: #fff3e0; border-color: #ff9800 !important; }
+.status-error { background: #ffebee; border-color: #f44336 !important; }
+
+.stat-card {
+  background: #fff8e1;
+  border: 1px solid #ffc107;
+  padding: 20px;
+  border-radius: 8px;
+  text-align: center;
+  margin-bottom: 20px;
+}
+
+.table-container {
+  width: 100%;
+  overflow-x: auto;
+  margin-top: 20px;
+  border: 1px solid #eee;
+}
+table { width: 100%; border-collapse: collapse; }
+th, td { padding: 12px; text-align: left; border-bottom: 1px solid #eee; }
+th { background-color: #fafafa; color: #666; }
+
+.info-section {
+  padding: 8px;
+  margin: 0px;
+  display: flex;
+  flex-wrap: wrap;
+  min-height: auto;
+  background-color: #f8f9fa;
+}
+.info-section .columnBlockLayout {
+  margin: 30px 0px;
+  padding: 30px;
+  background-color: white;
+  border-radius: 5px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  text-align: left;
+}
