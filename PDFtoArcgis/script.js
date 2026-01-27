@@ -3362,7 +3362,7 @@ if (generateDocxBtn) {
             // ITEM 2 - MEMORIAL (BLOCO ÚNICO)
             new Paragraph({
               alignment: AlignmentType.JUSTIFIED,
-              spacing: { before: 200, line: 360, lineRule: LineSpacingType.AUTO }, // 1,5 espaçamento
+              spacing: { before: 200, line: 360, lineRule: (window.docx && window.docx.LineSpacingType && window.docx.LineSpacingType.AUTO) ? window.docx.LineSpacingType.AUTO : "AUTO" }, // 1,5 espaçamento
               children: [
                 new TextRun({ text: "2. Memorial da Área: ", bold: true, size: 24, font: "Arial" }),
                 ...memorialRuns
