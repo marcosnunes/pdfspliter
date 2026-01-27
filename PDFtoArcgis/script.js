@@ -2686,6 +2686,8 @@ saveToFolderBtn.onclick = async () => {
               await writeFile(`${base}_${crsName}_limite.dbf`, toArrayBufferFS(files.dbf));
               await new Promise(r => setTimeout(r, 50));
               await writeFile(`${base}_${crsName}_limite.prj`, projection.wkt);
+              resolve();
+            } catch (e) { reject(e); }
           }
         );
       });
@@ -2719,6 +2721,8 @@ saveToFolderBtn.onclick = async () => {
               await writeFile(`${base}_${crsName}_vertices.dbf`, toArrayBufferFS(files.dbf));
               await new Promise(r => setTimeout(r, 50));
               await writeFile(`${base}_${crsName}_vertices.prj`, projection.wkt);
+              resolve();
+            } catch (e) { reject(e); }
           }
         );
       });
