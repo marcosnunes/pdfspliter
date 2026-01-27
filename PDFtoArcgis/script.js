@@ -3347,7 +3347,6 @@ if (generateDocxBtn) {
                 })
               ]
             }),
-            new Paragraph({ alignment: AlignmentType.CENTER, spacing: spacing15, children: [new TextRun({ text: ".", size: 22, font: "Times New Roman" })] }),
 
             // ITEM 1 - DESCRIÇÃO
             new Paragraph({
@@ -3372,6 +3371,9 @@ if (generateDocxBtn) {
               ]
             }),
 
+            // LINHA VAZIA ANTES DO ITEM 2
+            new Paragraph({ spacing: spacing15, children: [new TextRun({ text: "", size: 24, font: "Arial" })] }),
+
             // ITEM 2 - MEMORIAL (BLOCO ÚNICO)
             new Paragraph({
               alignment: AlignmentType.JUSTIFIED,
@@ -3394,7 +3396,10 @@ if (generateDocxBtn) {
               ]
             }),
 
-            new Paragraph({ alignment: AlignmentType.CENTER, spacing: spacing15, children: [new TextRun({ text: ".", size: 22, font: "Times New Roman" })] }),
+            // 3 LINHAS VAZIAS ANTES DA CIDADE/DATA
+            new Paragraph({ spacing: spacing15, children: [new TextRun({ text: "", size: 24, font: "Arial" })] }),
+            new Paragraph({ spacing: spacing15, children: [new TextRun({ text: "", size: 24, font: "Arial" })] }),
+            new Paragraph({ spacing: spacing15, children: [new TextRun({ text: "", size: 24, font: "Arial" })] }),
 
             // DATA E ASSINATURA
             new Paragraph({
@@ -3402,6 +3407,12 @@ if (generateDocxBtn) {
               spacing: spacing15,
               children: [new TextRun({ text: `${cidade}, ${dataBR}`, size: 24, font: "Arial" })]
             }),
+
+            // 3 LINHAS VAZIAS ANTES DA ASSINATURA
+            new Paragraph({ spacing: spacing15, children: [new TextRun({ text: "", size: 24, font: "Arial" })] }),
+            new Paragraph({ spacing: spacing15, children: [new TextRun({ text: "", size: 24, font: "Arial" })] }),
+            new Paragraph({ spacing: spacing15, children: [new TextRun({ text: "", size: 24, font: "Arial" })] }),
+
             new Paragraph({
               alignment: AlignmentType.CENTER,
               spacing: spacing15,
