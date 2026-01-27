@@ -2649,6 +2649,7 @@ saveToFolderBtn.onclick = async () => {
 
     for (const doc of documentsResults) {
       const vertices = Array.isArray(doc.vertices) ? doc.vertices : [];
+      const docId = doc.docId || "SEM_ID";
 
       if (vertices.length < 3) {
         skipped.push(`Arquivo ${pdfOrigemSrc || "src"}: vértices insuficientes (${vertices.length})`);
