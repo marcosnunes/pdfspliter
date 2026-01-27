@@ -3297,27 +3297,38 @@ if (generateDocxBtn) {
         return Number.isFinite(n) ? n.toFixed(casas) : "0.00";
       }
 
-      // Garante que o último segmento (azimute/distância) seja incluído
+      // Garante que todos os segmentos (inclusive o último) sejam incluídos
       const memorialRuns = [];
-      for (let i = 0; i < vertsForDoc.length - 1; i++) {
+      for (let i = 0; i < vertsForDoc.length; i++) {
         const vAtual = vertsForDoc[i];
-        const vProx = vertsForDoc[i + 1];
+        const vProx = vertsForDoc[(i + 1) % vertsForDoc.length];
+        // Calcula distância e azimute se não existirem
+        let dist = vProx.distCalc;
+        if (!dist || isNaN(Number(dist))) {
+          dist = calcularDistancia(vAtual, vProx);
+        }
+        let azimute = vProx.azCalc;
+        if (!azimute) {
+          azimute = "00°00'00\"";
+        }
+        // Coordenadas entre parênteses
         memorialRuns.push(
           new TextRun({
-            text: ` Do vértice ${i + 1} segue até o vértice ${i + 2}, com coordenadas `,
+            text: ` Do vértice ${i + 1} segue até o vértice ${((i + 1) % vertsForDoc.length) + 1}, com coordenadas `,
             size: 24, font: "Arial"
           }),
           new TextRun({
-            text: `U T M E=${safeNumber(vProx.east, 3)} e N=${safeNumber(vProx.north, 3)}`,
+            text: `U T M (E=${safeNumber(vProx.east, 3)} e N=${safeNumber(vProx.north, 3)})`,
             bold: true, size: 24, font: "Arial"
           }),
           new TextRun({
-            text: `, no azimute de ${vProx.azCalc || "00°00'00\""}, na extensão de ${safeNumber(vProx.distCalc)} m;`,
+            text: `, no azimute de ${azimute}, na extensão de ${safeNumber(dist)} m;`,
             size: 24, font: "Arial"
           })
         );
       }
 
+      const spacing15 = { line: 360, lineRule: (window.docx && window.docx.LineSpacingType && window.docx.LineSpacingType.AUTO) ? window.docx.LineSpacingType.AUTO : "AUTO" };
       const doc = new Document({
         sections: [{
           properties: { page: { margin: { top: 1417, right: 1134, bottom: 1134, left: 1134 } } },
@@ -3325,6 +3336,7 @@ if (generateDocxBtn) {
             // TÍTULO FORMATADO
             new Paragraph({
               alignment: AlignmentType.CENTER,
+              spacing: spacing15,
               children: [
                 new TextRun({
                   text: espacarLetras("MEMORIAL DESCRITIVO"),
@@ -3335,16 +3347,16 @@ if (generateDocxBtn) {
                 })
               ]
             }),
-            new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: ".", size: 22, font: "Times New Roman" })] }),
+            new Paragraph({ alignment: AlignmentType.CENTER, spacing: spacing15, children: [new TextRun({ text: ".", size: 22, font: "Times New Roman" })] }),
 
             // ITEM 1 - DESCRIÇÃO
             new Paragraph({
               alignment: AlignmentType.JUSTIFIED,
-              spacing: { before: 200 },
+              spacing: spacing15,
               children: [
                 new TextRun({ text: "1. Descrição da Área: ", bold: true, size: 24, font: "Arial" }),
                 new TextRun({ 
-                  text: `A referida gleba é delimitada por um polígono irregular cuja descrição se inicia no vértice 1, seguindo sentido horário com coordenadas planas no sistema U T M Este (X) ${safeNumber(vertsForDoc[0].east, 3)} e Norte (Y) ${safeNumber(vertsForDoc[0].north, 3)}, como segue:`,
+                  text: `A referida gleba é delimitada por um polígono irregular cuja descrição se inicia no vértice 1, seguindo sentido horário com coordenadas planas no sistema U T M (E=${safeNumber(vertsForDoc[0].east, 3)} e N=${safeNumber(vertsForDoc[0].north, 3)}), como segue:`,
                   size: 24, font: "Arial" 
                 })
               ]
@@ -3353,6 +3365,7 @@ if (generateDocxBtn) {
             // CRS
             new Paragraph({
               alignment: AlignmentType.JUSTIFIED,
+              spacing: spacing15,
               children: [
                 new TextRun({ text: "Sistema de Referência (CRS): ", bold: true, size: 24, font: "Arial" }),
                 new TextRun({ text: ` ${crsText}`, size: 24, font: "Arial" })
@@ -3362,7 +3375,7 @@ if (generateDocxBtn) {
             // ITEM 2 - MEMORIAL (BLOCO ÚNICO)
             new Paragraph({
               alignment: AlignmentType.JUSTIFIED,
-              spacing: { before: 200, line: 360, lineRule: (window.docx && window.docx.LineSpacingType && window.docx.LineSpacingType.AUTO) ? window.docx.LineSpacingType.AUTO : "AUTO" }, // 1,5 espaçamento
+              spacing: spacing15,
               children: [
                 new TextRun({ text: "2. Memorial da Área: ", bold: true, size: 24, font: "Arial" }),
                 ...memorialRuns
@@ -3372,7 +3385,7 @@ if (generateDocxBtn) {
             // FECHAMENTO
             new Paragraph({
               alignment: AlignmentType.JUSTIFIED,
-              spacing: { before: 200 },
+              spacing: spacing15,
               children: [
                 new TextRun({ 
                   text: `Finalmente, fechando o polígono acima descrito, abrangendo uma área de ${areaTxt} ha e um perímetro de ${perTxt} m.`, 
@@ -3381,17 +3394,17 @@ if (generateDocxBtn) {
               ]
             }),
 
-            new Paragraph({ alignment: AlignmentType.CENTER, spacing: { before: 200 }, children: [new TextRun({ text: ".", size: 22, font: "Times New Roman" })] }),
+            new Paragraph({ alignment: AlignmentType.CENTER, spacing: spacing15, children: [new TextRun({ text: ".", size: 22, font: "Times New Roman" })] }),
 
             // DATA E ASSINATURA
             new Paragraph({
               alignment: AlignmentType.CENTER,
-              spacing: { before: 400 },
+              spacing: spacing15,
               children: [new TextRun({ text: `${cidade}, ${dataBR}`, size: 24, font: "Arial" })]
             }),
             new Paragraph({
               alignment: AlignmentType.CENTER,
-              spacing: { before: 800 },
+              spacing: spacing15,
               children: [
                 new TextRun({ text: "______________________________________________", size: 24, font: "Arial" }),
                 new TextRun({ text: resp || "Responsável Técnico", break: 1, size: 24, font: "Arial" }),
