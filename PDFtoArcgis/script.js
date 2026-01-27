@@ -2603,6 +2603,8 @@ saveToFolderBtn.onclick = async () => {
               await writeFile(`${baseNome}_${crsName}_limite_${srcNome}.dbf`, toArrayBufferFS(files.dbf));
               await new Promise(r => setTimeout(r, 50));
               await writeFile(`${baseNome}_${crsName}_limite_${srcNome}.prj`, projection.wkt);
+              resolve();
+            } catch (e) { reject(e); }
           }
         );
       });
