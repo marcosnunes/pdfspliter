@@ -2664,7 +2664,7 @@ saveToFolderBtn.onclick = async () => {
       }
 
       const base = sanitizeFileName(pdfOrigemNomeBase || fileNameBase);
-      const srcNome = sanitizeFileName(pdfOrigemNomeBase || fileNameBase);
+      const srcNome = "";
       const ring = vertices.map(c => [c.east, c.north]);
       // Limite (POLYGON)
       await new Promise((resolve, reject) => {
@@ -2679,13 +2679,13 @@ saveToFolderBtn.onclick = async () => {
               crsName = String(crsName).replace(/[^\w\d]/g, "_");
               await writeFile(`${base}_${crsName}_limite_${srcNome}.shp`, toArrayBufferFS(files.shp));
               await new Promise(r => setTimeout(r, 50));
-              await writeFile(`${base}_${crsName}_limite_${srcNome}.shx`, toArrayBufferFS(files.shx));
+              await writeFile(`${base}_${crsName}_limite.shp`, toArrayBufferFS(files.shp));
               await new Promise(r => setTimeout(r, 50));
-              await writeFile(`${base}_${crsName}_limite_${srcNome}.dbf`, toArrayBufferFS(files.dbf));
+              await writeFile(`${base}_${crsName}_limite.shx`, toArrayBufferFS(files.shx));
               await new Promise(r => setTimeout(r, 50));
-              await writeFile(`${base}_${crsName}_limite_${srcNome}.prj`, projection.wkt);
-              resolve();
-            } catch (e) { reject(e); }
+              await writeFile(`${base}_${crsName}_limite.dbf`, toArrayBufferFS(files.dbf));
+              await new Promise(r => setTimeout(r, 50));
+              await writeFile(`${base}_${crsName}_limite.prj`, projection.wkt);
           }
         );
       });
@@ -2712,13 +2712,13 @@ saveToFolderBtn.onclick = async () => {
               crsName = String(crsName).replace(/[^\w\d]/g, "_");
               await writeFile(`${base}_${crsName}_vertices_${srcNome}.shp`, toArrayBufferFS(files.shp));
               await new Promise(r => setTimeout(r, 50));
-              await writeFile(`${base}_${crsName}_vertices_${srcNome}.shx`, toArrayBufferFS(files.shx));
+              await writeFile(`${base}_${crsName}_vertices.shp`, toArrayBufferFS(files.shp));
               await new Promise(r => setTimeout(r, 50));
-              await writeFile(`${base}_${crsName}_vertices_${srcNome}.dbf`, toArrayBufferFS(files.dbf));
+              await writeFile(`${base}_${crsName}_vertices.shx`, toArrayBufferFS(files.shx));
               await new Promise(r => setTimeout(r, 50));
-              await writeFile(`${base}_${crsName}_vertices_${srcNome}.prj`, projection.wkt);
-              resolve();
-            } catch (e) { reject(e); }
+              await writeFile(`${base}_${crsName}_vertices.dbf`, toArrayBufferFS(files.dbf));
+              await new Promise(r => setTimeout(r, 50));
+              await writeFile(`${base}_${crsName}_vertices.prj`, projection.wkt);
           }
         );
       });
@@ -2727,7 +2727,7 @@ saveToFolderBtn.onclick = async () => {
       const csv = gerarCsvParaVertices(vertices, projection.epsg, docId, doc.topology, doc.memorialValidation);
       let crsName = projection && projection.epsg ? projection.epsg : "CRS";
       crsName = String(crsName).replace(/[^\w\d]/g, "_");
-      await writeFile(`${base}_${crsName}_Validado_${srcNome}.csv`, csv);
+      await writeFile(`${base}_${crsName}_Validado.csv`, csv);
 
       // Relatório de validação
       if (doc.topology || doc.memorialValidation) {
@@ -2735,7 +2735,7 @@ saveToFolderBtn.onclick = async () => {
         crsName = String(crsName).replace(/[^\w\d]/g, "_");
         let safePages = Array.isArray(doc.pages) ? doc.pages : (typeof doc.pages === 'string' ? doc.pages : '(desconhecido)');
         const relatorio = gerarRelatorioValidacao(docId, safePages, doc.topology, doc.memorialValidation, doc.warnings);
-        await writeFile(`${base}_${crsName}_Relatorio_${srcNome}.txt`, relatorio);
+        await writeFile(`${base}_${crsName}_Relatorio.txt`, relatorio);
       }
 
       saved++;
