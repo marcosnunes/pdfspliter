@@ -2648,64 +2648,65 @@ saveToFolderBtn.onclick = async () => {
     const skipped = [];
 
     for (const doc of documentsResults) {
-      const docId = doc.docId || "SEM_ID";
       const vertices = Array.isArray(doc.vertices) ? doc.vertices : [];
 
       if (vertices.length < 3) {
-        skipped.push(`MAT ${docId}: vértices insuficientes (${vertices.length})`);
+        skipped.push(`Arquivo ${pdfOrigemSrc || "src"}: vértices insuficientes (${vertices.length})`);
         continue;
       }
 
       const projKey = doc.manualProjectionKey || doc.projectionKey || getActiveProjectionKey();
       const projection = PROJECTIONS[projKey];
       if (!projection) {
-        skipped.push(`MAT ${docId}: CRS não suportado (${projKey})`);
+        skipped.push(`Arquivo ${pdfOrigemSrc || "src"}: CRS não suportado (${projKey})`);
         continue;
       }
 
-      const base = sanitizeFileName(`MAT_${docId}`);
+      const base = sanitizeFileName(pdfOrigemNomeBase || fileNameBase);
+      const srcNome = pdfOrigemSrc || "src";
       const ring = vertices.map(c => [c.east, c.north]);
-      ring.push([ring[0][0], ring[0][1]]);
-
-      const pointGeoms = vertices.map(c => [c.east, c.north]);
-      const pointProps = vertices.map(c => ({
-        DOCID: String(docId).slice(0, 10),
-        ID: String(c.id).slice(0, 20),
-        ORDEM: c.ordem,
+              await writeFile(`${base}_${crsName}_limite_${srcNome}.shp`, toArrayBufferFS(files.shp));
+              await new Promise(r => setTimeout(r, 50)); // Pequeno delay
+              await writeFile(`${base}_${crsName}_limite_${srcNome}.shx`, toArrayBufferFS(files.shx));
+              await new Promise(r => setTimeout(r, 50));
+              await writeFile(`${base}_${crsName}_limite_${srcNome}.dbf`, toArrayBufferFS(files.dbf));
+              await new Promise(r => setTimeout(r, 50));
+              await writeFile(`${base}_${crsName}_limite_${srcNome}.prj`, projection.wkt);
         NORTH: c.north,
-        EAST: c.east,
-        EPSG: projection.epsg
-      }));
-
-      await new Promise((resolve, reject) => {
-        window.shpwrite.write(
-          [{ DOCID: String(docId).slice(0, 10), VERTICES: vertices.length, EPSG: projection.epsg, TIPO: "LIMITE" }],
+              await writeFile(`${base}_${crsName}_vertices_${srcNome}.shp`, toArrayBufferFS(files.shp));
+              await new Promise(r => setTimeout(r, 50));
+              await writeFile(`${base}_${crsName}_vertices_${srcNome}.shx`, toArrayBufferFS(files.shx));
+              await new Promise(r => setTimeout(r, 50));
+              await writeFile(`${base}_${crsName}_vertices_${srcNome}.dbf`, toArrayBufferFS(files.dbf));
+              await new Promise(r => setTimeout(r, 50));
+              await writeFile(`${base}_${crsName}_vertices_${srcNome}.prj`, projection.wkt);
           "POLYGON",
-          [[[ring]]],
+      await writeFile(`${base}_${crsName}_Validado_${srcNome}.csv`, csv);
           async (err, files) => {
-            if (err) return reject(err);
+        await writeFile(`${base}_${crsName}_Relatorio_${srcNome}.txt`, relatorio);
             try {
-              let crsName = projection && projection.epsg ? projection.epsg : "CRS";
+      const base = sanitizeFileName(pdfOrigemNomeBase ? `${pdfOrigemNomeBase}_MAT_${docId}` : `MAT_${docId}`);
+      const srcNome = pdfOrigemSrc || "src";
               crsName = String(crsName).replace(/[^\w\d]/g, "_");
-              await writeFile(`${base}_${crsName}_limite.shp`, toArrayBufferFS(files.shp));
+              await writeFile(`${base}_${crsName}_limite_${srcNome}.shp`, toArrayBufferFS(files.shp));
               await new Promise(r => setTimeout(r, 50));
-              await writeFile(`${base}_${crsName}_limite.shx`, toArrayBufferFS(files.shx));
+              await writeFile(`${base}_${crsName}_limite_${srcNome}.shx`, toArrayBufferFS(files.shx));
               await new Promise(r => setTimeout(r, 50));
-              await writeFile(`${base}_${crsName}_limite.dbf`, toArrayBufferFS(files.dbf));
+              await writeFile(`${base}_${crsName}_limite_${srcNome}.dbf`, toArrayBufferFS(files.dbf));
               await new Promise(r => setTimeout(r, 50));
-              await writeFile(`${base}_${crsName}_limite.prj`, projection.wkt);
+              await writeFile(`${base}_${crsName}_limite_${srcNome}.prj`, projection.wkt);
               resolve();
-            } catch (e) { reject(e); }
-          }
-        );
-      });
-
-      await new Promise((resolve, reject) => {
-        window.shpwrite.write(
+              await writeFile(`${base}_${crsName}_vertices_${srcNome}.shp`, toArrayBufferFS(files.shp));
+              await new Promise(r => setTimeout(r, 50));
+              await writeFile(`${base}_${crsName}_vertices_${srcNome}.shx`, toArrayBufferFS(files.shx));
+              await new Promise(r => setTimeout(r, 50));
+              await writeFile(`${base}_${crsName}_vertices_${srcNome}.dbf`, toArrayBufferFS(files.dbf));
+              await new Promise(r => setTimeout(r, 50));
+              await writeFile(`${base}_${crsName}_vertices_${srcNome}.prj`, projection.wkt);
           pointProps,
-          "POINT",
+      await writeFile(`${base}_${crsName}_Validado_${srcNome}.csv`, csv);
           pointGeoms,
-          async (err, files) => {
+        await writeFile(`${base}_${crsName}_Relatorio_${srcNome}.txt`, relatorio);
             if (err) return reject(err);
             try {
               let crsName = projection && projection.epsg ? projection.epsg : "CRS";
