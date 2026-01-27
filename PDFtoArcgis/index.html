@@ -14,20 +14,19 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pizzip/3.1.4/pizzip.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.9.2/proj4.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/docx/8.3.2/docx.umd.js"></script>
-
+  <script src="https://cdn.jsdelivr.net/npm/docx@8/build/index.umd.js"></script>
   <script>
     (function ensureDocxLoaded() {
       if (window.docx && window.docx.Document) {
-        console.log("[DOCX] Biblioteca carregada via cdnjs.");
+        console.log("[DOCX] Biblioteca carregada via jsDelivr.");
         return;
       }
-      console.warn("[DOCX] cdnjs não carregou. Tentando fallback jsDelivr...");
+      console.warn("[DOCX] jsDelivr não carregou. Tentando fallback cdnjs...");
       var s = document.createElement("script");
-      s.src = "https://cdn.jsdelivr.net/npm/docx@8/build/index.umd.js";
+      s.src = "https://cdnjs.cloudflare.com/ajax/libs/docx/8.3.2/docx.umd.js";
       s.onload = function() {
         if (window.docx && window.docx.Document) {
-          console.log("[DOCX] Biblioteca carregada via jsDelivr (fallback).");
+          console.log("[DOCX] Biblioteca carregada via cdnjs (fallback).");
         } else {
           console.error("[DOCX] Falha ao carregar a UMD (fallback).");
         }
