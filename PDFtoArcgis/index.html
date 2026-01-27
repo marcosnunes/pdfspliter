@@ -5,14 +5,38 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Extrator de Coordenadas para ArcGIS</title>
-  <!-- Estilo original mantido -->
+
   <link rel="stylesheet" href="style.css" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" />
-  <script src="https://unpkg.com/@mapbox/shp-write@latest/shpwrite.js"></script>
-</head>
 
+  <script src="https://unpkg.com/@mapbox/shp-write@latest/shpwrite.js"></script>
+  <script src="https://unpkg.com/shpjs@latest/dist/shp.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pizzip/3.1.4/pizzip.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.9.2/proj4.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/docx/8.3.2/docx.umd.js"></script>
+
+  <script>
+    (function ensureDocxLoaded() {
+      if (window.docx && window.docx.Document) {
+        console.log("[DOCX] Biblioteca carregada via cdnjs.");
+        return;
+      }
+      console.warn("[DOCX] cdnjs não carregou. Tentando fallback jsDelivr...");
+      var s = document.createElement("script");
+      s.src = "https://cdn.jsdelivr.net/npm/docx@8/build/index.umd.js";
+      s.onload = function() {
+        if (window.docx && window.docx.Document) {
+          console.log("[DOCX] Biblioteca carregada via jsDelivr (fallback).");
+        } else {
+          console.error("[DOCX] Falha ao carregar a UMD (fallback).");
+        }
+      };
+      document.head.appendChild(s);
+    })();
+  </script>
+</head>
 <body>
-  
   <!-- Estrutura do Menu Lateral (Sidenav) -->
   <div id="mySidenav" class="sidenav">
     <a href="javascript:void(0)" class="closebtn" onclick="closeNav()">×</a>
@@ -39,11 +63,19 @@
         <h1><i class="fas fa-map-marked-alt"></i> Extrator de Coordenadas</h1>
         <p>Extração de Shapefiles (Polígono + Vértices) para ArcGIS e QGIS.</p>
 
+        <!-- Botão original PDF -->
         <label for="fileInput" class="custom-file-upload">
           <i class="fas fa-upload"></i>
           <span id="fileNameDisplay">Escolher Matrícula (PDF)</span>
         </label>
         <input type="file" id="fileInput" accept=".pdf" style="display:none" />
+
+        <!-- NOVO: Botão SHP ao lado -->
+        <label for="shpInput" class="custom-file-upload">
+          <i class="fas fa-database"></i>
+          <span>Carregar SHP</span>
+        </label>
+        <input type="file" id="shpInput" accept=".zip,.shp" style="display:none" />
       </div>
     </div>
   </div>
@@ -51,7 +83,6 @@
   <div class="row info-section sectionBlockLayout">
     <div class="container">
       <div class="col-md-12 columnBlockLayout">
-
         <div id="progressContainer" style="display:none;">
           <label id="progressLabel" style="font-weight:bold;color:#ff9800;">Iniciando leitura...</label>
           <progress id="progressBar" value="0" max="100" style="width:100%;height:15px;margin-top:5px;"></progress>
@@ -59,31 +90,25 @@
 
         <!-- Seletor de matrículas (PDF unificado) -->
         <div id="docSelectorBox" class="stat-card" style="display:none; margin-bottom: 15px; text-align:left;">
-          <p style="text-transform: uppercase; font-size: 0.8rem; margin: 0; color: #666;">Documentos (matrículas)
-            detectados</p>
+          <p style="text-transform: uppercase; font-size: 0.8rem; margin: 0; color: #666;">Documentos (matrículas) detectados</p>
           <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-top:10px;">
-            <select id="docSelect"
-              style="flex:1; min-width:280px; padding:10px; border-radius:5px; border:1px solid #ffc107;"></select>
+            <select id="docSelect" style="flex:1; min-width:280px; padding:10px; border-radius:5px; border:1px solid #ffc107;"></select>
             <div id="docMeta" style="font-size: 0.95rem; color:#666; min-width:280px; white-space:pre-line;"></div>
           </div>
-          <small style="color:#666; display:block; margin-top:8px;">CSV baixa somente a matrícula selecionada. “Salvar
-            na Pasta” grava SHP + CSV de todas as matrículas.</small>
+          <small style="color:#666; display:block; margin-top:8px;">CSV baixa somente a matrícula selecionada. “Salvar na Pasta” grava SHP + CSV de todas as matrículas.</small>
         </div>
 
         <!-- CRS detectado automaticamente -->
         <div id="crsDetectedBox" class="stat-card" style="display:none; margin-bottom: 15px; text-align:left;">
-          <p style="text-transform: uppercase; font-size: 0.8rem; margin: 0; color: #666;">Sistema de Coordenadas (do
-            documento selecionado)</p>
+          <p style="text-transform: uppercase; font-size: 0.8rem; margin: 0; color: #666;">Sistema de Coordenadas (do documento selecionado)</p>
           <h3 id="crsDetectedTitle" style="margin: 8px 0; color: #2c3e50;">—</h3>
           <div id="crsDetectedReason" style="font-size: 0.95rem; color:#666; white-space: pre-line;"></div>
         </div>
 
         <details id="advancedCrs" style="display:none; margin-bottom: 15px;">
-          <summary style="cursor:pointer; font-weight:bold; color:#ff9800;">Modo avançado: forçar CRS manualmente
-            (aplica somente na matrícula selecionada)</summary>
+          <summary style="cursor:pointer; font-weight:bold; color:#ff9800;">Modo avançado: forçar CRS manualmente (aplica somente na matrícula selecionada)</summary>
           <div style="margin-top:10px; display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
-            <select id="projectionSelect"
-              style="flex:1; min-width:280px; padding:10px; border-radius:5px; border:1px solid #ffc107;">
+            <select id="projectionSelect" style="flex:1; min-width:280px; padding:10px; border-radius:5px; border:1px solid #ffc107;">
               <option value="SIRGAS2000_21S">SIRGAS 2000 / UTM 21S (EPSG:31981)</option>
               <option value="SIRGAS2000_22S">SIRGAS 2000 / UTM 22S (EPSG:31982)</option>
               <option value="SIRGAS2000_23S">SIRGAS 2000 / UTM 23S (EPSG:31983)</option>
@@ -99,10 +124,44 @@
 
         <div id="status" style="display:none;"></div>
 
+        <!-- NOVO: bloco de metadados do memorial -->
+        <div id="memorialMetaBox" class="stat-card" style="display:none; text-align:left;">
+          <p style="text-transform: uppercase; font-size: 0.8rem; margin: 0; color: #666;">Dados para o Memorial Descritivo</p>
+
+          <div style="margin-top:10px; display:flex; gap:10px; flex-wrap:wrap;">
+            <div style="flex:1; min-width:260px;">
+              <label style="font-size:0.9rem; color:#666;">Responsável Técnico</label>
+              <input id="respTecnico" type="text" placeholder="Ex.: Wanderlei Bello Machado" 
+                     style="width:100%; padding:10px; border-radius:5px; border:1px solid #ffc107;">
+            </div>
+
+            <div style="flex:1; min-width:200px;">
+              <label style="font-size:0.9rem; color:#666;">CREA</label>
+              <input id="respCrea" type="text" placeholder="Ex.: CREA/PR 222.724/D" 
+                     style="width:100%; padding:10px; border-radius:5px; border:1px solid #ffc107;">
+            </div>
+
+            <div style="flex:1; min-width:220px;">
+              <label style="font-size:0.9rem; color:#666;">Cidade</label>
+              <input id="cidadeDetectada" type="text" placeholder="Ex.: Curitiba-PR" 
+                     style="width:100%; padding:10px; border-radius:5px; border:1px solid #ffc107;">
+            </div>
+          </div>
+
+          <div style="margin-top:10px; display:flex; gap:10px; flex-wrap:wrap;">
+            <button id="generateDocxBtn" class="btn-gold" style="flex:1; min-width:200px; background-color:#0b8043;">
+              <i class="fas fa-file-word"></i> Gerar Memorial DOCX
+            </button>
+          </div>
+
+          <small style="display:block; color:#666; margin-top:8px;">
+            O CRS será incluído automaticamente no memorial (lido do .prj do SHP ou inferido pelas coordenadas).
+          </small>
+        </div>
+
         <div id="resultBox" style="display:none;">
           <div class="stat-card">
-            <p style="text-transform:uppercase;font-size:0.8rem;margin:0;color:#666;">Vértices Encontrados (matrícula
-              selecionada)</p>
+            <p style="text-transform:uppercase;font-size:0.8rem;margin:0;color:#666;">Vértices Encontrados (matrícula selecionada)</p>
             <h2 id="countDisplay" style="font-size:3rem;margin:10px 0;color:#ff9800;">0</h2>
             <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;">
               <button id="downloadBtn" class="btn-gold" style="flex:1;min-width:150px;">
@@ -135,9 +194,11 @@
     </div>
   </div>
 
+  <!-- PDF e OCR -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.0.2/dist/tesseract.min.js"></script>
+
+  <!-- Seu script principal -->
   <script src="script.js"></script>
 </body>
-
 </html>

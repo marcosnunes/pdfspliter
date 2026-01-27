@@ -437,6 +437,26 @@ function detectPolygonSelfIntersections(vertices) {
   return intersections;
 }
 
+function inferCrsByCoordinates(vertices) {
+    if (!vertices || vertices.length === 0) return null;
+
+    // Pega a média para situar a região
+    const avgE = vertices.reduce((sum, v) => sum + v.east, 0) / vertices.length;
+    const avgN = vertices.reduce((sum, v) => sum + v.north, 0) / vertices.length;
+
+    // Lógica para o Sul do Brasil (Piraquara-PR está aqui)
+    // Norte ~7.1 milhões e Este entre 600k e 800k indica Zona 22S
+    if (avgN > 7000000 && avgN < 8000000) {
+        if (avgE > 600000 && avgE < 800000) {
+            return { zone: 22, reason: "CRS inferido automaticamente pelas coordenadas (Padrão UTM Zona 22S)." };
+        }
+        if (avgE > 300000 && avgE < 600000) {
+            return { zone: 23, reason: "CRS inferido automaticamente pelas coordenadas (Padrão UTM Zona 23S)." };
+        }
+    }
+    return null;
+}
+
 /**
  * Corrigir ordem de vértices (garantir CCW para polígonos válidos)
  */
@@ -758,7 +778,32 @@ function inferZoneFromBrazilState(textLower) {
   return null;
 }
 
-function detectProjectionFromText(fullText) {
+/**
+ * Infere o CRS com base na magnitude numérica das coordenadas (Geofencing reverso)
+ */
+function inferCrsByCoordinates(vertices) {
+    if (!vertices || vertices.length === 0) return null;
+
+    // Calcula a média das coordenadas extraídas
+    const avgE = vertices.reduce((sum, v) => sum + v.east, 0) / vertices.length;
+    const avgN = vertices.reduce((sum, v) => sum + v.north, 0) / vertices.length;
+
+    // Lógica para o Brasil (UTM Sul)
+    // Norte ~7.1 milhões (Paraná/Santa Catarina/RS)
+    if (avgN > 7000000 && avgN < 8000000) {
+        // Este entre 600k e 800k -> Zona 22S
+        if (avgE > 600000 && avgE < 800000) {
+            return { zone: 22, reason: "Inferido via coordenadas: Padrão compatível com UTM Zona 22S (Sul do Brasil)." };
+        }
+        // Este entre 300k e 600k -> Zona 23S (SP/MG)
+        if (avgE > 300000 && avgE < 600000) {
+            return { zone: 23, reason: "Inferido via coordenadas: Padrão compatível com UTM Zona 23S." };
+        }
+    }
+    return null;
+}
+
+function detectProjectionFromText(fullText, vertices = []) {
   const t = (fullText || "").toLowerCase();
   const hasSAD = /sad[\s\-]?69/.test(t);
   const hasSIRGAS = /sirgas\s*2000/.test(t);
@@ -790,29 +835,46 @@ function detectProjectionFromText(fullText) {
     }
   }
 
+  // Fallback 1: Por Estado/UF
   if (!zone) {
     const inferred = inferZoneFromBrazilState(t);
     if (inferred) {
       zone = inferred;
-      reasonParts.push(`Zona não informada; inferida como ${zone}S pela UF/localidade.`);
-      if (conf !== "alta") conf = "média";
+      reasonParts.push(`Zona inferida como ${zone}S pela localidade.`);
+      conf = "média";
     }
   }
 
+  // Fallback 2: Pela matemática das coordenadas (CRUCIAL PARA PIRAQUARA)
+  if (!zone && vertices && vertices.length > 0) {
+    const mathInference = inferCrsByCoordinates(vertices); // Verifique se esta função existe no seu script
+    if (mathInference) {
+      zone = mathInference.zone;
+      reasonParts.push(mathInference.reason);
+      conf = "média";
+    }
+  }
+
+  // Fallback 3: Padrão final
   if (!zone) {
     zone = 22;
     reasonParts.push(`Zona não encontrada; fallback ${zone}S.`);
-    if (conf !== "alta") conf = "média";
   }
 
-  if (hasWGS) return { key: "WGS84", confidence: "alta", reason: "Encontrado 'WGS 84' no memorial." };
-  if (hasSIRGAS) return { key: `SIRGAS2000_${zone}S`, confidence: conf, reason: `Encontrado 'SIRGAS 2000'.\n- ${reasonParts.join("\n- ")}` };
+  // Retorno (Lógica de Datums)
+  if (hasWGS) return { key: "WGS84", confidence: "alta", reason: "Encontrado 'WGS 84'." };
+  
   if (hasSAD) {
-    let key = "SAD69_22S";
-    if (zone === 23) key = "SAD69_23S";
-    return { key, confidence: conf, reason: `Encontrado 'SAD-69'.\n- ${reasonParts.join("\n- ")}` };
+    let key = (zone === 23) ? "SAD69_23S" : "SAD69_22S";
+    return { key, confidence: conf, reason: `Encontrado 'SAD-69'. ${reasonParts.join(" ")}` };
   }
-  return { key: null, confidence: "baixa", reason: "Não foi possível identificar datum/zona automaticamente." };
+
+  // Se não achou SAD nem WGS, assume SIRGAS 2000 (Padrão IBGE)
+  return { 
+    key: `SIRGAS2000_${zone}S`, 
+    confidence: conf, 
+    reason: (hasSIRGAS ? "Encontrado 'SIRGAS 2000'. " : "Datum assumido SIRGAS 2000. ") + reasonParts.join(" ") 
+  };
 }
 
 /* =========================
@@ -1072,6 +1134,37 @@ function parseVertices(text, crsKeyInput) {
       }
     }
   }
+    // Padrão 1c: E=... e N=... (SEM 'm') — comum em memoriais brasileiros
+    if (coordsOnly.length === 0) {
+      const rx1c = /E\s*=\s*([0-9.,\s]+)\s*e\s*N\s*=\s*([0-9.,\s]+)/gim;
+      let m1c2;
+      while ((m1c2 = rx1c.exec(clean)) !== null) {
+        const eRaw = m1c2[1];
+        const nRaw = m1c2[2];
+        const east = parseFloat(normalizeNumber(eRaw));
+        const north = parseFloat(normalizeNumber(nRaw));
+        if (Number.isFinite(north) && Number.isFinite(east)) {
+          coordsOnly.push({ idx: coordsOnly.length, east, north });
+          coordPositions.push(m1c2.index);
+        }
+      }
+    }
+    // Padrão 1d: Este (X) ... e Norte (Y) ... — sem 'm'
+    if (coordsOnly.length === 0) {
+      const rx1d = /Este\s*\(X\)\s*([0-9.,\s]+)\s*e\s*Norte\s*\(Y\)\s*([0-9.,\s]+)/gim;
+      let m1d;
+      while ((m1d = rx1d.exec(clean)) !== null) {
+        const eRaw = m1d[1];
+        const nRaw = m1d[2];
+        const east = parseFloat(normalizeNumber(eRaw));
+        const north = parseFloat(normalizeNumber(nRaw));
+        if (Number.isFinite(north) && Number.isFinite(east)) {
+          coordsOnly.push({ idx: coordsOnly.length, east, north });
+          coordPositions.push(m1d.index);
+        }
+      }
+    }
+
 
   // Debug log
   if (coordsOnly.length > 0) {
@@ -2040,38 +2133,32 @@ function displayResults() {
 }
 
 /* =========================
-   PROCESSAMENTO DO PDF
+   PROCESSAMENTO DO PDF (CORRIGIDO)
 ========================= */
 fileInput.addEventListener("change", async (event) => {
   const file = event.target.files[0];
   if (!file) return;
 
+  // Reset de UI e variáveis
   fileNameBase = file.name.replace(/\.[^/.]+$/, "");
-  pdfOrigemNomeBase = file.name.replace(/\.[^/.]+$/, ""); // sempre sem extensão
+  pdfOrigemNomeBase = file.name.replace(/\.[^/.]+$/, ""); 
   pdfOrigemSrc = file.name;
   document.getElementById("fileNameDisplay").innerText = file.name;
-
   progressContainer.style.display = "block";
   resultBox.style.display = "none";
   statusDiv.style.display = "none";
-
   extractedCoordinates = [];
   previewTableBody.innerHTML = "";
-
   documentsResults = [];
   activeDocIndex = -1;
-  if (docSelectorBox) docSelectorBox.style.display = "none";
-  if (advancedCrs) advancedCrs.style.display = "none";
-  if (crsDetectedBox) crsDetectedBox.style.display = "none";
 
   try {
     updateStatus("📄 Carregando PDF...", "info");
-
     const arrayBuffer = await file.arrayBuffer();
     const pdf = await pdfjsLib.getDocument(arrayBuffer).promise;
-
     const pagesText = [];
 
+    // Loop de leitura de páginas
     for (let i = 1; i <= pdf.numPages; i++) {
       progressBar.value = Math.round((i / pdf.numPages) * 100);
       document.getElementById("progressLabel").innerText = `Lendo página ${i}/${pdf.numPages}...`;
@@ -2080,8 +2167,9 @@ fileInput.addEventListener("change", async (event) => {
       const textContent = await page.getTextContent({ disableCombineTextItems: false });
       let pageText = buildPageTextWithLines(textContent);
 
+      // OCR se a página estiver vazia/escaneada
       if ((pageText || "").replace(/\s+/g, "").length < 80) {
-        updateStatus(`🔎 OCR na página ${i} (PDF escaneado)...`, "info");
+        updateStatus(`🔎 OCR na página ${i}...`, "info");
         const viewport = page.getViewport({ scale: 2.5 });
         const canvas = document.createElement("canvas");
         const ctx = canvas.getContext("2d");
@@ -2090,22 +2178,28 @@ fileInput.addEventListener("change", async (event) => {
         await page.render({ canvasContext: ctx, viewport }).promise;
         pageText = await getOcrTextFromCanvas(canvas);
       }
-
       pagesText.push(pageText || "");
     }
 
-    processExtractUnified(pagesText);
+    // --- LÓGICA DE INFERÊNCIA REVERSA ---
+    const fullText = pagesText.join("\n");
+
+// Extraímos os vértices primeiro para poder usá-los na detecção
+const verticesParaDetectar = parseVertices(fullText); 
+
+// Passamos o texto E os vértices
+const projInfo = detectProjectionFromText(fullText, verticesParaDetectar);
+
+// Agora sim chama o processamento final
+processExtractUnified(pagesText, projInfo); 
 
   } catch (e) {
+    console.error("Erro no processamento:", e);
     updateStatus("Erro: " + e.message, "error");
   }
 });
 
-/**
- * NOVO APPROACH: Detectar ciclos de polígonos automaticamente
- * Em vez de separar por ID, extrai TODAS as coordenadas e detecta quando um polígono
- * termina (volta ao ponto inicial) e começa outro
- */
+
 function detectPolygonCycles(vertices) {
   if (vertices.length < 3) return [];
   
@@ -2149,7 +2243,7 @@ function detectPolygonCycles(vertices) {
   return cycles;
 }
 
-function processExtractUnified(pagesText) {
+async function processExtractUnified(pagesText){
   // NOVO APPROACH: Ignorar ID, extrair TODAS as coordenadas
   // Combinar texto de todas as páginas
   const fullText = pagesText.join("\n");
@@ -2169,15 +2263,10 @@ function processExtractUnified(pagesText) {
   console.log(`[PDFtoArcgis] CRS detectado: ${projKey || "não identificado"}`);
 
   // Extrair TODAS as coordenadas
-  let allVertices = parseVertices(fullText, projKey);
+let allVertices = parseVertices(fullText, projKey);
+const projInfo = detectProjectionFromText(fullText, allVertices);
+console.log(`[PDFtoArcgis] Total de coordenadas extraídas: ${allVertices.length}`);
 
-  if (!allVertices.length) {
-    progressContainer.style.display = "none";
-    updateStatus("❌ Não foi possível extrair coordenadas do PDF.", "error");
-    return;
-  }
-
-  console.log(`[PDFtoArcgis] Total de coordenadas extraídas: ${allVertices.length}`);
 
   // --- UTM ZONE AUTO-DETECTION ---
   // If no CRS detected, try to infer UTM zone from coordinates
@@ -2582,6 +2671,9 @@ saveToFolderBtn.onclick = async () => {
 
       updateStatus("🗂️ Gravando SHP + CSV na pasta...", "info");
 
+      let crsName = projection && projection.epsg ? projection.epsg : "CRS";
+      crsName = String(crsName).replace(/[^\w\d]/g, "_");
+
       await new Promise((resolve, reject) => {
         window.shpwrite.write(
           [{ NOME: base, VERTICES: extractedCoordinates.length, EPSG: projection.epsg, TIPO: "LIMITE" }],
@@ -2590,19 +2682,14 @@ saveToFolderBtn.onclick = async () => {
           async (err, files) => {
             if (err) return reject(err);
             try {
-              let crsName = projection && projection.epsg ? projection.epsg : "CRS";
-              crsName = String(crsName).replace(/[^\w\d]/g, "_");
+              // Gravando apenas o nome limpo e correto
               await writeFile(`${base}_${crsName}_limite.shp`, toArrayBufferFS(files.shp));
               await new Promise(r => setTimeout(r, 50));
-              const baseNome = pdfOrigemNomeBase || base;
-              const srcNome = pdfOrigemSrc || "src";
-              await writeFile(`${baseNome}_${crsName}_limite_${srcNome}.shp`, toArrayBufferFS(files.shp));
+              await writeFile(`${base}_${crsName}_limite.shx`, toArrayBufferFS(files.shx));
               await new Promise(r => setTimeout(r, 50));
-              await writeFile(`${baseNome}_${crsName}_limite_${srcNome}.shx`, toArrayBufferFS(files.shx));
+              await writeFile(`${base}_${crsName}_limite.dbf`, toArrayBufferFS(files.dbf));
               await new Promise(r => setTimeout(r, 50));
-              await writeFile(`${baseNome}_${crsName}_limite_${srcNome}.dbf`, toArrayBufferFS(files.dbf));
-              await new Promise(r => setTimeout(r, 50));
-              await writeFile(`${baseNome}_${crsName}_limite_${srcNome}.prj`, projection.wkt);
+              await writeFile(`${base}_${crsName}_limite.prj`, projection.wkt);
               resolve();
             } catch (e) { reject(e); }
           }
@@ -2617,8 +2704,7 @@ saveToFolderBtn.onclick = async () => {
           async (err, files) => {
             if (err) return reject(err);
             try {
-              let crsName = projection && projection.epsg ? projection.epsg : "CRS";
-              crsName = String(crsName).replace(/[^\w\d]/g, "_");
+              // Gravando apenas o nome limpo e correto
               await writeFile(`${base}_${crsName}_vertices.shp`, toArrayBufferFS(files.shp));
               await new Promise(r => setTimeout(r, 50));
               await writeFile(`${base}_${crsName}_vertices.shx`, toArrayBufferFS(files.shx));
@@ -2633,8 +2719,6 @@ saveToFolderBtn.onclick = async () => {
       });
 
       const csv = gerarCsvParaVertices(extractedCoordinates, projection.epsg, fileNameBase);
-      let crsName = projection && projection.epsg ? projection.epsg : "CRS";
-      crsName = String(crsName).replace(/[^\w\d]/g, "_");
       await writeFile(`${base}_${crsName}_Validado.csv`, csv);
 
       updateStatus("✅ Gravado: limite + vertices + CSV (com .prj)!", "success");
@@ -2664,8 +2748,11 @@ saveToFolderBtn.onclick = async () => {
       }
 
       const base = sanitizeFileName(pdfOrigemNomeBase || fileNameBase);
-      const srcNome = "";
       const ring = vertices.map(c => [c.east, c.north]);
+      
+      let crsName = projection && projection.epsg ? projection.epsg : "CRS";
+      crsName = String(crsName).replace(/[^\w\d]/g, "_");
+
       // Limite (POLYGON)
       await new Promise((resolve, reject) => {
         window.shpwrite.write(
@@ -2675,10 +2762,7 @@ saveToFolderBtn.onclick = async () => {
           async (err, files) => {
             if (err) return reject(err);
             try {
-              let crsName = projection && projection.epsg ? projection.epsg : "CRS";
-              crsName = String(crsName).replace(/[^\w\d]/g, "_");
-              await writeFile(`${base}_${crsName}_limite_${srcNome}.shp`, toArrayBufferFS(files.shp));
-              await new Promise(r => setTimeout(r, 50));
+              // Apenas gravando a versão limpa
               await writeFile(`${base}_${crsName}_limite.shp`, toArrayBufferFS(files.shp));
               await new Promise(r => setTimeout(r, 50));
               await writeFile(`${base}_${crsName}_limite.shx`, toArrayBufferFS(files.shx));
@@ -2710,10 +2794,7 @@ saveToFolderBtn.onclick = async () => {
           async (err, files) => {
             if (err) return reject(err);
             try {
-              let crsName = projection && projection.epsg ? projection.epsg : "CRS";
-              crsName = String(crsName).replace(/[^\w\d]/g, "_");
-              await writeFile(`${base}_${crsName}_vertices_${srcNome}.shp`, toArrayBufferFS(files.shp));
-              await new Promise(r => setTimeout(r, 50));
+              // Apenas gravando a versão limpa
               await writeFile(`${base}_${crsName}_vertices.shp`, toArrayBufferFS(files.shp));
               await new Promise(r => setTimeout(r, 50));
               await writeFile(`${base}_${crsName}_vertices.shx`, toArrayBufferFS(files.shx));
@@ -2729,14 +2810,10 @@ saveToFolderBtn.onclick = async () => {
 
       // CSV
       const csv = gerarCsvParaVertices(vertices, projection.epsg, docId, doc.topology, doc.memorialValidation);
-      let crsName = projection && projection.epsg ? projection.epsg : "CRS";
-      crsName = String(crsName).replace(/[^\w\d]/g, "_");
       await writeFile(`${base}_${crsName}_Validado.csv`, csv);
 
       // Relatório de validação
       if (doc.topology || doc.memorialValidation) {
-        let crsName = projection && projection.epsg ? projection.epsg : "CRS";
-        crsName = String(crsName).replace(/[^\w\d]/g, "_");
         let safePages = Array.isArray(doc.pages) ? doc.pages : (typeof doc.pages === 'string' ? doc.pages : '(desconhecido)');
         const relatorio = gerarRelatorioValidacao(docId, safePages, doc.topology, doc.memorialValidation, doc.warnings);
         await writeFile(`${base}_${crsName}_Relatorio.txt`, relatorio);
@@ -2776,3 +2853,758 @@ if (forceCrsBtn) {
     }
   });
 }
+
+
+// === ELEMENTOS NOVOS ===
+const shpInput = document.getElementById("shpInput");
+const memorialMetaBox = document.getElementById("memorialMetaBox");
+const respTecnicoInput = document.getElementById("respTecnico");
+const respCreaInput = document.getElementById("respCrea");
+const cidadeDetectadaInput = document.getElementById("cidadeDetectada");
+const generateDocxBtn = document.getElementById("generateDocxBtn");
+
+// Estado
+let shpVertices = [];
+let shpAreaHa = 0;
+let shpPerimetroM = 0;
+let shpCrsKey = null;
+let shpCrsText = "";
+let shpPoligonoNome = "";
+let shpCityName = "";
+
+// Formatadores (pt-BR)
+const BRNumber = new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+const BRNumber2 = new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+function fmtCoordMeters(v) { return BRNumber.format(v); }
+function fmtMeters2(v)     { return BRNumber2.format(v); }
+function toDMS(az) {
+  az = ((az % 360) + 360) % 360;
+  const d = Math.floor(az);
+  const mFloat = (az - d) * 60;
+  const m = Math.floor(mFloat);
+  const s = Math.round((mFloat - m) * 60);
+  const pad = (n, w=2) => String(n).padStart(w, "0");
+  return `${pad(d,3)}°${pad(m)}'${pad(s)}"`;
+}
+function crsKeyToText(key) {
+  if (!key) return "CRS não identificado";
+  const p = PROJECTIONS[key];
+  if (!p) return key;
+  return `${p.name.replace('zone', 'Zona').replace('zone ','Zona ')} (${p.epsg})`;
+}
+function inferCityFromVertices(vertices, key) {
+  if (!vertices || vertices.length === 0) return "";
+  const avgE = vertices.reduce((s,v)=>s+v.east,0)/vertices.length;
+  const avgN = vertices.reduce((s,v)=>s+v.north,0)/vertices.length;
+
+  let lonlat=null, lat=null, lon=null;
+  try {
+    if (key && key.startsWith("SIRGAS2000_")) {
+      const zone = parseInt(key.match(/_(\d{2})S$/)?.[1] || "22", 10);
+      const projStr = `+proj=utm +zone=${zone} +south +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs`;
+      lonlat = proj4(projStr, proj4.WGS84, [avgE, avgN]); // [lon, lat]
+    }
+  } catch(e){}
+
+  if (lonlat && Array.isArray(lonlat)) { lon = lonlat[0]; lat = lonlat[1]; }
+
+  const isCuritiba = (lat && lon)
+    ? (lat >= -25.60 && lat <= -25.25 && lon >= -49.45 && lon <= -49.10)
+    : (avgN >= 7.170e6 && avgN <= 7.220e6 && avgE >= 660000 && avgE <= 710000);
+
+  const isPiraquara = (lat && lon)
+    ? (lat >= -25.60 && lat <= -25.35 && lon >= -49.25 && lon <= -48.95)
+    : (avgN >= 7.180e6 && avgN <= 7.200e6 && avgE >= 680000 && avgE <= 705000);
+
+  if (isPiraquara) return "Piraquara-PR";
+  if (isCuritiba) return "Curitiba-PR";
+  return "Município não identificado";
+}
+async function extractPrjFromZip(file) {
+  try {
+    const ab = await file.arrayBuffer();
+    const zip = new PizZip(ab);
+    const names = Object.keys(zip.files);
+    const prjName = names.find(n => n.toLowerCase().endsWith(".prj"));
+    if (!prjName) return null;
+    return zip.files[prjName].asText();
+  } catch(e){ return null; }
+}
+function resolveCrsKeyFromPrj(prjText) {
+  if (!prjText) return null;
+  const t = prjText.toUpperCase();
+  if (t.includes("SIRGAS") && t.includes("UTM")) {
+    if (t.includes("ZONE 21") || t.includes("ZONA 21")) return "SIRGAS2000_21S";
+    if (t.includes("ZONE 22") || t.includes("ZONA 22")) return "SIRGAS2000_22S";
+    if (t.includes("ZONE 23") || t.includes("ZONA 23")) return "SIRGAS2000_23S";
+    if (t.includes("ZONE 24") || t.includes("ZONA 24")) return "SIRGAS2000_24S";
+    if (t.includes("ZONE 25") || t.includes("ZONA 25")) return "SIRGAS2000_25S";
+  }
+  if (t.includes("SAD") && t.includes("UTM")) {
+    if (t.includes("ZONE 22") || t.includes("ZONA 22")) return "SAD69_22S";
+    if (t.includes("ZONE 23") || t.includes("ZONA 23")) return "SAD69_23S";
+  }
+  if (t.includes("WGS") && !t.includes("UTM")) return "WGS84";
+  return null;
+}
+function inferCrsKeyByValues(vertices) {
+  const hint = inferCrsByCoordinates(vertices);
+  if (hint?.zone) return `SIRGAS2000_${hint.zone}S`;
+  return null;
+}
+function verticesFromGeoJSON(geojson, keyGuess=null) {
+  let vertices = [];
+  if (!geojson) return vertices;
+
+  let f = null;
+  if (geojson.type === "FeatureCollection") f = geojson.features?.[0];
+  else if (geojson.type === "Feature") f = geojson;
+  else return vertices;
+
+  if (!f || !f.geometry) return vertices;
+  const g = f.geometry;
+
+  if (g.type === "Polygon" && Array.isArray(g.coordinates) && g.coordinates.length > 0) {
+    const ring = g.coordinates[0];
+    vertices = ring.map((xy, i) => ({ id: `V${String(i+1).padStart(3,'0')}`, east: xy[0], north: xy[1] }));
+  }
+  else if (g.type === "MultiPolygon" && g.coordinates.length > 0) {
+    const ring = g.coordinates[0][0];
+    vertices = ring.map((xy, i) => ({ id: `V${String(i+1).padStart(3,'0')}`, east: xy[0], north: xy[1] }));
+  }
+  else if (g.type === "Point" && Array.isArray(g.coordinates)) {
+    const xy = g.coordinates;
+    vertices = [{ id: "V001", east: xy[0], north: xy[1] }];
+  }
+
+  if (keyGuess && (keyGuess.startsWith("SIRGAS2000_") || keyGuess.startsWith("SAD69_"))) {
+    const zone = parseInt(keyGuess.match(/_(\d{2})S$/)?.[1] || "22", 10);
+    const projStr = `+proj=utm +zone=${zone} +south +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs`;
+    const inDegrees = vertices.some(v => Math.abs(v.east) <= 180 && Math.abs(v.north) <= 90);
+    if (inDegrees) {
+      vertices = vertices.map(v => {
+        const xy = proj4(proj4.WGS84, projStr, [v.east, v.north]); // [E,N]
+        return { ...v, east: xy[0], north: xy[1] };
+      });
+    }
+  }
+
+  const cleaned = [];
+  for (const p of vertices) {
+    const last = cleaned[cleaned.length - 1];
+    if (!last || last.east !== p.east || last.north !== p.north) cleaned.push(p);
+  }
+  if (cleaned.length >= 3) {
+    const first = cleaned[0], last = cleaned[cleaned.length-1];
+    const distClose = Math.hypot(last.east-first.east, last.north-first.north);
+    if (distClose > 0.01) cleaned.push({ ...first, id: `V${String(cleaned.length+1).padStart(3,'0')}` });
+  }
+  return cleaned;
+}
+function montarTextoMemorial(vertices, key) {
+  let linhas = [];
+  for (let i=0; i<vertices.length-1; i++) {
+    const v1 = vertices[i], v2 = vertices[i+1];
+    const az = calcularAzimute(v1, v2);
+    const dist = calcularDistancia(v1, v2);
+    const linha = 
+      `Do vértice ${i+1} segue até o vértice ${i+2}, ` +
+      `com coordenadas U T M E=${fmtCoordMeters(v2.east)} e N=${fmtCoordMeters(v2.north)}, ` +
+      `no azimute de ${toDMS(az)}, na extensão de ${fmtMeters2(dist)} m;`;
+    linhas.push(linha);
+  }
+  return linhas.join(" ");
+}
+function montarDescricaoArea(nomeArea, vertices, key) {
+  const v1 = vertices[0];
+  return `A referida ${nomeArea} é delimitada por um polígono irregular cuja descrição ` +
+         `se inicia no vértice 1, seguindo sentido horário com coordenadas planas no ` +
+         `sistema U T M Este (X) ${fmtCoordMeters(v1.east)} e Norte (Y) ${fmtCoordMeters(v1.north)}, como segue:`;
+}
+function prepararVerticesComMedidas(vertices) {
+  const out = [];
+  for (let i=0; i<vertices.length; i++) {
+    const v = { ...vertices[i], ordem: i+1 };
+    if (i < vertices.length-1) {
+      v.distCalc = fmtMeters2(calcularDistancia(vertices[i], vertices[i+1]));
+      v.azCalc = toDMS(calcularAzimute(vertices[i], vertices[i+1]));
+    } else {
+      v.distCalc = "---";
+      v.azCalc = "---";
+    }
+    out.push(v);
+  }
+  return out;
+}
+
+// ======== EVENTO: Carregar SHP  =========
+if (shpInput) {
+  shpInput.addEventListener("change", async (ev) => {
+    const file = ev.target.files?.[0];
+    if (!file) return;
+
+    try {
+      updateStatus("🔄 Lendo SHP...", "info");
+
+      // Nome amigável a partir do arquivo
+      shpPoligonoNome = file.name
+        .replace(/\.[^/.]+$/, "")
+        .replace(/_/g, " ")
+        .trim();
+
+      // Detecta extensão
+      const isZip = file.name.toLowerCase().endsWith(".zip");
+      const isShp = file.name.toLowerCase().endsWith(".shp");
+
+      let geojson = null;
+      let prjText = null;
+
+      if (isZip) {
+   // 1) ZIP → ArrayBuffer → shp(...) → GeoJSON
+   const ab = await file.arrayBuffer();
+   const geo = await shp(ab); // retorna FeatureCollection/Feature/Geometry
+   // Seleciona/força um Polygon a partir do retorno
+   geojson = buildFeatureCollectionFromAny(geo);
+   // .prj de dentro do ZIP (opcional, mas recomendado)
+   prjText = await extractPrjFromZip(file);
+ }
+ if (isZip) {
+   // 1) ZIP → ArrayBuffer → leitor tolerante (agrega múltiplos layers)
+   const ab = await file.arrayBuffer();
+   geojson = await readZipAsFeatureCollection(ab);
+   // .prj de dentro do ZIP (opcional, mas recomendado)
+   prjText = await extractPrjFromZip(file);
+ }
+      else if (isShp) {
+        // 2) .shp "solto"
+        // Observação: parseShp normalmente retorna um anel (coords) ou array de anéis
+        const shpBuf = await file.arrayBuffer();
+        const geom = await shp.parseShp(shpBuf); // [[x,y], [x,y], ...] ou múltiplos
+        const ring = Array.isArray(geom) ? geom : [];
+        const geometry = { type: "Polygon", coordinates: [ ring ] };
+
+        geojson = {
+          type: "FeatureCollection",
+          features: [{ type: "Feature", properties: {}, geometry }]
+        };
+        // Sem ZIP, normalmente não há .prj — CRS virá por inferência
+      }
+      else {
+        throw new Error("Formato não suportado. Use .zip (SHP+DBF+PRJ) ou .shp.");
+      }
+
+      // Diagnóstico rápido do GeoJSON
+      logGeojsonSummary(geojson);
+
+      // === CRS ===
+      shpCrsKey = resolveCrsKeyFromPrj(prjText);
+      // Vertices no CRS de entrada (para heurísticas)
+      let vertsRaw = verticesFromGeoJSON(geojson, shpCrsKey);
+      console.log("[SHP] vertsRaw len:", Array.isArray(vertsRaw) ? vertsRaw.length : vertsRaw);
+
+      if (!shpCrsKey) {
+        // Se não veio do .prj, tenta inferir pelos próprios valores
+        shpCrsKey = inferCrsKeyByValues(vertsRaw) || "SIRGAS2000_22S";
+      }
+
+      // Constrói novamente os vértices já no CRS alvo (normalmente UTM)
+      const vertsUTM = verticesFromGeoJSON(geojson, shpCrsKey);
+      console.log("[SHP] vertsUTM len:", Array.isArray(vertsUTM) ? vertsUTM.length : vertsUTM);
+
+      if (!Array.isArray(vertsUTM) || vertsUTM.length < 3) {
+        console.warn("[SHP] Menos de 3 vértices após parse. Abortando preenchimento de tabela.");
+        updateStatus("⚠️ O SHP foi lido, mas não há polígono com 3+ vértices. Verifique se o layer é POLYGON/MULTIPOLYGON (ou se a linha está realmente fechada).", "warning");
+        return;
+      }
+
+      // === Área (ha) e perímetro (m)
+      let signed = 0;
+      for (let i = 0; i < vertsUTM.length; i++) {
+        const curr = vertsUTM[i];
+        const next = vertsUTM[(i + 1) % vertsUTM.length];
+        signed += curr.east * next.north - next.east * curr.north;
+      }
+      shpAreaHa = Math.abs(signed) / 2 / 10000;
+
+      let per = 0;
+      for (let i = 0; i < vertsUTM.length - 1; i++) {
+        per += calcularDistancia(vertsUTM[i], vertsUTM[i + 1]);
+      }
+      shpPerimetroM = per;
+
+      // === Inferir cidade (aproximação)
+      shpCityName = inferCityFromVertices(vertsUTM, shpCrsKey);
+      if (cidadeDetectadaInput) cidadeDetectadaInput.value = shpCityName;
+
+      // === Preparar vértices com medidas para a UI (ordem/dist/azimute)
+      shpVertices = prepararVerticesComMedidas(vertsUTM);
+
+      // === Alimentar UI (tabela)
+      extractedCoordinates = shpVertices.slice();
+      countDisplay.innerText = extractedCoordinates.length;
+      previewTableBody.innerHTML = "";
+      for (const c of extractedCoordinates) {
+        previewTableBody.innerHTML += `
+          <tr>
+            <td>${c.ordem}</td>
+            <td>${c.id}</td>
+            <td>${c.north}</td>
+            <td>${c.east}</td>
+            <td>${c.distCalc}</td>
+            <td>${c.azCalc}</td>
+          </tr>`;
+      }
+      resultBox.style.display = "block";
+      scrollToResults();
+
+      // Mostrar CRS detectado
+      shpCrsText = crsKeyToText(shpCrsKey);
+      showDetectedCrsUI(shpCrsKey, { confidence: "alta", reason: "Detectado a partir do .prj e/ou coordenadas." });
+
+      // Exibir bloco de meta para memorial (se existir no HTML)
+      if (memorialMetaBox) memorialMetaBox.style.display = "block";
+
+      updateStatus("✅ SHP carregado e processado. Pronto para gerar o DOCX.", "success");
+    } catch (e) {
+      console.error(e);
+      updateStatus("Erro ao ler SHP: " + e.message, "error");
+    }
+  });
+}
+
+
+// ======== GERAR DOCX ========
+
+if (generateDocxBtn) {
+  generateDocxBtn.addEventListener("click", async () => {
+    try {
+      // 0) Verificação das libs necessárias
+      if (!window.docx || !window.docx.Document) {
+        updateStatus("❌ Biblioteca DOCX não carregada. Verifique a tag do 'docx.umd.js'.", "error");
+        return;
+      }
+      if (typeof window.saveAs !== "function") {
+        updateStatus("❌ FileSaver não carregado. Inclua FileSaver.min.js antes do script.", "error");
+        return;
+      }
+
+      // 1) Preferir shpVertices; se vazio, usar extractedCoordinates
+      let vertsBase =
+        (Array.isArray(shpVertices) && shpVertices.length >= 3) ? shpVertices :
+        (Array.isArray(extractedCoordinates) ? extractedCoordinates : []);
+
+      console.log("[Memorial] shpVertices.len=", shpVertices?.length, "| extractedCoordinates.len=", extractedCoordinates?.length);
+
+      if (!Array.isArray(vertsBase) || vertsBase.length < 3) {
+        updateStatus("⚠️ Carregue um SHP válido (polígono com 3+ vértices) antes.", "warning");
+        return;
+      }
+
+      // 2) Normalizar tipos (east/north como Number) e IDs/ordem
+      vertsBase = vertsBase
+        .map((v, i) => ({
+          id: v.id ?? `V${String(i + 1).padStart(3, "0")}`,
+          east: typeof v.east === "string" ? parseFloat(v.east) : v.east,
+          north: typeof v.north === "string" ? parseFloat(v.north) : v.north,
+          ordem: v.ordem ?? (i + 1),
+          distCalc: v.distCalc,
+          azCalc: v.azCalc
+        }))
+        .filter(v => Number.isFinite(v.east) && Number.isFinite(v.north));
+
+      if (vertsBase.length < 3) {
+        updateStatus("⚠️ As coordenadas contêm valores inválidos (NaN).", "warning");
+        return;
+      }
+
+      // 3) Fechar anel se necessário (para área/perímetro e memorial)
+      const first = vertsBase[0];
+      const last  = vertsBase[vertsBase.length - 1];
+      const closed = Math.hypot(last.east - first.east, last.north - first.north) <= 0.01;
+      let vertsForDoc = closed ? vertsBase.slice()
+                               : [...vertsBase, { ...first, id: `V${String(vertsBase.length + 1).padStart(3, "0")}` }];
+
+      // 4) Se faltar dist/az, gerar com a função do seu projeto
+      const precisaMedidas = (v) => v.distCalc === undefined || v.azCalc === undefined;
+      if (vertsForDoc.some(precisaMedidas)) {
+        vertsForDoc = prepararVerticesComMedidas(
+          vertsForDoc.map(v => ({ east: v.east, north: v.north, id: v.id }))
+        );
+      }
+
+      // 5) Metadados (inputs da UI)
+      const resp   = (respTecnicoInput?.value ?? "").trim();
+      const crea   = (respCreaInput?.value ?? "").trim();
+      let cidade   = (cidadeDetectadaInput?.value ?? "").trim();
+
+      // 6) CRS textual
+      const crsKey  = shpCrsKey || getActiveProjectionKey() || "SIRGAS2000_22S";
+      const crsText = (shpCrsText && shpCrsText.trim()) ? shpCrsText : crsKeyToText(crsKey);
+
+      // 7) Cidade (inferir se não informada)
+      if (!cidade || cidade === "Município não identificado") {
+        cidade = inferCityFromVertices(
+          vertsForDoc.map(v => ({ east: v.east, north: v.north })),
+          crsKey
+        ) || "Curitiba-PR";
+      }
+
+      const nomeArea = shpPoligonoNome || "ÁREA";
+      const dataBR   = new Date().toLocaleDateString("pt-BR");
+
+      // 8) Área (ha) e perímetro (m)
+      let signed = 0;
+      for (let i = 0; i < vertsForDoc.length; i++) {
+        const a = vertsForDoc[i], b = vertsForDoc[(i + 1) % vertsForDoc.length];
+        signed += a.east * b.north - b.east * a.north;
+      }
+      const areaHa = Math.abs(signed) / 2 / 10000;
+
+      let per = 0;
+      for (let i = 0; i < vertsForDoc.length - 1; i++) {
+        per += calcularDistancia(vertsForDoc[i], vertsForDoc[i + 1]);
+      }
+
+      const BRNumber2 = new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      const BRNumber3 = new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+      const areaTxt = BRNumber2.format(areaHa);
+      const perTxt  = BRNumber2.format(per);
+
+      // 9) Textos do memorial (mantendo suas variáveis se precisar delas, 
+      // mas reconstruindo no passo 10 para garantir a formatação negritada correta)
+      // const descricao = montarDescricaoArea(nomeArea, vertsForDoc, crsKey);
+      // const memorialTxt = montarTextoMemorial(vertsForDoc, crsKey);
+
+      // 10) Geração do DOCX - AJUSTADO PARA O MODELO
+      const { Document, Packer, Paragraph, TextRun, AlignmentType } = window.docx;
+
+      const doc = new Document({
+        sections: [{
+          properties: { page: { margin: { top: 1417, right: 1134, bottom: 1134, left: 1134 } } },
+          children: [
+            // TÍTULO FORMATADO
+            new Paragraph({
+              alignment: AlignmentType.CENTER,
+              children: [
+                new TextRun({ text: "M E M O R I A L   D E S C R I T I V O", bold: true, size: 24, font: "Calibri" })
+              ]
+            }),
+            new Paragraph({
+              alignment: AlignmentType.CENTER,
+              spacing: { after: 100 },
+              children: [
+                new TextRun({ text: nomeArea, bold: true, size: 22, font: "Calibri" })
+              ]
+            }),
+            new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: ".", size: 22, font: "Calibri" })] }),
+
+            // ITEM 1 - DESCRIÇÃO
+            new Paragraph({
+              alignment: AlignmentType.JUSTIFIED,
+              spacing: { before: 200 },
+              children: [
+                new TextRun({ text: "1. Descrição da Área: ", bold: true, size: 22, font: "Calibri" }),
+                new TextRun({ 
+                  text: `A referida ${nomeArea} é delimitada por um polígono irregular cuja descrição se inicia no vértice 1, seguindo sentido horário com coordenadas planas no sistema U T M Este (X) ${BRNumber3.format(vertsForDoc[0].east)} e Norte (Y) ${BRNumber3.format(vertsForDoc[0].north)}, como segue:`, 
+                  size: 22, font: "Calibri" 
+                })
+              ]
+            }),
+
+            // CRS
+            new Paragraph({
+              alignment: AlignmentType.JUSTIFIED,
+              children: [
+                new TextRun({ text: "Sistema de Referência (CRS): ", bold: true, size: 22, font: "Calibri" }),
+                new TextRun({ text: ` ${crsText}`, size: 22, font: "Calibri" })
+              ]
+            }),
+
+            // ITEM 2 - MEMORIAL (BLOCO ÚNICO)
+            new Paragraph({
+              alignment: AlignmentType.JUSTIFIED,
+              spacing: { before: 200 },
+              children: [
+                new TextRun({ text: "2. Memorial da Área: ", bold: true, size: 22, font: "Calibri" }),
+                ...vertsForDoc.slice(0, -1).map((v, i) => {
+                  const proximo = vertsForDoc[i + 1];
+                  return new TextRun({
+                    text: ` Do vértice ${i + 1} segue até o vértice ${i + 2}, com coordenadas U T M E=${BRNumber3.format(proximo.east)} e N=${BRNumber3.format(proximo.north)}, no azimute de ${proximo.azCalc || "00°00'00\""}, na extensão de ${BRNumber2.format(proximo.distCalc)} m;`,
+                    size: 22, font: "Calibri"
+                  });
+                })
+              ]
+            }),
+
+            // FECHAMENTO
+            new Paragraph({
+              alignment: AlignmentType.JUSTIFIED,
+              spacing: { before: 200 },
+              children: [
+                new TextRun({ 
+                  text: `Finalmente, fechando o polígono acima descrito, abrangendo uma área de ${areaTxt} ha e um perímetro de ${perTxt} m.`, 
+                  size: 22, font: "Calibri" 
+                })
+              ]
+            }),
+
+            new Paragraph({ alignment: AlignmentType.CENTER, spacing: { before: 200 }, children: [new TextRun({ text: ".", size: 22, font: "Calibri" })] }),
+
+            // DATA E ASSINATURA
+            new Paragraph({
+              alignment: AlignmentType.CENTER,
+              spacing: { before: 400 },
+              children: [new TextRun({ text: `${cidade}, ${dataBR}`, size: 22, font: "Calibri" })]
+            }),
+            new Paragraph({
+              alignment: AlignmentType.CENTER,
+              spacing: { before: 800 },
+              children: [
+                new TextRun({ text: "______________________________________________", size: 22, font: "Calibri" }),
+                new TextRun({ text: resp || "Responsável Técnico", break: 1, size: 22, font: "Calibri" }),
+                new TextRun({ text: `CREA: ${crea || ""}`, break: 1, size: 22, font: "Calibri" })
+              ]
+            })
+          ]
+        }]
+      });
+
+      const blob = await Packer.toBlob(doc);
+      const outName = `${(shpPoligonoNome || "Memorial").replace(/\s+/g, "_")}_Memorial.docx`;
+      saveAs(blob, outName);
+
+      updateStatus("✅ DOCX gerado com sucesso.", "success");
+    } catch (e) {
+      console.error(e);
+      updateStatus("Erro ao gerar DOCX: " + e.message, "error");
+    }
+  });
+}
+
+/** Escolhe o melhor Feature de Polygon/MultiPolygon de um FeatureCollection */
+function pickBestPolygonFeature(fc) {
+  if (!fc || fc.type !== "FeatureCollection" || !Array.isArray(fc.features)) return null;
+
+  const polys = fc.features.filter(f => {
+    const t = f?.geometry?.type;
+    return t === "Polygon" || t === "MultiPolygon";
+  });
+
+  if (polys.length === 0) return null;
+
+  // Heurística simples: “mais complexo” (mais coords) primeiro
+  polys.sort((a, b) => {
+    const la = JSON.stringify(a.geometry.coordinates).length;
+    const lb = JSON.stringify(b.geometry.coordinates).length;
+    return lb - la; // desc
+  });
+
+  return polys[0];
+}
+
+/** Tenta promover uma LineString em Polygon quando a linha já estiver fechada */
+function lineToPolygonIfClosed(coords, tol = 0.5) {
+  if (!Array.isArray(coords) || coords.length < 3) return null;
+
+  const first = coords[0];
+  const last  = coords[coords.length - 1];
+  if (!Array.isArray(first) || !Array.isArray(last)) return null;
+
+  const d = Math.hypot(last[0] - first[0], last[1] - first[1]);
+  if (d > tol) return null; // não está fechada (longe demais)
+
+  const isPreciselyClosed = d <= Number.EPSILON;
+  const ring = isPreciselyClosed ? coords.slice() : [...coords, [first[0], first[1]]];
+
+  return { type: "Polygon", coordinates: [ ring ] };
+}
+
+/** Força uma geometry qualquer a virar Polygon, quando possível */
+function coerceGeometryToPolygon(geometry, tol = 0.5) {
+  if (!geometry || !geometry.type) return null;
+
+  const t = geometry.type;
+  if (t === "Polygon") return geometry;
+
+  if (t === "MultiPolygon") {
+    if (Array.isArray(geometry.coordinates) && geometry.coordinates.length > 0) {
+      const firstPoly = geometry.coordinates[0];
+      if (Array.isArray(firstPoly) && firstPoly.length > 0) {
+        return { type: "Polygon", coordinates: firstPoly };
+      }
+    }
+    return null;
+  }
+
+  if (t === "LineString") {
+    return lineToPolygonIfClosed(geometry.coordinates, tol);
+  }
+
+  if (t === "MultiLineString") {
+    const mls = geometry.coordinates;
+    if (Array.isArray(mls)) {
+      for (const line of mls) {
+        const poly = lineToPolygonIfClosed(line, tol);
+        if (poly) return poly;
+      }
+    }
+    return null;
+  }
+
+  // Point/MultiPoint etc. não são promovíveis sem regras adicionais
+  return null;
+}
+
+/** Normaliza qualquer retorno do shp(...) em um FeatureCollection com UM Polygon quando der */
+function buildFeatureCollectionFromAny(geo, tol = 0.5) {
+  // 1) FeatureCollection
+  if (geo && geo.type === "FeatureCollection" && Array.isArray(geo.features)) {
+    const best = pickBestPolygonFeature(geo);
+    if (best) {
+      return { type: "FeatureCollection", features: [ best ] };
+    }
+    // Se não há Polygon/MultiPolygon, tenta promover alguma geometry (ex.: LineString fechada)
+    for (const f of geo.features) {
+      const poly = coerceGeometryToPolygon(f?.geometry, tol);
+      if (poly) {
+        return {
+          type: "FeatureCollection",
+          features: [{ type: "Feature", properties: f.properties || {}, geometry: poly }]
+        };
+      }
+    }
+    // Não conseguiu -> retorna como veio (para depuração)
+    return geo;
+  }
+
+  // 2) Feature isolado
+  if (geo && geo.type === "Feature" && geo.geometry) {
+    let geometry = geo.geometry;
+    if (geometry.type !== "Polygon") {
+      const coerced = coerceGeometryToPolygon(geometry, tol);
+      if (coerced) geometry = coerced;
+    }
+    return {
+      type: "FeatureCollection",
+      features: [{ type: "Feature", properties: geo.properties || {}, geometry }]
+    };
+  }
+
+  // 3) Geometry bruto
+  if (geo && geo.type && geo.coordinates) {
+    let geometry = geo;
+    if (geometry.type !== "Polygon") {
+      const coerced = coerceGeometryToPolygon(geometry, tol);
+      if (coerced) geometry = coerced;
+    }
+    return {
+      type: "FeatureCollection",
+      features: [{ type: "Feature", properties: {}, geometry }]
+    };
+  }
+
+  // 4) Forma inesperada → retorna FC vazio (evita quebra)
+  return { type: "FeatureCollection", features: [] };
+}
+
+/** Log de diagnóstico do GeoJSON (opcional) */
+function logGeojsonSummary(geojson) {
+  try {
+    if (!geojson) {
+      console.warn("[SHP] GeoJSON vazio/indefinido.");
+      return;
+    }
+    if (geojson.type === "FeatureCollection") {
+      const n = Array.isArray(geojson.features) ? geojson.features.length : 0;
+      const gt = n > 0 ? geojson.features[0]?.geometry?.type : "(nenhum)";
+      console.log(`[SHP] FC com ${n} feature(s). Primeiro geometry: ${gt}`);
+    } else if (geojson.type === "Feature") {
+      console.log(`[SHP] Feature isolado. Geometry: ${geojson.geometry?.type || "(desconhecido)"}`);
+    } else {
+      console.log(`[SHP] Objeto geometry. Type: ${geojson.type || "(desconhecido)"}`);
+    }
+  } catch (e) {
+    console.warn("[SHP] Falha ao sumarizar GeoJSON:", e);
+  }
+}
+
+async function readZipAsFeatureCollection(ab, tol = 0.5) {
+  // 1) Caminho "normal": shp(ab) já tenta montar uma FeatureCollection
+  try {
+    const geo1 = await shp(ab);
+    if (geo1) {
+      const fc1 = buildFeatureCollectionFromAny(geo1, tol);
+      if (fc1 && Array.isArray(fc1.features) && fc1.features.length > 0) {
+        console.log("[SHP] readZip: caminho direto OK (shp(ab)).");
+        return fc1;
+      }
+    }
+  } catch (e) {
+    console.warn("[SHP] readZip: shp(ab) falhou → tentando parseZip.", e);
+  }
+
+  // 2) Caminho "multi-camada": parseZip retorna FC ou um objeto de coleções
+  try {
+    const parsed = await shp.parseZip(ab);
+    // (a) Se já for FeatureCollection
+    if (parsed && parsed.type === "FeatureCollection" && Array.isArray(parsed.features)) {
+      const fc2 = buildFeatureCollectionFromAny(parsed, tol);
+      if (fc2 && fc2.features?.length) {
+        console.log("[SHP] readZip: parseZip → FC direta.");
+        return fc2;
+      }
+    }
+
+    // (b) Se for objeto com múltiplas coleções/arrays por chave
+    if (parsed && typeof parsed === "object" && !parsed.type) {
+      // Agrega só Polygon/MultiPolygon (ou LineString fechada → Polygon)
+      const features = [];
+      const keys = Object.keys(parsed);
+      for (const k of keys) {
+        const val = parsed[k];
+        if (!val) continue;
+
+        // Caso 1: uma FeatureCollection
+        if (val.type === "FeatureCollection" && Array.isArray(val.features)) {
+          for (const f of val.features) {
+            const poly = coerceGeometryToPolygon(f?.geometry, tol);
+            if (poly) features.push({ type: "Feature", properties: f.properties || {}, geometry: poly });
+          }
+          continue;
+        }
+
+        // Caso 2: um array de Features/Geometries crus
+        if (Array.isArray(val)) {
+          for (const item of val) {
+            if (item?.type === "Feature") {
+              const poly = coerceGeometryToPolygon(item.geometry, tol);
+              if (poly) features.push({ type: "Feature", properties: item.properties || {}, geometry: poly });
+            } else if (item?.type && item?.coordinates) {
+              const poly = coerceGeometryToPolygon(item, tol);
+              if (poly) features.push({ type: "Feature", properties: {}, geometry: poly });
+            }
+          }
+          continue;
+        }
+
+        // Caso 3: geometry simples
+        if (val?.type && val?.coordinates) {
+          const poly = coerceGeometryToPolygon(val, tol);
+          if (poly) features.push({ type: "Feature", properties: {}, geometry: poly });
+        }
+      }
+
+      if (features.length > 0) {
+        console.log(`[SHP] readZip: parseZip → agregado ${features.length} feature(s) de múltiplas chaves.`);
+        return { type: "FeatureCollection", features };
+      }
+    }
+  } catch (e) {
+    console.warn("[SHP] readZip: parseZip falhou.", e);
+  }
+
+  // 3) Sem sucesso: devolve FC vazia para o caller tratar
+  console.warn("[SHP] readZip: nenhuma feature encontrada no ZIP.");
+  return { type: "FeatureCollection", features: [] };
+}
+

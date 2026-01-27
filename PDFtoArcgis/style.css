@@ -157,13 +157,13 @@ body {
   transition: 0.2s;
 }
 .btn-gold:hover { background-color: #fb8c00; }
+.btn-gold i { margin-right: 6px; } /* ajuste novo */
 
 /* =========================================
  5. STATUS, PROGRESSO E TABELA
 ========================================= */
 #progressContainer { margin: 20px 0; width: 100%; }
 progress { width: 100%; height: 15px; accent-color: #ff9800; display: block; }
-
 #status {
   padding: 15px;
   border-radius: 5px;
@@ -178,7 +178,6 @@ progress { width: 100%; height: 15px; accent-color: #ff9800; display: block; }
 .status-success { background: #e8f5e9; border-color: #4caf50 !important; }
 .status-warning { background: #fff3e0; border-color: #ff9800 !important; }
 .status-error { background: #ffebee; border-color: #f44336 !important; }
-
 .stat-card {
   background: #fff8e1;
   border: 1px solid #ffc107;
@@ -187,7 +186,6 @@ progress { width: 100%; height: 15px; accent-color: #ff9800; display: block; }
   text-align: center;
   margin-bottom: 20px;
 }
-
 .table-container {
   width: 100%;
   overflow-x: auto;
