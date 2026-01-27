@@ -3332,22 +3332,28 @@ if (generateDocxBtn) {
       const doc = new Document({
         sections: [{
           properties: { page: { margin: { top: 1417, right: 1134, bottom: 1134, left: 1134 } } },
-          children: [
-            // TÍTULO FORMATADO
-            new Paragraph({
-              alignment: AlignmentType.CENTER,
-              spacing: spacing15,
+          headers: {
+            default: new window.docx.Header({
               children: [
-                new TextRun({
-                  text: espacarLetras("MEMORIAL DESCRITIVO"),
-                  bold: true,
-                  size: 28, // Times New Roman 14pt = 28 half-points
-                  font: "Times New Roman",
-                  allCaps: true
-                })
+                new Paragraph({
+                  alignment: AlignmentType.CENTER,
+                  spacing: spacing15,
+                  children: [
+                    new TextRun({
+                      text: espacarLetras("MEMORIAL DESCRITIVO"),
+                      bold: true,
+                      size: 28, // Times New Roman 14pt = 28 half-points
+                      font: "Times New Roman",
+                      allCaps: true
+                    })
+                  ]
+                }),
+                // Linha vazia abaixo do título no cabeçalho
+                new Paragraph({ spacing: spacing15, children: [new TextRun({ text: "", size: 24, font: "Arial" })] })
               ]
-            }),
-
+            })
+          },
+          children: [
             // ITEM 1 - DESCRIÇÃO
             new Paragraph({
               alignment: AlignmentType.JUSTIFIED,
