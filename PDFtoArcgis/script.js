@@ -2593,11 +2593,11 @@ saveToFolderBtn.onclick = async () => {
               let crsName = projection && projection.epsg ? projection.epsg : "CRS";
               crsName = String(crsName).replace(/[^\w\d]/g, "_");
               await writeFile(`${base}_${crsName}_limite.shp`, toArrayBufferFS(files.shp));
-              await new Promise(r => setTimeout(r, 50)); // Pequeno delay
+              await new Promise(r => setTimeout(r, 50));
               const baseNome = pdfOrigemNomeBase || base;
               const srcNome = pdfOrigemSrc || "src";
               await writeFile(`${baseNome}_${crsName}_limite_${srcNome}.shp`, toArrayBufferFS(files.shp));
-              await new Promise(r => setTimeout(r, 50)); // Pequeno delay
+              await new Promise(r => setTimeout(r, 50));
               await writeFile(`${baseNome}_${crsName}_limite_${srcNome}.shx`, toArrayBufferFS(files.shx));
               await new Promise(r => setTimeout(r, 50));
               await writeFile(`${baseNome}_${crsName}_limite_${srcNome}.dbf`, toArrayBufferFS(files.dbf));
