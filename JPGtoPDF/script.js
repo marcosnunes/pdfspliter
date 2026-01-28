@@ -1,6 +1,9 @@
 // Menu lateral (Sidenav)
 function openNav() {
     document.getElementById("mySidenav").style.width = "250px";
+    if (typeof isAppInstalled === 'function' && typeof hideInstallBtn === 'function') {
+        if (isAppInstalled()) hideInstallBtn();
+    }
 }
 
 function closeNav() {

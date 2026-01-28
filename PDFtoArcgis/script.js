@@ -11,7 +11,12 @@
     installBtn.style.display = 'none';
   }
 // UI: Navegação lateral e rolagem para resultados
-function openNav() { document.getElementById("mySidenav").style.width = "250px"; }
+function openNav() {
+  document.getElementById("mySidenav").style.width = "250px";
+  if (typeof isAppInstalled === 'function' && typeof hideInstallBtn === 'function') {
+    if (isAppInstalled()) hideInstallBtn();
+  }
+}
 function closeNav() { document.getElementById("mySidenav").style.width = "0"; }
 
 // --- PWA: Instalar App (com feedback visual) ---
