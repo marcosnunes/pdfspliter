@@ -356,33 +356,6 @@ function updateUI(translations) {
     });
 }
 
-function changeLanguage(lang) {
-    const supportedLangs = ['en', 'es', 'fr', 'de'];
-    const isPrivacyPage = window.location.pathname.includes('privacy_policy');
-
-    if (isPrivacyPage) {
-        let targetPage;
-        if (supportedLangs.includes(lang)) {
-            targetPage = `privacy_policy_${lang}.html`;
-        } else {
-            targetPage = 'privacy_policy.html';
-        }
-        if (!window.location.pathname.endsWith(targetPage)) {
-            window.location.href = targetPage;
-            return;
-        }
-    }
-
-    if (window.Android && window.Android.getTranslations) {
-        const translationsJson = window.Android.getTranslations(lang);
-        try {
-            const translations = JSON.parse(translationsJson);
-            updateUI(translations);
-        } catch (e) {
-            console.error("Error parsing translations from Android", e);
-        }
-    }
-}
 
 function loadScript(src, cb) {
     const s = document.createElement('script');
@@ -429,7 +402,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // --- PWA: Instalar App (com feedback visual) ---
     let deferredPrompt = null;
-    const installBtn = document.getElementById('installPwaBtn');
     window.addEventListener('beforeinstallprompt', (e) => {
         e.preventDefault();
         deferredPrompt = e;
@@ -479,5 +451,5 @@ document.addEventListener("DOMContentLoaded", () => {
     if (select) {
         select.value = userLang;
     }
-    changeLanguage(userLang);
+    // ...existing code...
 });
