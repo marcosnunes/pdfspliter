@@ -37,7 +37,7 @@
         width: 80%;
     }
 }
-/* Footer profissional */
+/* Footer */
 .app-footer {
     width: 100%;
     background: linear-gradient(90deg, #ff9800 60%, #fb8c00 100%);
@@ -73,7 +73,7 @@
         font-size: 0.95em;
     }
 }
-/* Footer profissional */
+/* Footer */
 
 @media (max-width: 600px) {
     .app-footer {

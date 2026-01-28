@@ -37,7 +37,7 @@
     width: 80%;
   }
 }
-/* Footer profissional */
+/* Footer*/
 .app-footer {
   width: 100%;
   background: linear-gradient(90deg, #ff9800 60%, #fb8c00 100%);
@@ -73,7 +73,7 @@
     font-size: 0.95em;
   }
 }
-/* Footer profissional */
+/* Footer */
 
 @media (max-width: 600px) {
   .app-footer {
@@ -146,62 +146,85 @@ body {
   line-height: 1.4;
 }
 
-/* =========================================
- 3. NAVEGAÇÃO E SIDENAV
-========================================= */
+
 .navigation {
-  position: sticky;
-  width: 100%;
-  top: 0;
-  z-index: 1000;
+    position: sticky;
+    width: 100%;
+    top: 0;
+    z-index: 1000;
 }
+
 .nav-wrapper {
-  background-color: #ffc107;
-  padding: 10px;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-  text-align: right;
-  height: 60px;
-  box-sizing: border-box;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
+    background-color: #ffc107;
+    padding: 10px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    text-align: right;
+    /* Alinha o conteúdo (span) à direita */
+    height: 60px;
+    /* Define uma altura fixa para a barra */
+    box-sizing: border-box;
+    /* Garante que padding não adicione altura */
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
 }
+
+/* Estilos para o ícone de abrir o menu */
 .open-nav {
-  font-size: 28px;
-  cursor: pointer;
-  color: white;
-  padding-right: 20px;
+    font-size: 28px;
+    cursor: pointer;
+    color: white;
+    padding-right: 20px;
 }
+
+/* Estilos para o menu lateral (Sidenav) */
 .sidenav {
-  height: 100%;
-  width: 0;
-  position: fixed;
-  z-index: 1001;
-  top: 0;
-  right: 0;
-  background-color: #ff9800;
-  overflow-x: hidden;
-  transition: 0.5s;
-  padding-top: 60px;
-  text-align: left;
+    height: 100%;
+    width: 0;
+    /* Começa fechado */
+    position: fixed;
+    z-index: 1001;
+    /* Fica acima de outros conteúdos */
+    top: 0;
+    right: 0;
+    background-color: #ff9800;
+    /* Cor de fundo */
+    overflow-x: hidden;
+    /* Desabilita scroll horizontal */
+    transition: 0.5s;
+    /* Efeito de transição */
+    padding-top: 60px;
+    /* Espaço no topo */
 }
+
+/* Estilos para os links do menu lateral */
 .sidenav a {
-  padding: 8px 8px 8px 32px;
-  text-decoration: none;
-  font-size: 22px;
-  color: white;
-  display: block;
-  transition: 0.3s;
+    padding: 8px 8px 8px 32px;
+    margin-bottom: 6px;
+    text-decoration: none;
+    font-size: 22px;
+    color: white;
+    display: block;
+    transition: 0.3s;
 }
+
+/* Efeito hover nos links */
 .sidenav a:hover {
-  color: #f1f1f1;
-  background-color: #fb8c00;
+    color: #f1f1f1;
+    background-color: #fb8c00;
 }
+
+/* Estilo para o botão de fechar (X) */
 .sidenav .closebtn {
-  position: absolute;
-  top: 0;
-  right: 25px;
-  font-size: 36px;
+    position: absolute;
+    top: 0;
+    right: 25px;
+    font-size: 36px;
+    margin-left: 50px;
+}
+
+.nav-wrapper span a {
+    color: white;
 }
 
 /* =========================================
