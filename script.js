@@ -411,6 +411,27 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
+    // --- PWA: Instalar App ---
+    let deferredPrompt = null;
+    const installBtn = document.getElementById('installPwaBtn');
+    window.addEventListener('beforeinstallprompt', (e) => {
+        e.preventDefault();
+        deferredPrompt = e;
+        if (installBtn) installBtn.style.display = 'block';
+    });
+    if (installBtn) {
+        installBtn.addEventListener('click', async () => {
+            if (deferredPrompt) {
+                deferredPrompt.prompt();
+                const { outcome } = await deferredPrompt.userChoice;
+                if (outcome === 'accepted') {
+                    installBtn.style.display = 'none';
+                }
+                deferredPrompt = null;
+            }
+        });
+    }
+
     const userLang = (navigator.language || navigator.userLanguage).split('-')[0];
     const select = document.getElementById('language-select');
     if (select) {

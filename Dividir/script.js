@@ -38,6 +38,27 @@ function nativeDownload(fileName, blob) {
         const base64Data = event.target.result.split(',')[1];
         if (window.Android && typeof window.Android.downloadPdf === 'function') {
             window.Android.downloadPdf(base64Data, fileName);
+
+// --- PWA: Instalar App ---
+let deferredPrompt = null;
+const installBtn = document.getElementById('installPwaBtn');
+window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    deferredPrompt = e;
+    if (installBtn) installBtn.style.display = 'block';
+});
+if (installBtn) {
+    installBtn.addEventListener('click', async () => {
+        if (deferredPrompt) {
+            deferredPrompt.prompt();
+            const { outcome } = await deferredPrompt.userChoice;
+            if (outcome === 'accepted') {
+                installBtn.style.display = 'none';
+            }
+            deferredPrompt = null;
+        }
+    });
+}
         } else {
             // Fallback download navegador
             const url = window.URL.createObjectURL(blob);

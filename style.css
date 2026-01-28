@@ -19,6 +19,8 @@
     .app-footer {
         font-size: 13px;
         padding: 12px 0 8px 0;
+        position: static;
+        box-shadow: none;
     }
 }
 body {

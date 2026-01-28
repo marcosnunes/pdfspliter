@@ -1,6 +1,27 @@
 // UI: Navegação lateral e rolagem para resultados
 function openNav() { document.getElementById("mySidenav").style.width = "250px"; }
 function closeNav() { document.getElementById("mySidenav").style.width = "0"; }
+
+// --- PWA: Instalar App ---
+let deferredPrompt = null;
+const installBtn = document.getElementById('installPwaBtn');
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  deferredPrompt = e;
+  if (installBtn) installBtn.style.display = 'block';
+});
+if (installBtn) {
+  installBtn.addEventListener('click', async () => {
+    if (deferredPrompt) {
+      deferredPrompt.prompt();
+      const { outcome } = await deferredPrompt.userChoice;
+      if (outcome === 'accepted') {
+        installBtn.style.display = 'none';
+      }
+      deferredPrompt = null;
+    }
+  });
+}
 function scrollToResults() {
   const box = document.getElementById("resultBox");
   if (box && box.style.display !== "none") box.scrollIntoView({ behavior: "smooth", block: "start" });

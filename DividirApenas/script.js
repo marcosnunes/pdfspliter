@@ -7,6 +7,27 @@ function closeNav() {
     document.getElementById("mySidenav").style.width = "0";
 }
 
+// --- PWA: Instalar App ---
+let deferredPrompt = null;
+const installBtn = document.getElementById('installPwaBtn');
+window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    deferredPrompt = e;
+    if (installBtn) installBtn.style.display = 'block';
+});
+if (installBtn) {
+    installBtn.addEventListener('click', async () => {
+        if (deferredPrompt) {
+            deferredPrompt.prompt();
+            const { outcome } = await deferredPrompt.userChoice;
+            if (outcome === 'accepted') {
+                installBtn.style.display = 'none';
+            }
+            deferredPrompt = null;
+        }
+    });
+}
+
 // Carrega jsPDF e pdf-lib de forma assíncrona
 let jsPDF;
 let PDFLib;
