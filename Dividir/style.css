@@ -1,5 +1,14 @@
-/* Footer profissional atualizado */
-/* Footer profissional atualizado */
+/* Exibir botão de instalação apenas em telas de celular */
+#installPwaBtn {
+    display: none;
+}
+
+@media (max-width: 600px) {
+    #installPwaBtn {
+        display: block !important;
+    }
+}
+/* Footer profissional */
 .app-footer {
     width: 100%;
     background: linear-gradient(90deg, #ff9800 60%, #fb8c00 100%);
