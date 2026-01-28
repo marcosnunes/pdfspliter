@@ -411,21 +411,48 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
-    // --- PWA: Instalar App ---
+
+    // --- PWA: Instalar App (com feedback visual) ---
     let deferredPrompt = null;
     const installBtn = document.getElementById('installPwaBtn');
     window.addEventListener('beforeinstallprompt', (e) => {
         e.preventDefault();
         deferredPrompt = e;
-        if (installBtn) installBtn.style.display = 'block';
+        if (installBtn) {
+            installBtn.style.display = 'block';
+            installBtn.classList.remove('success', 'error');
+            installBtn.textContent = 'Instalar App';
+        }
     });
     if (installBtn) {
         installBtn.addEventListener('click', async () => {
             if (deferredPrompt) {
-                deferredPrompt.prompt();
-                const { outcome } = await deferredPrompt.userChoice;
-                if (outcome === 'accepted') {
-                    installBtn.style.display = 'none';
+                try {
+                    deferredPrompt.prompt();
+                    const { outcome } = await deferredPrompt.userChoice;
+                    if (outcome === 'accepted') {
+                        installBtn.classList.add('success');
+                        installBtn.textContent = 'App instalado!';
+                        setTimeout(() => {
+                            installBtn.style.display = 'none';
+                            installBtn.classList.remove('success');
+                            installBtn.textContent = 'Instalar App';
+                        }, 2000);
+                    } else {
+                        installBtn.classList.add('error');
+                        installBtn.textContent = 'Instalação cancelada';
+                        setTimeout(() => {
+                            installBtn.classList.remove('error');
+                            installBtn.textContent = 'Instalar App';
+                        }, 2000);
+                    }
+                } catch (err) {
+                    installBtn.classList.add('error');
+                    installBtn.textContent = 'Erro ao instalar';
+                    setTimeout(() => {
+                        installBtn.classList.remove('error');
+                        installBtn.textContent = 'Instalar App';
+                    }, 2000);
                 }
                 deferredPrompt = null;
             }
