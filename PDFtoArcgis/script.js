@@ -1,6 +1,4 @@
-/* =========================
-   UI NAV
-========================= */
+// UI: Navegação lateral e rolagem para resultados
 function openNav() { document.getElementById("mySidenav").style.width = "250px"; }
 function closeNav() { document.getElementById("mySidenav").style.width = "0"; }
 function scrollToResults() {
@@ -8,15 +6,11 @@ function scrollToResults() {
   if (box && box.style.display !== "none") box.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
-/* =========================
-   PDF.JS CONFIG
-========================= */
+// Configuração do PDF.js para uso local/Android
 pdfjsLib.GlobalWorkerOptions.workerSrc =
   "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js";
 
-/* =========================
-   ELEMENTOS
-========================= */
+// Elementos principais da UI e variáveis globais
 const fileInput = document.getElementById("fileInput");
 const statusDiv = document.getElementById("status");
 const progressBar = document.getElementById("progressBar");
@@ -43,13 +37,11 @@ let fileNameBase = "coordenadas_extracao";
 let pdfOrigemNomeBase = "";
 let pdfOrigemSrc = "";
 
-// Resultados por matrícula (PDF unificado)
-let documentsResults = []; // [{docId,pages,projectionKey,manualProjectionKey,projectionInfo,vertices,warnings}]
+// Resultados por matrícula (PDF unificado): [{docId,pages,projectionKey,manualProjectionKey,projectionInfo,vertices,warnings}]
+let documentsResults = [];
 let activeDocIndex = -1;
 
-/* =========================
-   PROJEÇÕES (WKT)
-========================= */
+// Projeções suportadas (WKT)
 const PROJECTIONS = {
     SIRGAS2000_25S: {
       name: "SIRGAS 2000 / UTM zone 25S",
@@ -93,9 +85,7 @@ const PROJECTIONS = {
   }
 };
 
-/* =========================
-   STATUS / HELPERS
-========================= */
+// Helpers de status e normalização
 function updateStatus(msg, type) {
   statusDiv.style.display = "block";
   statusDiv.innerText = msg;
@@ -113,11 +103,10 @@ function normalizeNumber(raw) {
   if (!raw) return raw;
   let v = String(raw);
   v = v.replace(/\u00A0/g, " ").replace(/[\s\t]+/g, "");  // Remove espaços e tabs em branco
-  v = v.replace(/[Oo]/g, "0");  // O parece com 0
-  v = v.replace(/[lI]/g, "1");  // l (letra L minúscula) e I parecem com 1
+  v = v.replace(/[Oo]/g, "0");  // Corrige O por 0
+  v = v.replace(/[lI]/g, "1");  // Corrige l/I por 1
   
-  // Normalizar separadores decimais
-  // Se tem ambos "." e ",", assume que o último é decimal
+  // Normaliza separadores decimais (lógica tolerante a OCR)
   if (v.includes(",") && !v.includes(".")) {
     v = v.replace(",", ".");  // "1234,56" -> "1234.56"
   } else if (v.includes(",") && v.includes(".")) {
@@ -134,12 +123,7 @@ function normalizeNumber(raw) {
   return v;
 }
 
-/**
- * Auto-escala de números fora de intervalo (adiciona zeros à esquerda ou direita)
- * Exemplo: 519 → 519000 (faltava 3 zeros para ser uma coordenada E válida)
- * Exemplo: 519542055 → 519542.055 (OCR concatenou decimais, divide por 1000)
- * Exemplo: 5190996389 → 519099.6389 (OCR muito concatenado, divide por 10000000)
- */
+// Corrige valores de coordenadas fora do intervalo esperado (tolerância a erros de OCR)
 function autoScaleCoordinate(value, expectedMin, expectedMax) {
   if (Number.isNaN(value)) return NaN;
   if (value >= expectedMin && value <= expectedMax) return value;
@@ -173,9 +157,7 @@ function autoScaleCoordinate(value, expectedMin, expectedMax) {
   return NaN; // Não conseguiu escalar
 }
 
-/* =========================
-   CÁLCULOS EUCLIDANOS (rápidos, para display)
-========================= */
+// Cálculos rápidos para exibição (distância/azimute)
 function calcularDistancia(p1, p2) {
   return Math.sqrt(Math.pow(p2.east - p1.east, 2) + Math.pow(p2.north - p1.north, 2));
 }
@@ -187,13 +169,9 @@ function calcularAzimute(p1, p2) {
   return az < 0 ? az + 360 : az;
 }
 
-/* =========================
-   GEODÉSIA PROFISSIONAL (Vincenty + Validação Topológica)
-========================= */
+// Geodésia profissional: Vincenty e validação topológica
 
-/**
- * Parâmetros elipsoidais por CRS
- */
+// Parâmetros elipsoidais por CRS
 const ELLIPSOID_PARAMS = {
   "SIRGAS2000_21S": { a: 6378137.0, f: 1/298.257222101, name: "WGS84/GRS1980" },
   "SIRGAS2000_22S": { a: 6378137.0, f: 1/298.257222101, name: "WGS84/GRS1980" },
@@ -403,22 +381,19 @@ function isPolygonClosed(vertices, tolerance = 0.5) {
   return dist <= tolerance;
 }
 
-/**
- * Detectar auto-intersecções em polígono (crossing edges)
- * Retorna array de pares de índices que se cruzam
- */
+// Detecta auto-intersecções em polígonos (retorna pares de índices)
 function detectPolygonSelfIntersections(vertices) {
   const intersections = [];
   
   if (vertices.length < 4) return intersections;
   
-  // Função helper: verificar se dois segmentos se cruzam
+  // Helper: verifica se dois segmentos se cruzam
   function segmentsIntersect(p1, p2, p3, p4) {
     const ccw = (A, B, C) => (C.north - A.north) * (B.east - A.east) > (B.north - A.north) * (C.east - A.east);
     return ccw(p1, p3, p4) !== ccw(p2, p3, p4) && ccw(p1, p2, p3) !== ccw(p1, p2, p4);
   }
   
-  // Verificar cada par de edges (não-adjacentes)
+  // Verifica cada par de edges (não-adjacentes)
   for (let i = 0; i < vertices.length - 1; i++) {
     for (let j = i + 2; j < vertices.length - 1; j++) {
       if (i === 0 && j === vertices.length - 2) continue; // Skip closing edge
@@ -444,8 +419,7 @@ function inferCrsByCoordinates(vertices) {
     const avgE = vertices.reduce((sum, v) => sum + v.east, 0) / vertices.length;
     const avgN = vertices.reduce((sum, v) => sum + v.north, 0) / vertices.length;
 
-    // Lógica para o Sul do Brasil (Piraquara-PR está aqui)
-    // Norte ~7.1 milhões e Este entre 600k e 800k indica Zona 22S
+    // Lógica para o Sul do Brasil (inferência automática de zona UTM)
     if (avgN > 7000000 && avgN < 8000000) {
         if (avgE > 600000 && avgE < 800000) {
             return { zone: 22, reason: "CRS inferido automaticamente pelas coordenadas (Padrão UTM Zona 22S)." };

@@ -1,4 +1,4 @@
-/* Funções para controlar o Menu Lateral (Sidenav) */
+// Menu lateral (Sidenav)
 function openNav() {
     document.getElementById("mySidenav").style.width = "250px";
 }
@@ -7,12 +7,12 @@ function closeNav() {
     document.getElementById("mySidenav").style.width = "0";
 }
 
-// Função para carregar scripts dinamicamente
+// Carrega scripts dinamicamente (evita duplicidade)
 function loadScript(url, callback, id = null) {
-    // Verifica se o script já existe pelo ID (se fornecido)
+    // Evita carregar script duplicado
     if (id && document.getElementById(id)) {
         console.log(`Script "${id}" já carregado.`);
-        if (callback) callback(); // Executa o callback se já carregado
+        if (callback) callback();
         return;
     }
 
@@ -21,12 +21,12 @@ function loadScript(url, callback, id = null) {
     script.src = url;
 
     if (id) {
-        script.id = id; // Define o ID para evitar duplicações
+        script.id = id;
     }
 
     script.onload = () => {
         console.log(`Script carregado: ${url}`);
-        if (callback) callback(); // Executa o callback após o carregamento
+        if (callback) callback();
     };
 
     script.onerror = () => {
@@ -37,26 +37,27 @@ function loadScript(url, callback, id = null) {
     document.head.appendChild(script);
 }
 
-// Define a URL do PDFLib
+// URL do PDFLib (CDN)
 const pdfLibUrl = "https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js";
 
-// Carrega o PDFLib dinamicamente e inicia o código principal
+// Carrega PDFLib e inicializa lógica principal
 loadScript(pdfLibUrl, () => {
     console.log("PDFLib carregado dinamicamente.");
 
-    // Código principal AQUI, fora do DOMContentLoaded
+    // Lógica principal (fora do DOMContentLoaded)
     const fileInput = document.getElementById('pdfUpload');
     const mergePdfButton = document.getElementById('mergePdf');
     const logMessages = document.getElementById('log-messages');
-    const pdfDownloadContainer = document.getElementById('pdf-download-container'); // Container para o link
-    const fileSelectedName = document.getElementById('file-selected-name'); // Span para o nome dos arquivos
+    const pdfDownloadContainer = document.getElementById('pdf-download-container');
+    const fileSelectedName = document.getElementById('file-selected-name');
 
+    // Log de status para UI e console
     function displayLogMessage(message) {
         logMessages.textContent = message;
         console.log(message);
     }
 
-    // Evento ao selecionar arquivos PDF
+    // Seleção de arquivos PDF
     fileInput.addEventListener('change', function () {
         const files = fileInput.files;
         displayLogMessage(`Arquivos selecionados: ${files.length}`);
@@ -71,7 +72,7 @@ loadScript(pdfLibUrl, () => {
         }
     });
 
-    // Estilo do botão (garantido que seja aplicado)
+    // Estilo do botão
     mergePdfButton.classList.add('button1');
 
     mergePdfButton.addEventListener('click', async function () {
@@ -108,18 +109,18 @@ loadScript(pdfLibUrl, () => {
                 const pdfBlob = new Blob([pdfBytes], { type: 'application/pdf' });
                 const pdfUrl = URL.createObjectURL(pdfBlob);
 
-                // Cria dinamicamente o link de download
+                // Link de download PDF
                 let downloadLink = document.createElement('a');
                 downloadLink.href = pdfUrl;
                 downloadLink.download = 'PDF Unificado.pdf';
-                downloadLink.textContent = 'Baixar PDF Unificado'; // Texto do link
-                downloadLink.classList.add('custom-download-link'); // Adiciona a classe para estilo
+                downloadLink.textContent = 'Baixar PDF Unificado';
+                downloadLink.classList.add('custom-download-link');
 
-                // Limpa o conteúdo anterior e adiciona o link ao container de download
+                // Limpa container e adiciona link
                 pdfDownloadContainer.innerHTML = '';
                 pdfDownloadContainer.appendChild(downloadLink);
 
-                // Adiciona o foco para a área do link de download
+                // Foco na área do link
                 downloadLink.scrollIntoView({ behavior: 'smooth', block: 'start' });
                 displayLogMessage('Pronto! Clique no link para baixar o PDF unificado.');
 

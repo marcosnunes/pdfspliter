@@ -1,4 +1,4 @@
-/* Funções para controlar o Menu Lateral (Sidenav) */
+// Menu lateral (Sidenav)
 function openNav() {
     document.getElementById("mySidenav").style.width = "250px";
 }
@@ -7,11 +7,11 @@ function closeNav() {
     document.getElementById("mySidenav").style.width = "0";
 }
 
-// Carrega o jsPDF e pdf-lib de forma assíncrona
-let jsPDF; // Variável global para jsPDF (mantido, pode ser útil)
-let PDFLib; // Variável global para pdf-lib
+// Carrega jsPDF e pdf-lib de forma assíncrona
+let jsPDF;
+let PDFLib;
 
-// Função para rolar a página para baixo suavemente
+// Rola para container de páginas processadas
 function scrollToPdfPagesContainer() {
     const pdfPagesContainer = document.getElementById("pdf-pages-container");
     if (pdfPagesContainer) {
@@ -24,7 +24,7 @@ function scrollToPdfPagesContainer() {
     }
 }
 
-// Função para carregar scripts dinamicamente
+// Carrega scripts dinamicamente (evita duplicidade)
 function loadScript(url, callback, id = null) {
     if (id && document.getElementById(id)) {
         if (callback) callback();
@@ -44,7 +44,7 @@ function loadScript(url, callback, id = null) {
     document.head.appendChild(script);
 }
 
-// Função para exibir mensagens de log na interface e no console
+// Log de status para UI e console
 function displayLogMessage(message) {
     const logMessages = document.getElementById("log-messages");
     if (logMessages) {
@@ -53,7 +53,7 @@ function displayLogMessage(message) {
     console.log("Log:", message);
 }
 
-// Função assíncrona para ler arquivo como ArrayBuffer
+// Lê arquivo como ArrayBuffer (async)
 function readFileAsync(file) {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -63,7 +63,7 @@ function readFileAsync(file) {
     });
 }
 
-// Função para atualizar o nome do arquivo selecionado na UI
+// Atualiza nome do arquivo selecionado na UI
 function updateFileName() {
     const fileInput = document.getElementById("pdfUpload");
     const fileSelectedName = document.getElementById("file-selected-name");
@@ -76,10 +76,10 @@ function updateFileName() {
     } else {
         fileSelectedName.textContent = "Nenhum arquivo selecionado";
     }
-    // Limpa resultados anteriores ao selecionar novo arquivo
+    // Limpa resultados anteriores
     if (pdfPagesContainer) pdfPagesContainer.innerHTML = "";
 
-    // Atualiza mensagem de log baseado no estado das libs e do botão
+    // Atualiza mensagem de log conforme estado das libs/botão
     if (PDFLib && processButton && !processButton.disabled) {
         displayLogMessage("Pronto para processar. Selecione um PDF.");
     } else if (!PDFLib) {
@@ -90,7 +90,7 @@ function updateFileName() {
 };
 
 
-// Função para processar uma única página do PDF (SIMPLIFICADA)
+// Processa uma única página do PDF (simplificado)
 async function processarPagina(pdfLibDoc, pageIndex, totalPages) {
     try {
         const newPdfDoc = await PDFLib.PDFDocument.create();
@@ -110,7 +110,7 @@ async function processarPagina(pdfLibDoc, pageIndex, totalPages) {
     }
 }
 
-// Função principal processarPdf (SIMPLIFICADA)
+// Função principal para processar PDF (simplificado)
 async function processarPdf() {
     const fileInput = document.getElementById("pdfUpload");
     const file = fileInput.files[0];
@@ -181,7 +181,7 @@ async function processarPdf() {
     }
 }
 
-// --- Inicialização --- (sem alterações)
+// Inicialização: carrega bibliotecas e configura UI
 document.addEventListener('DOMContentLoaded', function () {
     const pdfLibUrl = "https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js";
     const jspdfUrl = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";

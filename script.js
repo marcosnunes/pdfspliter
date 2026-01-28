@@ -1,32 +1,22 @@
-/* ========================================================
-   1. Configuração e Utilitários Globais
-   ======================================================== */
+// Configuração e utilitários globais (Android/Browser)
 
-// Variáveis para as bibliotecas carregadas dinamicamente
+// Bibliotecas carregadas dinamicamente
 let pdfjsLib = null;
 let PDFLib = null;
 
-// Mapa para gerenciar promessas de OCR (ID -> Função de Resolução)
+// Mapa de promessas de OCR (Android)
 const ocrPromises = {};
 
-/**
- * Função chamada pelo JAVA (Android) quando o OCR termina.
- * @param {string} callbackId - O ID da requisição.
- * @param {string} text - O texto extraído.
- */
+// Callback chamado pelo Android ao finalizar OCR
 function onOcrResult(callbackId, text) {
     if (ocrPromises[callbackId]) {
         console.log(`[JS] Retorno de OCR recebido para ID: ${callbackId}`);
-        ocrPromises[callbackId](text); // Resolve a promessa pendente
-        delete ocrPromises[callbackId]; // Limpa memória
+        ocrPromises[callbackId](text);
+        delete ocrPromises[callbackId];
     }
 }
 
-/**
- * Solicita ao Android que faça o OCR de uma imagem Base64.
- * @param {string} base64Image - A imagem da página.
- * @returns {Promise<string>} - O texto encontrado.
- */
+// Solicita OCR ao Android (ou retorna vazio no browser)
 function performAndroidOCR(base64Image) {
     return new Promise((resolve) => {
         if (window.Android && window.Android.performOCR) {
@@ -35,15 +25,13 @@ function performAndroidOCR(base64Image) {
             const cleanBase64 = base64Image.replace(/^data:image\/(png|jpg|jpeg);base64,/, "");
             window.Android.performOCR(cleanBase64, callbackId);
         } else {
-            console.warn("Interface OCR Nativa não encontrada. Rodando em navegador comum?");
+            // Fallback para browser comum
             resolve("");
         }
     });
 }
 
-/**
- * Envia o PDF final para o Android salvar via MediaStore.
- */
+// Envia PDF final para Android ou faz download no browser
 function nativeDownload(fileName, blob) {
     const reader = new FileReader();
     reader.onload = function(event) {
@@ -51,7 +39,7 @@ function nativeDownload(fileName, blob) {
         if (window.Android && typeof window.Android.downloadPdf === 'function') {
             window.Android.downloadPdf(base64Data, fileName);
         } else {
-            console.log("Download via navegador (fallback)");
+            // Fallback download navegador
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement("a");
             a.href = url;
@@ -62,7 +50,7 @@ function nativeDownload(fileName, blob) {
     reader.readAsDataURL(blob);
 }
 
-// Funções de UI
+// UI: log e atualização de nome de arquivo
 function displayLogMessage(msg) {
     const el = document.getElementById("log-messages");
     if (el) el.innerText = msg;
@@ -80,7 +68,7 @@ function updateFileName() {
 
     if (allFiles.length > 0 && pdfFiles.length === 0) {
         alert("Nenhum arquivo PDF válido selecionado. Apenas arquivos PDF são permitidos.");
-        fileInput.value = ""; // Limpa a seleção
+        fileInput.value = "";
         nameSpan.textContent = 'Nenhum arquivo selecionado';
         if (btn) btn.disabled = true;
         return;
@@ -109,7 +97,7 @@ function scrollToResults() {
     }
 }
 
-// Menu Lateral
+// Menu lateral e integração Android
 function openNav() { document.getElementById("mySidenav").style.width = "250px"; }
 function closeNav() { document.getElementById("mySidenav").style.width = "0"; }
 function exitApp() {

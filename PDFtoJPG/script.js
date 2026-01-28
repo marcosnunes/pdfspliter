@@ -1,4 +1,4 @@
-/* Funções para controlar o Menu Lateral (Sidenav) */
+// Menu lateral (Sidenav)
 function openNav() {
     document.getElementById("mySidenav").style.width = "250px";
 }
@@ -8,7 +8,7 @@ function closeNav() {
 }
 
 
-// Função para carregar scripts dinamicamente
+// Carrega scripts dinamicamente (evita duplicidade)
 function loadScript(url, callback, id = null) {
     if (id && document.getElementById(id)) {
         console.log(`Script "${id}" já carregado.`);
@@ -37,14 +37,14 @@ function loadScript(url, callback, id = null) {
     document.head.appendChild(script);
 }
 
-// URL da biblioteca PDF.js a partir de uma CDN confiável (cdnjs)
+// URL da biblioteca PDF.js (CDN)
 const pdfjsLibUrl = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
 
-// Carrega o PDF.js e inicia o código principal
+// Carrega PDF.js e inicializa lógica principal
 loadScript(pdfjsLibUrl, () => {
     console.log("PDF.js carregado dinamicamente.");
 
-    // Define o caminho para o "worker" do PDF.js a partir da mesma CDN
+    // Define worker do PDF.js
     pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js`;
 
     const fileInput = document.getElementById('pdfUpload');
@@ -54,18 +54,19 @@ loadScript(pdfjsLibUrl, () => {
     const jpgDownloadContainer = document.getElementById('jpg-download-container');
     const fileSelectedName = document.getElementById('file-selected-name');
 
+    // Log de status para UI e console
     function displayLogMessage(message) {
         logMessages.textContent = message;
         console.log(message);
     }
     
-    // Limpa as áreas de visualização e download
+    // Limpa áreas de visualização/download
     function clearPreviousResults() {
         thumbnailsContainer.innerHTML = '';
         jpgDownloadContainer.innerHTML = '';
     }
 
-    // Evento ao selecionar o arquivo PDF
+    // Seleção de arquivo PDF
     fileInput.addEventListener('change', function () {
         clearPreviousResults();
         const file = fileInput.files[0];
@@ -78,7 +79,7 @@ loadScript(pdfjsLibUrl, () => {
         }
     });
 
-    // Evento ao clicar no botão de conversão
+    // Conversão PDF → JPG
     convertPdfButton.addEventListener('click', async function () {
         const file = fileInput.files[0];
 
@@ -103,31 +104,31 @@ loadScript(pdfjsLibUrl, () => {
                     displayLogMessage(`Convertendo página ${i} de ${pdfDoc.numPages}...`);
                     
                     const page = await pdfDoc.getPage(i);
-                    const scale = 1.5; // Escala para melhor qualidade da imagem
+                    const scale = 1.5; // Escala para qualidade
                     const viewport = page.getViewport({ scale });
 
-                    // Cria um canvas para renderizar a página
+                    // Canvas para renderizar página
                     const canvas = document.createElement('canvas');
                     const context = canvas.getContext('2d');
                     canvas.height = viewport.height;
                     canvas.width = viewport.width;
 
-                    // Renderiza a página no canvas
+                    // Renderiza página no canvas
                     const renderContext = {
                         canvasContext: context,
                         viewport: viewport
                     };
                     await page.render(renderContext).promise;
 
-                    // Converte o canvas para imagem JPG
+                    // Canvas → JPG
                     const jpgUrl = canvas.toDataURL('image/jpeg', 0.9); // 0.9 é a qualidade
 
-                    // Cria a miniatura da imagem
+                    // Miniatura JPG
                     const img = document.createElement('img');
                     img.src = jpgUrl;
                     thumbnailsContainer.appendChild(img);
 
-                    // Cria o link de download para a imagem JPG
+                    // Link de download JPG
                     const downloadLink = document.createElement('a');
                     downloadLink.href = jpgUrl;
                     downloadLink.download = `pagina_${i}.jpg`;
@@ -135,7 +136,7 @@ loadScript(pdfjsLibUrl, () => {
                     downloadLink.classList.add('custom-download-link');
                     jpgDownloadContainer.appendChild(downloadLink);
                     
-                    // Adiciona uma quebra de linha para melhor organização dos links
+                    // Quebra de linha para organização
                     jpgDownloadContainer.appendChild(document.createElement('br'));
                 }
                 

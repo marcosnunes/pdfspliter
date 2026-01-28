@@ -1,4 +1,4 @@
-/* Funções para controlar o Menu Lateral (Sidenav) */
+// Menu lateral (Sidenav)
 function openNav() {
     document.getElementById("mySidenav").style.width = "250px";
 }
@@ -7,12 +7,12 @@ function closeNav() {
     document.getElementById("mySidenav").style.width = "0";
 }
 
-// Função para carregar scripts dinamicamente
+// Carrega scripts dinamicamente (evita duplicidade)
 function loadScript(url, callback, id = null) {
-    // Verifica se o script já existe pelo ID (se fornecido)
+    // Evita carregar script duplicado
     if (id && document.getElementById(id)) {
         console.log(`Script "${id}" já carregado.`);
-        if (callback) callback(); // Executa o callback se já carregado
+        if (callback) callback();
         return;
     }
 
@@ -21,12 +21,12 @@ function loadScript(url, callback, id = null) {
     script.src = url;
 
     if (id) {
-        script.id = id; // Define o ID para evitar duplicações
+        script.id = id;
     }
 
     script.onload = () => {
         console.log(`Script carregado: ${url}`);
-        if (callback) callback(); // Executa o callback após o carregamento
+        if (callback) callback();
     };
 
     script.onerror = () => {
@@ -37,10 +37,10 @@ function loadScript(url, callback, id = null) {
     document.head.appendChild(script);
 }
 
-// Define a URL do PDFLib
+// URL do PDFLib (CDN)
 const pdfLibUrl = "https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js";
 
-// Carrega o PDFLib dinamicamente e inicia o código principal
+// Carrega PDFLib e inicializa lógica principal
 loadScript(pdfLibUrl, () => {
     console.log("PDFLib carregado dinamicamente.");
 
@@ -48,18 +48,19 @@ loadScript(pdfLibUrl, () => {
     const fileInput = document.getElementById('imageUpload');
     const generatePdfButton = document.getElementById('generatePdf');
     const logMessages = document.getElementById('log-messages');
-    const thumbnailsContainer = document.getElementById('thumbnails-container'); // Container para miniaturas
-    const pdfDownloadContainer = document.getElementById('pdf-download-container'); // Container para o link
-    const fileSelectedName = document.getElementById('file-selected-name'); // Span para o nome dos arquivos
+    const thumbnailsContainer = document.getElementById('thumbnails-container');
+    const pdfDownloadContainer = document.getElementById('pdf-download-container');
+    const fileSelectedName = document.getElementById('file-selected-name');
 
+    // Log de status para UI e console
     function displayLogMessage(message) {
         logMessages.textContent = message;
         console.log(message);
     }
 
-    // Função para exibir miniaturas das imagens
+    // Exibe miniaturas das imagens
     function displayThumbnails(files) {
-        thumbnailsContainer.innerHTML = ''; // Limpa miniaturas existentes
+        thumbnailsContainer.innerHTML = '';
         for (const file of files) {
             if (!file.type.startsWith('image/')) {
                 console.warn(`Arquivo ${file.name} ignorado: não é uma imagem.`);
@@ -90,7 +91,7 @@ loadScript(pdfLibUrl, () => {
         }
     }
 
-    // Evento ao selecionar imagens
+    // Seleção de imagens
     fileInput.addEventListener('change', function () {
         const files = fileInput.files;
         displayLogMessage(`Imagens selecionadas: ${files.length}`);
@@ -107,7 +108,7 @@ loadScript(pdfLibUrl, () => {
         }
     });
 
-    // Estilo do botão (garantido que seja aplicado)
+    // Estilo do botão
     generatePdfButton.classList.add('button1');
 
     generatePdfButton.addEventListener('click', async function () {
@@ -131,7 +132,7 @@ loadScript(pdfLibUrl, () => {
                 let image;
                 try {
                     const imageBytes = await file.arrayBuffer();
-                    displayLogMessage(`Tamanho da imagem ${file.name}: ${imageBytes.byteLength} bytes`); // Adicionado log do tamanho
+                    displayLogMessage(`Tamanho da imagem ${file.name}: ${imageBytes.byteLength} bytes`);
 
                     if (file.type === 'image/jpeg' || file.type === 'image/jpg') {
                         image = await pdfDoc.embedJpg(imageBytes);
@@ -143,32 +144,32 @@ loadScript(pdfLibUrl, () => {
                     }
                     displayLogMessage(`Imagem ${file.name} incorporada com sucesso.`);
 
-                    // Adicionado log do objeto image
+                    // Log do objeto image (debug)
                     console.log(`Objeto image para ${file.name}:`, image);
 
                 } catch (imageError) {
                     console.error(`Erro ao processar imagem ${file.name}:`, imageError);
                     displayLogMessage(`Erro ao processar imagem ${file.name}. Verifique o arquivo.`);
-                    continue; // Vai para a próxima imagem
+                    continue;
                 }
 
                  try {
-                    // Verificação importante:
+                    // Verificação: garante que a imagem foi incorporada
                     if (!image) {
                         console.error(`Imagem ${file.name} não foi incorporada corretamente.`);
                         displayLogMessage(`Erro: Imagem ${file.name} não foi incorporada corretamente.`);
                         continue;
                     }
 
-                     // Garante que o PDF tenha pelo menos uma página antes de tentar desenhar a imagem
+                     // Garante ao menos uma página
                     let page = pdfDoc.addPage();
-                    // Acessa width e height diretamente do objeto image
+                    // Usa width/height do objeto image
                     const width = image.width;
                     const height = image.height;
 
-                    // Ajusta o tamanho da imagem para caber na página (opcional)
-                    const pageWidth = page.getWidth() - 40;  // Margem de 20 em cada lado
-                    const pageHeight = page.getHeight() - 40; // Margem de 20 em cada lado
+                    // Ajusta tamanho da imagem para caber
+                    const pageWidth = page.getWidth() - 40;
+                    const pageHeight = page.getHeight() - 40;
 
                     const scale = Math.min(pageWidth / width, pageHeight / height);
                     const scaledWidth = width * scale;
@@ -176,8 +177,8 @@ loadScript(pdfLibUrl, () => {
 
 
                     page.drawImage(image, {
-                        x: (page.getWidth() - scaledWidth) / 2, // Centraliza horizontalmente
-                        y: (page.getHeight() - scaledHeight) / 2, // Centraliza verticalmente
+                        x: (page.getWidth() - scaledWidth) / 2,
+                        y: (page.getHeight() - scaledHeight) / 2,
                         width: scaledWidth,
                         height: scaledHeight,
                     });
@@ -201,18 +202,18 @@ loadScript(pdfLibUrl, () => {
                 const pdfBlob = new Blob([pdfBytes], { type: 'application/pdf' });
                 const pdfUrl = URL.createObjectURL(pdfBlob);
 
-                // Cria dinamicamente o link de download
+                // Link de download PDF
                 let downloadLink = document.createElement('a');
                 downloadLink.href = pdfUrl;
                 downloadLink.download = 'Imagens em PDF.pdf';
-                downloadLink.textContent = 'Baixar Imagens em PDF'; // Texto do link
-                downloadLink.classList.add('custom-download-link'); // Adiciona a classe para estilo
+                downloadLink.textContent = 'Baixar Imagens em PDF';
+                downloadLink.classList.add('custom-download-link');
 
-                // Limpa o conteúdo anterior e adiciona o link ao container de download
+                // Limpa container e adiciona link
                 pdfDownloadContainer.innerHTML = '';
                 pdfDownloadContainer.appendChild(downloadLink);
 
-                // Adiciona o foco para a área do link de download
+                // Foco na área do link
                 downloadLink.scrollIntoView({ behavior: 'smooth', block: 'start' });
                 displayLogMessage('Pronto! Clique no link para baixar o PDF.');
 
