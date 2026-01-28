@@ -2694,7 +2694,19 @@ saveToFolderBtn.onclick = async () => {
   }
 
   try {
-    const handle = await window.showDirectoryPicker({ mode: "readwrite" });
+    let handle;
+    try {
+      handle = await window.showDirectoryPicker({ mode: "readwrite" });
+    } catch (err) {
+      // Se o usuário cancelar/abortar o picker, mostrar mensagem amigável
+      if (err && (err.name === "AbortError" || (err.message && (err.message.includes("The user aborted a request") || err.message.includes("aborted"))))) {
+        updateStatus("Operação de salvamento cancelada pelo usuário.", "warning");
+        return;
+      }
+      updateStatus("Erro ao abrir a janela de seleção de pasta: " + (err && err.message ? err.message : err), "error");
+      console.error("[Salvar na pasta] Erro ao abrir showDirectoryPicker:", err);
+      return;
+    }
 
     const writeFile = async (name, data) => {
       try {
