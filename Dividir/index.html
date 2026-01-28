@@ -6,13 +6,21 @@
     <meta content="width=device-width, initial-scale=1.0" name="viewport">
     <title data-i18n="home_title">Dividir - Home</title>
     <link href="style.css" rel="Stylesheet">
-    <script defer src="script.js"></script>
+    <!-- script.js será incluído ao final do body para evitar duplicidade e garantir carregamento correto -->
+</head>
+    <!-- Manifesto PWA -->
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#1976d2">
+    <link rel="apple-touch-icon" href="icon-192.png">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
 </head>
 
 <body>
 
     <!-- Estrutura do Menu Lateral (Sidenav) -->
     <div id="mySidenav" class="sidenav">
+        <button id="installPwaBtn" class="button1">Instalar App</button>
         <a href="javascript:void(0)" class="closebtn" onclick="closeNav()">×</a>
         <a href="/Dividir/index.html">Dividir</a>
         <a href="/UnirPDF/index.html">Unir PDF</a>
@@ -20,7 +28,6 @@
         <a href="/JPGtoPDF/index.html">JPG to PDF</a>
         <a href="/PDFtoJPG/index.html">PDF to JPG</a>
         <a href="/PDFtoArcgis/index.html">PDF to ArcGIS</a>
-        <button id="installPwaBtn" class="button1" style="margin: 18px 32px 0 32px; width: 80%; display: none;">Instalar App</button>
     </div>
 
     <div class="navigation">
@@ -85,6 +92,7 @@
         <span class="footer-main">Desenvolvido por Marcos Roberto Nunes Lindolpho</span>
         <span class="footer-copy">&copy; 2026</span>
     </footer>
+    <script src="script.js"></script>
 </body>
 
 </html>

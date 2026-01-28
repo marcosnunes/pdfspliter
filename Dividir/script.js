@@ -39,24 +39,14 @@ function nativeDownload(fileName, blob) {
         if (window.Android && typeof window.Android.downloadPdf === 'function') {
             window.Android.downloadPdf(base64Data, fileName);
 
-// --- PWA: Instalar App ---
-let deferredPrompt = null;
-const installBtn = document.getElementById('installPwaBtn');
-window.addEventListener('beforeinstallprompt', (e) => {
-    e.preventDefault();
-    deferredPrompt = e;
-    if (installBtn) installBtn.style.display = 'block';
-});
-if (installBtn) {
-    installBtn.addEventListener('click', async () => {
-        if (deferredPrompt) {
-            deferredPrompt.prompt();
-            const { outcome } = await deferredPrompt.userChoice;
-            if (outcome === 'accepted') {
-                installBtn.style.display = 'none';
-            }
-            deferredPrompt = null;
-        }
+// --- PWA: Registrar Service Worker ---
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', function() {
+        navigator.serviceWorker.register('service-worker.js').then(function(registration) {
+            console.log('[PWA] Service Worker registrado com sucesso:', registration.scope);
+        }, function(err) {
+            console.log('[PWA] Falha ao registrar Service Worker:', err);
+        });
     });
 }
         } else {
@@ -418,6 +408,54 @@ document.addEventListener("DOMContentLoaded", () => {
                 const upload = document.getElementById("pdfUpload");
                 if (upload) upload.addEventListener("change", updateFileName);
             });
+        });
+    }
+
+
+    // --- PWA: Instalar App (com feedback visual) ---
+    let deferredPrompt = null;
+    const installBtn = document.getElementById('installPwaBtn');
+    window.addEventListener('beforeinstallprompt', (e) => {
+        e.preventDefault();
+        deferredPrompt = e;
+        if (installBtn) {
+            installBtn.style.display = 'block';
+            installBtn.classList.remove('success', 'error');
+            installBtn.textContent = 'Instalar App';
+        }
+    });
+    if (installBtn) {
+        installBtn.addEventListener('click', async () => {
+            if (deferredPrompt) {
+                try {
+                    deferredPrompt.prompt();
+                    const { outcome } = await deferredPrompt.userChoice;
+                    if (outcome === 'accepted') {
+                        installBtn.classList.add('success');
+                        installBtn.textContent = 'App instalado!';
+                        setTimeout(() => {
+                            installBtn.style.display = 'none';
+                            installBtn.classList.remove('success');
+                            installBtn.textContent = 'Instalar App';
+                        }, 2000);
+                    } else {
+                        installBtn.classList.add('error');
+                        installBtn.textContent = 'Instalação cancelada';
+                        setTimeout(() => {
+                            installBtn.classList.remove('error');
+                            installBtn.textContent = 'Instalar App';
+                        }, 2000);
+                    }
+                } catch (err) {
+                    installBtn.classList.add('error');
+                    installBtn.textContent = 'Erro ao instalar';
+                    setTimeout(() => {
+                        installBtn.classList.remove('error');
+                        installBtn.textContent = 'Instalar App';
+                    }, 2000);
+                }
+                deferredPrompt = null;
+            }
         });
     }
 
