@@ -1506,59 +1506,6 @@ function parseVertices(text, crsKeyInput) {
     }
   }
 
-  // === Fallback: robust ordering and main-contour selection ===
-  // Only if more than 3 vertices and not already a simple closed polygon
-  if (out.length > 3) {
-    // Helper: Euclidean distance
-    function dist(a, b) {
-      return Math.sqrt(Math.pow(a.north - b.north, 2) + Math.pow(a.east - b.east, 2));
-    }
-    // Helper: Check if polygon is closed
-    function isClosed(arr, tol = 0.5) {
-      if (arr.length < 3) return false;
-      const first = arr[0], last = arr[arr.length - 1];
-      return dist(first, last) <= tol;
-    }
-    // Check for self-intersections (simple O(n^2) test)
-    function hasSelfIntersection(poly) {
-      for (let i = 0; i < poly.length - 1; i++) {
-        for (let j = i + 2; j < poly.length - 1; j++) {
-          if (i === 0 && j === poly.length - 2) continue;
-          // Segments: (i,i+1) and (j,j+1)
-          const a1 = poly[i], a2 = poly[i + 1], b1 = poly[j], b2 = poly[j + 1];
-          function ccw(A, B, C) {
-            return (C.north - A.north) * (B.east - A.east) > (B.north - A.north) * (C.east - A.east);
-          }
-          if (ccw(a1, b1, b2) !== ccw(a2, b1, b2) && ccw(a1, a2, b1) !== ccw(a1, a2, b2)) {
-            return true;
-          }
-        }
-      }
-      return false;
-    }
-    let needsFix = false;
-    if (!isClosed(out)) needsFix = true;
-    if (!needsFix && hasSelfIntersection(out)) needsFix = true;
-
-    // Fallback: apenas remover duplicados exatos e fechar polígono, mantendo ordem original
-    if (needsFix) {
-      // Remove duplicados exatos (mas mantém ordem)
-      const unique = [];
-      for (const p of out) {
-        if (!unique.some(q => Math.abs(q.east - p.east) < 1e-6 && Math.abs(q.north - p.north) < 1e-6)) unique.push(p);
-      }
-      // Fechar ciclo se necessário
-      if (unique.length > 2 && (unique[0].east !== unique[unique.length - 1].east || unique[0].north !== unique[unique.length - 1].north)) {
-        unique.push({ ...unique[0] });
-      }
-      // Re-atribuir IDs
-      out.length = 0;
-      for (let i = 0; i < unique.length; i++) {
-        out.push({ id: `V${String(i + 1).padStart(3, '0')}`, north: unique[i].north, east: unique[i].east });
-      }
-      console.log('[PDFtoArcgis] [Fallback] Polígono fechado com todos os pontos extraídos na ordem original.');
-    }
-  }
   return out;
 }
 
@@ -2694,19 +2641,7 @@ saveToFolderBtn.onclick = async () => {
   }
 
   try {
-    let handle;
-    try {
-      handle = await window.showDirectoryPicker({ mode: "readwrite" });
-    } catch (err) {
-      // Se o usuário cancelar/abortar o picker, mostrar mensagem amigável
-      if (err && (err.name === "AbortError" || (err.message && (err.message.includes("The user aborted a request") || err.message.includes("aborted"))))) {
-        updateStatus("Operação de salvamento cancelada pelo usuário.", "warning");
-        return;
-      }
-      updateStatus("Erro ao abrir a janela de seleção de pasta: " + (err && err.message ? err.message : err), "error");
-      console.error("[Salvar na pasta] Erro ao abrir showDirectoryPicker:", err);
-      return;
-    }
+    const handle = await window.showDirectoryPicker({ mode: "readwrite" });
 
     const writeFile = async (name, data) => {
       try {
@@ -2714,58 +2649,21 @@ saveToFolderBtn.onclick = async () => {
         try {
           const existing = await handle.getFileHandle(name);
           await handle.removeEntry(name);
-        } catch (err) {
-          // Se o usuário cancelar/abortar o picker, mostrar mensagem amigável
-          if (err && (err.name === "AbortError" || (err.message && (err.message.includes("The user aborted a request") || err.message.includes("aborted"))))) {
-            updateStatus("Operação de salvamento cancelada pelo usuário.", "warning");
-            return;
-          }
-          // Se for NotFoundError, pasta/arquivo não existe mais
-          if (err && err.name === "NotFoundError") {
-            updateStatus("❌ Pasta ou arquivo não encontrado. Reabra a pasta de destino e tente novamente.", "error");
-            console.error("[Salvar na pasta] NotFoundError:", err);
-            return;
-          }
-          updateStatus("Erro ao salvar na pasta: " + (err && err.message ? err.message : err), "error");
-          console.error("[Salvar na pasta] Erro:", err);
+        } catch (e) {
+          // Se não existe, ignora
         }
+        const fh = await handle.getFileHandle(name, { create: true });
+        const w = await fh.createWritable();
+        await w.write(data);
         await w.close();
       } catch (err) {
         // Se o usuário cancelar, não mostrar erro
         if (err && err.name === "AbortError") return;
-        // Se for NotFoundError, pasta/arquivo não existe mais
-        if (err && err.name === "NotFoundError") {
-          updateStatus("❌ Pasta ou arquivo não encontrado. Reabra a pasta de destino e tente novamente.", "error");
-          console.error("[Salvar na pasta] NotFoundError:", err);
-          return;
-        }
-        // Mensagem amigável para arquivo aberto em outro programa
-        let msg = String(err && err.message ? err.message : err);
-        if (
-          msg.includes("state cached in an interface object") ||
-          msg.includes("being used by another process") ||
-          msg.includes("acesso ao arquivo") ||
-          msg.includes("used by another process")
-        ) {
-          updateStatus("❌ Erro ao salvar: O arquivo está aberto em outro programa (ex: QGIS, Explorer, etc). Feche o arquivo e tente novamente.", "error");
-          console.error("[Salvar na pasta] Arquivo em uso por outro processo. Feche no QGIS/Explorer e tente novamente.", err);
-          return;
-        }
         // Se falhar, tenta com truncate
-        try {
-          const fh = await handle.getFileHandle(name, { create: true });
-          const w = await fh.createWritable({ keepExistingData: false });
-          await w.write(data);
-          await w.close();
-        } catch (err2) {
-          if (err2 && err2.name === "NotFoundError") {
-            updateStatus("❌ Pasta ou arquivo não encontrado. Reabra a pasta de destino e tente novamente.", "error");
-            console.error("[Salvar na pasta] NotFoundError:", err2);
-            return;
-          }
-          updateStatus("❌ Erro ao salvar arquivo: " + (err2 && err2.message ? err2.message : err2), "error");
-          console.error("[Salvar na pasta] Erro ao salvar arquivo:", err2);
-        }
+        const fh = await handle.getFileHandle(name, { create: true });
+        const w = await fh.createWritable({ keepExistingData: false });
+        await w.write(data);
+        await w.close();
       }
     };
 
