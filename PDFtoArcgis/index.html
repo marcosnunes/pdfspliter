@@ -7,6 +7,7 @@
   <title>Extrator de Coordenadas para ArcGIS</title>
 
   <link rel="stylesheet" href="style.css" />
+  <link rel="manifest" href="/manifest.json" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" />
 
   <script src="https://unpkg.com/@mapbox/shp-write@latest/shpwrite.js"></script>
@@ -37,16 +38,17 @@
 </head>
 <body>
   <!-- Estrutura do Menu Lateral (Sidenav) -->
-  <div id="mySidenav" class="sidenav">
-    <button id="installPwaBtn" class="button1">Instalar App</button>
-    <a href="javascript:void(0)" class="closebtn" onclick="closeNav()">×</a>
-    <a href="/Dividir/index.html">Dividir</a>
-    <a href="/UnirPDF/index.html">Unir PDF</a>
-    <a href="/DividirApenas/index.html">Dividir Apenas</a>
-    <a href="/JPGtoPDF/index.html">JPG to PDF</a>
-    <a href="/PDFtoJPG/index.html">PDF to JPG</a>
-    <a href="/PDFtoArcgis/index.html">PDF to ArcGIS</a>
-  </div>
+    <!-- Estrutura do Menu Lateral (Sidenav) compatível -->
+    <div id="mySidenav" class="sidenav">
+        <button id="installPwaBtn" class="button1">Instalar App</button>
+        <a href="javascript:void(0)" class="closebtn" onclick="closeNav()">×</a>
+        <a href="/Dividir/index.html">Dividir</a>
+        <a href="/UnirPDF/index.html">Unir PDF</a>
+        <a href="/DividirApenas/index.html">Dividir Apenas</a>
+        <a href="/JPGtoPDF/index.html">JPG to PDF</a>
+        <a href="/PDFtoJPG/index.html">PDF to JPG</a>
+        <a href="/PDFtoArcgis/index.html">PDF to ArcGIS</a>
+    </div>
 
   <div class="navigation">
     <nav>
