@@ -10,7 +10,21 @@ function closeNav() {
 // --- PWA: Instalar App (com feedback visual) ---
 let deferredPrompt = null;
 const installBtn = document.getElementById('installPwaBtn');
+function hideInstallBtn() {
+    if (installBtn) installBtn.style.display = 'none';
+}
+function isAppInstalled() {
+    return (window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true);
+}
+if (isAppInstalled()) {
+    hideInstallBtn();
+}
+window.addEventListener('appinstalled', hideInstallBtn);
 window.addEventListener('beforeinstallprompt', (e) => {
+    if (isAppInstalled()) {
+        hideInstallBtn();
+        return;
+    }
     e.preventDefault();
     deferredPrompt = e;
     if (installBtn) {
