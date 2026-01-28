@@ -1,30 +1,3 @@
-  // Fallback final: se poucos vértices ou suspeita de erro, tenta capturar todos os números grandes e formar pares E/N
-  if (out.length < 10) {
-    // Extrai todos os números grandes do texto (potenciais coordenadas)
-    const allNums = [];
-    const numRegex = /([5-8][0-9]{5,8}[\.,][0-9]{1,6})/g; // Números grandes (E/N UTM)
-    let mNum;
-    while ((mNum = numRegex.exec(clean)) !== null) {
-      let val = parseFloat(normalizeNumber(mNum[1]));
-      if (Number.isFinite(val)) allNums.push(val);
-    }
-    // Tenta formar pares E/N (E geralmente 6 dígitos, N 7 dígitos)
-    for (let i = 0; i < allNums.length - 1; i++) {
-      const e = allNums[i];
-      const n = allNums[i + 1];
-      // Heurística: E entre 500000-800000, N entre 7000000-8000000
-      if (e > 500000 && e < 800000 && n > 7000000 && n < 8000000) {
-        const idNum = out.length + 1;
-        const id = `VF${String(idNum).padStart(3, '0')}`;
-        if (!out.some(v => Math.abs(v.east - e) < 0.1 && Math.abs(v.north - n) < 0.1)) {
-          out.push({ id, east: e, north: n, origem: 'fallback' });
-        }
-      }
-    }
-    if (out.length > 0) {
-      console.log(`[PDFtoArcgis][Fallback] Estratégia de números grandes: encontrados ${out.length} pares E/N`);
-    }
-  }
 /* =========================
    UI NAV
 ========================= */
