@@ -7,7 +7,6 @@
   <title>Extrator de Coordenadas para ArcGIS</title>
 
   <link rel="stylesheet" href="style.css" />
-  <link rel="manifest" href="/manifest.json" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" />
 
   <script src="https://unpkg.com/@mapbox/shp-write@latest/shpwrite.js"></script>
@@ -16,6 +15,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.9.2/proj4.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/docx@8/build/index.umd.js"></script>
+  
   <script>
     (function ensureDocxLoaded() {
       if (window.docx && window.docx.Document) {
@@ -38,17 +38,15 @@
 </head>
 <body>
   <!-- Estrutura do Menu Lateral (Sidenav) -->
-    <!-- Estrutura do Menu Lateral (Sidenav) compatível -->
-    <div id="mySidenav" class="sidenav">
-        <button id="installPwaBtn" class="button1">Instalar App</button>
-        <a href="javascript:void(0)" class="closebtn" onclick="closeNav()">×</a>
-        <a href="/Dividir/index.html">Dividir</a>
-        <a href="/UnirPDF/index.html">Unir PDF</a>
-        <a href="/DividirApenas/index.html">Dividir Apenas</a>
-        <a href="/JPGtoPDF/index.html">JPG to PDF</a>
-        <a href="/PDFtoJPG/index.html">PDF to JPG</a>
-        <a href="/PDFtoArcgis/index.html">PDF to ArcGIS</a>
-    </div>
+  <div id="mySidenav" class="sidenav">
+    <a href="javascript:void(0)" class="closebtn" onclick="closeNav()">×</a>
+    <a href="/Dividir/index.html">Dividir</a>
+    <a href="/UnirPDF/index.html">Unir PDF</a>
+    <a href="/DividirApenas/index.html">Dividir Apenas</a>
+    <a href="/JPGtoPDF/index.html">JPG to PDF</a>
+    <a href="/PDFtoJPG/index.html">PDF to JPG</a>
+    <a href="/PDFtoArcgis/index.html">PDF to ArcGIS</a>
+  </div>
 
   <div class="navigation">
     <nav>
@@ -107,23 +105,7 @@
           <div id="crsDetectedReason" style="font-size: 0.95rem; color:#666; white-space: pre-line;"></div>
         </div>
 
-        <details id="advancedCrs" style="display:none; margin-bottom: 15px;">
-          <summary style="cursor:pointer; font-weight:bold; color:#ff9800;">Modo avançado: forçar CRS manualmente (aplica somente na matrícula selecionada)</summary>
-          <div style="margin-top:10px; display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
-            <select id="projectionSelect" style="flex:1; min-width:280px; padding:10px; border-radius:5px; border:1px solid #ffc107;">
-              <option value="SIRGAS2000_21S">SIRGAS 2000 / UTM 21S (EPSG:31981)</option>
-              <option value="SIRGAS2000_22S">SIRGAS 2000 / UTM 22S (EPSG:31982)</option>
-              <option value="SIRGAS2000_23S">SIRGAS 2000 / UTM 23S (EPSG:31983)</option>
-              <option value="SIRGAS2000_24S">SIRGAS 2000 / UTM 24S (EPSG:31984)</option>
-              <option value="SAD69_22S">SAD 69 / UTM 22S (EPSG:29192)</option>
-              <option value="SAD69_23S">SAD 69 / UTM 23S (EPSG:29193)</option>
-              <option value="WGS84">WGS 84 (Graus Decimais - EPSG:4326)</option>
-            </select>
-            <button id="forceCrsBtn" class="btn-gold" style="flex: 0; min-width: 160px;">Aplicar CRS</button>
-          </div>
-          <small style="color:#666;">Use se a detecção automática falhar ou o memorial não informar datum/zona.</small>
-        </details>
-
+        
         <div id="status" style="display:none;"></div>
 
         <!-- NOVO: bloco de metadados do memorial -->
@@ -199,12 +181,8 @@
   <!-- PDF e OCR -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.0.2/dist/tesseract.min.js"></script>
-
+  
   <!-- Seu script principal -->
   <script src="script.js"></script>
-  <footer class="app-footer">
-    <span class="footer-main">Desenvolvido por Marcos Roberto Nunes Lindolpho</span>
-    <span class="footer-copy">&copy; 2026</span>
-  </footer>
 </body>
 </html>
