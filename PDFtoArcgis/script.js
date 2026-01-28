@@ -485,56 +485,50 @@ function validatePolygonTopology(vertices, projectionKey = null) {
     return { isValid: false, errors, warnings, corrected: vertices };
   }
   
-  // Estratégia de fechamento: se não estiver fechado, adiciona o primeiro vértice ao final para validação
-  let verticesToValidate = [...vertices];
-  let closed = isPolygonClosed(verticesToValidate, 0.5);
-  if (!closed && verticesToValidate.length > 2) {
-    const first = verticesToValidate[0];
-    verticesToValidate.push({ ...first });
-    closed = true; // Considera fechado para validação e relatório
-  }
+  // 1. Verificar fechamento
+  const closed = isPolygonClosed(vertices, 0.5);
   if (!closed) {
     warnings.push("⚠️ Polígono não fechado (distância > 0.5m entre primeiro e último)");
   }
   
   // 2. Calcular área
-  const { area, isCCW, signed } = calcularAreaShoelace(verticesToValidate);
+  const { area, isCCW, signed } = calcularAreaShoelace(vertices);
   if (area < 1) {
     errors.push(`❌ Área muito pequena (${area.toFixed(2)} m²) - possível erro de extração`);
   }
-
+  
   // 3. Detectar auto-intersecções
-  const intersections = detectPolygonSelfIntersections(verticesToValidate);
+  const intersections = detectPolygonSelfIntersections(vertices);
   if (intersections.length > 0) {
     errors.push(`❌ Auto-intersecções detectadas em ${intersections.length} pares de edges`);
   }
-
+  
   // 4. Verificar ordenação
   if (isCCW === false) {
     warnings.push("⚠️ Vértices em ordem horária (CW) - convertendo para anti-horária (CCW)");
   }
-
+  
   // 5. Validar coerência de distâncias calculadas vs Euclidiana
   const distThreshold = 10; // metros
   let distCoherence = true;
-  for (let i = 0; i < verticesToValidate.length - 1; i++) {
-    const v1 = verticesToValidate[i];
-    const v2 = verticesToValidate[i + 1];
-
+  for (let i = 0; i < vertices.length - 1; i++) {
+    const v1 = vertices[i];
+    const v2 = vertices[i + 1];
+    
     if (v1.distCalc && v2.distCalc) {
       const euclidian = calcularDistancia(v1, v2);
       const stated = parseFloat(v1.distCalc);
-
+      
       if (!Number.isNaN(stated) && Math.abs(euclidian - stated) > distThreshold) {
         distCoherence = false;
         warnings.push(`⚠️ Distância V${i+1}→V${i+2}: calculada ${euclidian.toFixed(2)}m ≠ documentada ${stated}m`);
       }
     }
   }
-
-  const corrected = isCCW === false ? ensureCounterClockwiseOrder(verticesToValidate) : verticesToValidate;
+  
+  const corrected = isCCW === false ? ensureCounterClockwiseOrder(vertices) : vertices;
   const isValid = errors.length === 0 && intersections.length === 0;
-
+  
   return {
     isValid,
     errors,
@@ -543,8 +537,7 @@ function validatePolygonTopology(vertices, projectionKey = null) {
     isCCW: corrected.length > 0 ? true : null,
     distCoherence,
     corrected,
-    intersections,
-    closed
+    intersections
   };
 }
 
@@ -1506,59 +1499,6 @@ function parseVertices(text, crsKeyInput) {
     }
   }
 
-  // === Fallback: robust ordering and main-contour selection ===
-  // Only if more than 3 vertices and not already a simple closed polygon
-  if (out.length > 3) {
-    // Helper: Euclidean distance
-    function dist(a, b) {
-      return Math.sqrt(Math.pow(a.north - b.north, 2) + Math.pow(a.east - b.east, 2));
-    }
-    // Helper: Check if polygon is closed
-    function isClosed(arr, tol = 0.5) {
-      if (arr.length < 3) return false;
-      const first = arr[0], last = arr[arr.length - 1];
-      return dist(first, last) <= tol;
-    }
-    // Check for self-intersections (simple O(n^2) test)
-    function hasSelfIntersection(poly) {
-      for (let i = 0; i < poly.length - 1; i++) {
-        for (let j = i + 2; j < poly.length - 1; j++) {
-          if (i === 0 && j === poly.length - 2) continue;
-          // Segments: (i,i+1) and (j,j+1)
-          const a1 = poly[i], a2 = poly[i + 1], b1 = poly[j], b2 = poly[j + 1];
-          function ccw(A, B, C) {
-            return (C.north - A.north) * (B.east - A.east) > (B.north - A.north) * (C.east - A.east);
-          }
-          if (ccw(a1, b1, b2) !== ccw(a2, b1, b2) && ccw(a1, a2, b1) !== ccw(a1, a2, b2)) {
-            return true;
-          }
-        }
-      }
-      return false;
-    }
-    let needsFix = false;
-    if (!isClosed(out)) needsFix = true;
-    if (!needsFix && hasSelfIntersection(out)) needsFix = true;
-
-    // Fallback: apenas remover duplicados exatos e fechar polígono, mantendo ordem original
-    if (needsFix) {
-      // Remove duplicados exatos (mas mantém ordem)
-      const unique = [];
-      for (const p of out) {
-        if (!unique.some(q => Math.abs(q.east - p.east) < 1e-6 && Math.abs(q.north - p.north) < 1e-6)) unique.push(p);
-      }
-      // Fechar ciclo se necessário
-      if (unique.length > 2 && (unique[0].east !== unique[unique.length - 1].east || unique[0].north !== unique[unique.length - 1].north)) {
-        unique.push({ ...unique[0] });
-      }
-      // Re-atribuir IDs
-      out.length = 0;
-      for (let i = 0; i < unique.length; i++) {
-        out.push({ id: `V${String(i + 1).padStart(3, '0')}`, north: unique[i].north, east: unique[i].east });
-      }
-      console.log('[PDFtoArcgis] [Fallback] Polígono fechado com todos os pontos extraídos na ordem original.');
-    }
-  }
   return out;
 }
 
@@ -1795,26 +1735,13 @@ function gerarCsvParaVertices(vertices, epsg, docId = null, topologyInfo = null,
   // Cabeçalho da tabela
   csv += "Point_ID;Ordem;Norte_Y;Este_X;EPSG;Dist_M;Azimute_Deg;Qualidade;Notas\n";
   
-  // Estratégia de fechamento: se não estiver fechado, adiciona o primeiro vértice ao final
-  let verticesToExport = [...vertices];
-  if (topologyInfo && topologyInfo.closed === false && vertices.length > 2) {
-    const first = vertices[0];
-    // Cria um novo vértice de fechamento (Point_ID e Ordem incrementados)
-    const closingVertex = {
-      ...first,
-      id: (first.id || "F") + "_close", // Sufixo para evitar duplicata
-      ordem: vertices.length + 1,
-      distCalc: "---",
-      azCalc: "---"
-    };
-    verticesToExport.push(closingVertex);
-  }
-
-  for (let i = 0; i < verticesToExport.length; i++) {
-    const c = verticesToExport[i];
+  for (let i = 0; i < vertices.length; i++) {
+    const c = vertices[i];
+    
     // Determinação de qualidade baseada em validação
     let quality = "✓ OK";
     let notes = "";
+    
     // Verificar coerência com memorial se disponível
     if (memorialInfo && memorialInfo.matches[i]) {
       const match = memorialInfo.matches[i];
@@ -1826,18 +1753,21 @@ function gerarCsvParaVertices(vertices, epsg, docId = null, topologyInfo = null,
         }
       }
     }
-    // Verificar se há distância "---" (último vértice ou fechamento)
+    
+    // Verificar se há distância "---" (último vértice)
     if (c.distCalc === "---") {
       notes = "Fechamento";
     }
+    
     // Verificar duplicatas ou problemas topológicos
     if (i > 0) {
-      const prev = verticesToExport[i - 1];
+      const prev = vertices[i - 1];
       if (prev.east === c.east && prev.north === c.north) {
         quality = "❌ ERRO";
         notes = "Duplicado";
       }
     }
+    
     csv += `${c.id};${c.ordem};${c.north};${c.east};${epsg};${c.distCalc || ""};${c.azCalc || ""};${quality};${notes}\n`;
   }
   
@@ -2694,19 +2624,7 @@ saveToFolderBtn.onclick = async () => {
   }
 
   try {
-    let handle;
-    try {
-      handle = await window.showDirectoryPicker({ mode: "readwrite" });
-    } catch (err) {
-      // Se o usuário cancelar/abortar o picker, mostrar mensagem amigável
-      if (err && (err.name === "AbortError" || (err.message && (err.message.includes("The user aborted a request") || err.message.includes("aborted"))))) {
-        updateStatus("Operação de salvamento cancelada pelo usuário.", "warning");
-        return;
-      }
-      updateStatus("Erro ao abrir a janela de seleção de pasta: " + (err && err.message ? err.message : err), "error");
-      console.error("[Salvar na pasta] Erro ao abrir showDirectoryPicker:", err);
-      return;
-    }
+    const handle = await window.showDirectoryPicker({ mode: "readwrite" });
 
     const writeFile = async (name, data) => {
       try {
@@ -2714,58 +2632,21 @@ saveToFolderBtn.onclick = async () => {
         try {
           const existing = await handle.getFileHandle(name);
           await handle.removeEntry(name);
-        } catch (err) {
-          // Se o usuário cancelar/abortar o picker, mostrar mensagem amigável
-          if (err && (err.name === "AbortError" || (err.message && (err.message.includes("The user aborted a request") || err.message.includes("aborted"))))) {
-            updateStatus("Operação de salvamento cancelada pelo usuário.", "warning");
-            return;
-          }
-          // Se for NotFoundError, pasta/arquivo não existe mais
-          if (err && err.name === "NotFoundError") {
-            updateStatus("❌ Pasta ou arquivo não encontrado. Reabra a pasta de destino e tente novamente.", "error");
-            console.error("[Salvar na pasta] NotFoundError:", err);
-            return;
-          }
-          updateStatus("Erro ao salvar na pasta: " + (err && err.message ? err.message : err), "error");
-          console.error("[Salvar na pasta] Erro:", err);
+        } catch (e) {
+          // Se não existe, ignora
         }
+        const fh = await handle.getFileHandle(name, { create: true });
+        const w = await fh.createWritable();
+        await w.write(data);
         await w.close();
       } catch (err) {
         // Se o usuário cancelar, não mostrar erro
         if (err && err.name === "AbortError") return;
-        // Se for NotFoundError, pasta/arquivo não existe mais
-        if (err && err.name === "NotFoundError") {
-          updateStatus("❌ Pasta ou arquivo não encontrado. Reabra a pasta de destino e tente novamente.", "error");
-          console.error("[Salvar na pasta] NotFoundError:", err);
-          return;
-        }
-        // Mensagem amigável para arquivo aberto em outro programa
-        let msg = String(err && err.message ? err.message : err);
-        if (
-          msg.includes("state cached in an interface object") ||
-          msg.includes("being used by another process") ||
-          msg.includes("acesso ao arquivo") ||
-          msg.includes("used by another process")
-        ) {
-          updateStatus("❌ Erro ao salvar: O arquivo está aberto em outro programa (ex: QGIS, Explorer, etc). Feche o arquivo e tente novamente.", "error");
-          console.error("[Salvar na pasta] Arquivo em uso por outro processo. Feche no QGIS/Explorer e tente novamente.", err);
-          return;
-        }
         // Se falhar, tenta com truncate
-        try {
-          const fh = await handle.getFileHandle(name, { create: true });
-          const w = await fh.createWritable({ keepExistingData: false });
-          await w.write(data);
-          await w.close();
-        } catch (err2) {
-          if (err2 && err2.name === "NotFoundError") {
-            updateStatus("❌ Pasta ou arquivo não encontrado. Reabra a pasta de destino e tente novamente.", "error");
-            console.error("[Salvar na pasta] NotFoundError:", err2);
-            return;
-          }
-          updateStatus("❌ Erro ao salvar arquivo: " + (err2 && err2.message ? err2.message : err2), "error");
-          console.error("[Salvar na pasta] Erro ao salvar arquivo:", err2);
-        }
+        const fh = await handle.getFileHandle(name, { create: true });
+        const w = await fh.createWritable({ keepExistingData: false });
+        await w.write(data);
+        await w.close();
       }
     };
 
@@ -3368,16 +3249,8 @@ if (generateDocxBtn) {
         ) || "Curitiba-PR";
       }
 
-      const nomeArea = shpPoligonoNome || "gleba";
-      // Data por extenso: "21 de janeiro de 2026"
-      function formatarDataPorExtenso(date) {
-        const meses = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"];
-        const d = date.getDate();
-        const m = meses[date.getMonth()];
-        const y = date.getFullYear();
-        return `${d} de ${m} de ${y}`;
-      }
-      const dataBR = formatarDataPorExtenso(new Date());
+      const nomeArea = shpPoligonoNome || "ÁREA";
+      const dataBR   = new Date().toLocaleDateString("pt-BR");
 
       // 8) Área (ha) e perímetro (m)
       let signed = 0;
@@ -3403,85 +3276,37 @@ if (generateDocxBtn) {
       // const memorialTxt = montarTextoMemorial(vertsForDoc, crsKey);
 
       // 10) Geração do DOCX - AJUSTADO PARA O MODELO
-      const { Document, Packer, Paragraph, TextRun, AlignmentType, LineSpacingType } = window.docx;
+      const { Document, Packer, Paragraph, TextRun, AlignmentType } = window.docx;
 
-      // Função para espaçamento entre letras (2 espaços)
-      function espacarLetras(texto) {
-        return texto.split("").join(" ");
-      }
-
-      // Função para garantir valor numérico válido
-      function safeNumber(val, casas = 2) {
-        const n = Number(val);
-        return Number.isFinite(n) ? n.toFixed(casas) : "0.00";
-      }
-
-      // Garante que todos os segmentos (inclusive o último) sejam incluídos
-      const memorialRuns = [];
-      for (let i = 0; i < vertsForDoc.length; i++) {
-        const vAtual = vertsForDoc[i];
-        const vProx = vertsForDoc[(i + 1) % vertsForDoc.length];
-        // Calcula distância e azimute se não existirem
-        let dist = vProx.distCalc;
-        if (!dist || isNaN(Number(dist))) {
-          dist = calcularDistancia(vAtual, vProx);
-        }
-        let azimute = vProx.azCalc;
-        if (!azimute) {
-          azimute = "00°00'00\"";
-        }
-        // Coordenadas entre parênteses
-        memorialRuns.push(
-          new TextRun({
-            text: ` Do vértice ${i + 1} segue até o vértice ${((i + 1) % vertsForDoc.length) + 1}, com coordenadas `,
-            size: 24, font: "Arial"
-          }),
-          new TextRun({
-            text: `U T M (E=${safeNumber(vProx.east, 3)} e N=${safeNumber(vProx.north, 3)})`,
-            bold: true, size: 24, font: "Arial"
-          }),
-          new TextRun({
-            text: `, no azimute de ${azimute}, na extensão de ${safeNumber(dist)} m;`,
-            size: 24, font: "Arial"
-          })
-        );
-      }
-
-      const spacing15 = { line: 360, lineRule: (window.docx && window.docx.LineSpacingType && window.docx.LineSpacingType.AUTO) ? window.docx.LineSpacingType.AUTO : "AUTO" };
       const doc = new Document({
         sections: [{
           properties: { page: { margin: { top: 1417, right: 1134, bottom: 1134, left: 1134 } } },
-          headers: {
-            default: new window.docx.Header({
-              children: [
-                new Paragraph({
-                  alignment: AlignmentType.CENTER,
-                  spacing: spacing15,
-                  children: [
-                    new TextRun({
-                      text: espacarLetras("MEMORIAL DESCRITIVO"),
-                      bold: true,
-                      size: 28, // Times New Roman 14pt = 28 half-points
-                      font: "Times New Roman",
-                      allCaps: true
-                    })
-                  ]
-                }),
-                // Linha vazia abaixo do título no cabeçalho
-                new Paragraph({ spacing: spacing15, children: [new TextRun({ text: "", size: 24, font: "Arial" })] })
-              ]
-            })
-          },
           children: [
+            // TÍTULO FORMATADO
+            new Paragraph({
+              alignment: AlignmentType.CENTER,
+              children: [
+                new TextRun({ text: "M E M O R I A L   D E S C R I T I V O", bold: true, size: 24, font: "Calibri" })
+              ]
+            }),
+            new Paragraph({
+              alignment: AlignmentType.CENTER,
+              spacing: { after: 100 },
+              children: [
+                new TextRun({ text: nomeArea, bold: true, size: 22, font: "Calibri" })
+              ]
+            }),
+            new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: ".", size: 22, font: "Calibri" })] }),
+
             // ITEM 1 - DESCRIÇÃO
             new Paragraph({
               alignment: AlignmentType.JUSTIFIED,
-              spacing: spacing15,
+              spacing: { before: 200 },
               children: [
-                new TextRun({ text: "1. Descrição da Área: ", bold: true, size: 24, font: "Arial" }),
+                new TextRun({ text: "1. Descrição da Área: ", bold: true, size: 22, font: "Calibri" }),
                 new TextRun({ 
-                  text: `A referida gleba é delimitada por um polígono irregular cuja descrição se inicia no vértice 1, seguindo sentido horário com coordenadas planas no sistema U T M (E=${safeNumber(vertsForDoc[0].east, 3)} e N=${safeNumber(vertsForDoc[0].north, 3)}), como segue:`,
-                  size: 24, font: "Arial" 
+                  text: `A referida ${nomeArea} é delimitada por um polígono irregular cuja descrição se inicia no vértice 1, seguindo sentido horário com coordenadas planas no sistema U T M Este (X) ${BRNumber3.format(vertsForDoc[0].east)} e Norte (Y) ${BRNumber3.format(vertsForDoc[0].north)}, como segue:`, 
+                  size: 22, font: "Calibri" 
                 })
               ]
             }),
@@ -3489,63 +3314,56 @@ if (generateDocxBtn) {
             // CRS
             new Paragraph({
               alignment: AlignmentType.JUSTIFIED,
-              spacing: spacing15,
               children: [
-                new TextRun({ text: "Sistema de Referência (CRS): ", bold: true, size: 24, font: "Arial" }),
-                new TextRun({ text: ` ${crsText}`, size: 24, font: "Arial" })
+                new TextRun({ text: "Sistema de Referência (CRS): ", bold: true, size: 22, font: "Calibri" }),
+                new TextRun({ text: ` ${crsText}`, size: 22, font: "Calibri" })
               ]
             }),
-
-            // LINHA VAZIA ANTES DO ITEM 2
-            new Paragraph({ spacing: spacing15, children: [new TextRun({ text: "", size: 24, font: "Arial" })] }),
 
             // ITEM 2 - MEMORIAL (BLOCO ÚNICO)
             new Paragraph({
               alignment: AlignmentType.JUSTIFIED,
-              spacing: spacing15,
+              spacing: { before: 200 },
               children: [
-                new TextRun({ text: "2. Memorial da Área: ", bold: true, size: 24, font: "Arial" }),
-                ...memorialRuns
+                new TextRun({ text: "2. Memorial da Área: ", bold: true, size: 22, font: "Calibri" }),
+                ...vertsForDoc.slice(0, -1).map((v, i) => {
+                  const proximo = vertsForDoc[i + 1];
+                  return new TextRun({
+                    text: ` Do vértice ${i + 1} segue até o vértice ${i + 2}, com coordenadas U T M E=${BRNumber3.format(proximo.east)} e N=${BRNumber3.format(proximo.north)}, no azimute de ${proximo.azCalc || "00°00'00\""}, na extensão de ${BRNumber2.format(proximo.distCalc)} m;`,
+                    size: 22, font: "Calibri"
+                  });
+                })
               ]
             }),
 
             // FECHAMENTO
             new Paragraph({
               alignment: AlignmentType.JUSTIFIED,
-              spacing: spacing15,
+              spacing: { before: 200 },
               children: [
                 new TextRun({ 
                   text: `Finalmente, fechando o polígono acima descrito, abrangendo uma área de ${areaTxt} ha e um perímetro de ${perTxt} m.`, 
-                  size: 24, font: "Arial" 
+                  size: 22, font: "Calibri" 
                 })
               ]
             }),
 
-            // 3 LINHAS VAZIAS ANTES DA CIDADE/DATA
-            new Paragraph({ spacing: spacing15, children: [new TextRun({ text: "", size: 24, font: "Arial" })] }),
-            new Paragraph({ spacing: spacing15, children: [new TextRun({ text: "", size: 24, font: "Arial" })] }),
-            new Paragraph({ spacing: spacing15, children: [new TextRun({ text: "", size: 24, font: "Arial" })] }),
+            new Paragraph({ alignment: AlignmentType.CENTER, spacing: { before: 200 }, children: [new TextRun({ text: ".", size: 22, font: "Calibri" })] }),
 
             // DATA E ASSINATURA
             new Paragraph({
               alignment: AlignmentType.CENTER,
-              spacing: spacing15,
-              children: [new TextRun({ text: `${cidade}, ${dataBR}`, size: 24, font: "Arial" })]
+              spacing: { before: 400 },
+              children: [new TextRun({ text: `${cidade}, ${dataBR}`, size: 22, font: "Calibri" })]
             }),
-
-            // 3 LINHAS VAZIAS ANTES DA ASSINATURA
-            new Paragraph({ spacing: spacing15, children: [new TextRun({ text: "", size: 24, font: "Arial" })] }),
-            new Paragraph({ spacing: spacing15, children: [new TextRun({ text: "", size: 24, font: "Arial" })] }),
-            new Paragraph({ spacing: spacing15, children: [new TextRun({ text: "", size: 24, font: "Arial" })] }),
-
             new Paragraph({
               alignment: AlignmentType.CENTER,
-              spacing: spacing15,
+              spacing: { before: 800 },
               children: [
-                new TextRun({ text: "______________________________________________", size: 24, font: "Arial" }),
-                new TextRun({ text: resp || "Responsável Técnico", break: 1, size: 24, font: "Arial" }),
-                crea ? new TextRun({ text: crea, break: 1, size: 24, font: "Arial" }) : null
-              ].filter(Boolean)
+                new TextRun({ text: "______________________________________________", size: 22, font: "Calibri" }),
+                new TextRun({ text: resp || "Responsável Técnico", break: 1, size: 22, font: "Calibri" }),
+                new TextRun({ text: `CREA: ${crea || ""}`, break: 1, size: 22, font: "Calibri" })
+              ]
             })
           ]
         }]
