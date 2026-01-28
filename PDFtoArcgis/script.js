@@ -12,14 +12,26 @@ function hideInstallBtn() {
 
 // Detecta se já está instalado (standalone ou appinstalled)
 function isAppInstalled() {
-  return (window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true);
+    // Checa standalone (PWA instalado) e display-mode
+    if (window.matchMedia('(display-mode: standalone)').matches) return true;
+    if (window.navigator.standalone === true) return true;
+    // Checa se já existe service worker controlando e não há prompt
+    if (window.matchMedia('(display-mode: minimal-ui)').matches) return true;
+    // iOS: verifica se está rodando como app
+    if (window.navigator && window.navigator.standalone) return true;
+    // Android Chrome: verifica se não há prompt e já está instalado
+    if (window.matchMedia('(display-mode: fullscreen)').matches) return true;
+    return false;
 }
 
 if (isAppInstalled()) {
-  hideInstallBtn();
+    hideInstallBtn();
 }
 
 window.addEventListener('appinstalled', hideInstallBtn);
+window.addEventListener('DOMContentLoaded', function() {
+    if (isAppInstalled()) hideInstallBtn();
+});
 
 window.addEventListener('beforeinstallprompt', (e) => {
   if (isAppInstalled()) {
@@ -995,7 +1007,7 @@ function parseVertices(text, crsKeyInput) {
 
   // Padrão 1b: Regex para encontrar os marcadores/vértices antes das coordenadas
   // Procura por: "Dai segue ... marco 'XX' (E=..." ou "Inicia-se ... E=..."
-  const rx1b = /(?:Dai\s+segue|Inicia-se|ponto\s+inicial|com\s+um\s+azimute|marco\s+)(?:confrontando\s+)?(?:com\s+)?(?:a\s+)?(?:chacara\s+)?(?:n\.?\s*)?(?:\d+\s+)?(?:uma\s+extensão\s+)?(?:de\s+)?(?:[0-9.,]+\s+)?(?:metros\s+)?(?:ao\s+)?(?:[A-Z]{1,2}\s+)?(?:\(sudeste\)|\(noroeste\)|\(norte\)|\(sul\))?\s*(?:com\s+)?(?:o\s+)?(?:lote\s+)?(?:n\.?\s*)?(?:\d+\s+)?(?:da\s+)?(?:quadra\s+)?(?:n\.?\s*)?(?:\d+\s+)?(?:uma\s+extensão\s+)?(?:de\s+)?(?:[0-9.,]+\s+)?(?:metros\s*)?[,;.]?\s*(?:ao\s+)?(?:[A-Z]{1,2}\s+)?(?:\(sudeste\)|\(noroeste\)|\(norte\)|\(sul\))?\s*(?:com\s+)?(?:o\s+lote\s+)?(?:n\.?\s*)?(?:\d+\s+)?(?:da\s+)?(?:quadra\s+)?(?:n\.?\s*)?(?:\d+\s+)?(?:uma\s+extensão\s+)?(?:de\s+)?(?:[0-9.,]+\s+)?(?:metros\s*)?[,;.]\s*(?:ao\s+)?(?:[A-Z]{1,2}\s+)?(?:\(sudeste\)|\(noroeste\)|\(norte\)|\(sul\))?\s*(?:confrontando\s+)?(?:com\s+)?(?:a\s+)?(?:chacara\s+)?(?:n\.?\s*)?([A-Z0-9]+)(?:\s+\(|E\s*=|coordenadas|\s+uma)/gim;
+  const rx1b = /(?:Dai\s+segue|Inicia-se|ponto\s+inicial|com\s+um\s+azimute|marco\s+)(?:confrontando\s+)?(?:com\s+)?(?:a\s+)?(?:chacara\s+)?(?:n\.?\s*)?(?:\d+\s+)?(?:uma\s+extensão\s+)?(?:de\s+)?(?:[0-9.,]+\s+)?(?:metros\s+)?(?:ao\s+)?(?:[A-Z]{1,2}\s+)?(?:\(sudeste\)|\(noroeste\)|\(norte\)|\(sul\))?\s*(?:com\s+)?(?:o\s+)?(?:lote\s+)?(?:n\.?\s*)?(?:\d+\s+)?(?:da\s+)?(?:quadra\s+)?(?:n\.?\s*)?(?:\d+\s+)?(?:uma\s+extensão\s+)?(?:de\s+)?(?:[0-9.,]+\s+)?(?:metros\s*)?[,;.]?\s*(?:ao\s+)?(?:[A-Z]{1,2}\s+)?(?:\(sudeste\)|\(noroeste\)|\(norte\)|\(sul\))?\s*(?:confrontando\s+)?(?:com\s+)?(?:a\s+)?(?:chacara\s+)?(?:n\.?\s*)?([A-Z0-9]+)(?:\s+\(|E\s*=|coordenadas|\s+uma)/gim;
 
   // Versão simplificada: apenas procura por "E=" e volta atrás para encontrar o último marcador
   // Isto é mais confiável do que tentar capturar tudo
@@ -2619,7 +2631,7 @@ function processExtractUnified_legacy(pagesText) {
 }
 
 /* =========================
-   EXPORT CSV (matrícula selecionada)
+   EXPORT CSV (matrícula selecionado)
 ========================= */
 downloadBtn.onclick = () => {
   if (!extractedCoordinates.length) return;
@@ -2740,7 +2752,7 @@ saveToFolderBtn.onclick = async () => {
           async (err, files) => {
             if (err) return reject(err);
             try {
-              // Gravando apenas o nome limpo e correto
+              // Apenas gravando a versão limpa
               await writeFile(`${base}_${crsName}_limite.shp`, toArrayBufferFS(files.shp));
               await new Promise(r => setTimeout(r, 50));
               await writeFile(`${base}_${crsName}_limite.shx`, toArrayBufferFS(files.shx));
@@ -2762,7 +2774,7 @@ saveToFolderBtn.onclick = async () => {
           async (err, files) => {
             if (err) return reject(err);
             try {
-              // Gravando apenas o nome limpo e correto
+              // Apenas gravando a versão limpa
               await writeFile(`${base}_${crsName}_vertices.shp`, toArrayBufferFS(files.shp));
               await new Promise(r => setTimeout(r, 50));
               await writeFile(`${base}_${crsName}_vertices.shx`, toArrayBufferFS(files.shx));

@@ -14,12 +14,24 @@ function hideInstallBtn() {
     if (installBtn) installBtn.style.display = 'none';
 }
 function isAppInstalled() {
-    return (window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true);
+    // Checa standalone (PWA instalado) e display-mode
+    if (window.matchMedia('(display-mode: standalone)').matches) return true;
+    if (window.navigator.standalone === true) return true;
+    // Checa se já existe service worker controlando e não há prompt
+    if (window.matchMedia('(display-mode: minimal-ui)').matches) return true;
+    // iOS: verifica se está rodando como app
+    if (window.navigator && window.navigator.standalone) return true;
+    // Android Chrome: verifica se não há prompt e já está instalado
+    if (window.matchMedia('(display-mode: fullscreen)').matches) return true;
+    return false;
 }
 if (isAppInstalled()) {
     hideInstallBtn();
 }
 window.addEventListener('appinstalled', hideInstallBtn);
+window.addEventListener('DOMContentLoaded', function() {
+    if (isAppInstalled()) hideInstallBtn();
+});
 window.addEventListener('beforeinstallprompt', (e) => {
     if (isAppInstalled()) {
         hideInstallBtn();
