@@ -1559,53 +1559,6 @@ function parseVertices(text, crsKeyInput) {
       console.log('[PDFtoArcgis] [Fallback] Polígono fechado com todos os pontos extraídos na ordem original.');
     }
   }
-  // === FILTRO GLOBAL DE PLAUSIBILIDADE E AUTO-ESCALONAMENTO ===
-  if (out.length > 3) {
-    // 1. Detectar ranges plausíveis do CRS
-    let minE = 100000, maxE = 900000, minN = 7000000, maxN = 7500000;
-    if (crsKey && crsKey.includes('23')) {
-      minE = 300000; maxE = 600000;
-    }
-    // 2. Checar se maioria dos pontos está fora do range (erro de escala)
-    let outOfRangeE = out.filter(p => p.east < minE || p.east > maxE).length;
-    let outOfRangeN = out.filter(p => p.north < minN || p.north > maxN).length;
-    if (outOfRangeE > out.length * 0.6 || outOfRangeN > out.length * 0.6) {
-      // Tentar auto-escalar todo o conjunto
-      let scaleE = 1, scaleN = 1;
-      // Se todos são muito pequenos, multiplicar por 10, 100, 1000
-      const maxEast = Math.max(...out.map(p => p.east));
-      const maxNorth = Math.max(...out.map(p => p.north));
-      if (maxEast < minE) scaleE = 10 ** Math.ceil(Math.log10(minE / (maxEast || 1)));
-      if (maxNorth < minN) scaleN = 10 ** Math.ceil(Math.log10(minN / (maxNorth || 1)));
-      // Se todos são muito grandes, dividir
-      if (maxEast > maxE * 10) scaleE = 0.1;
-      if (maxNorth > maxN * 10) scaleN = 0.1;
-      out.forEach(p => { p.east *= scaleE; p.north *= scaleN; });
-      console.log(`[PDFtoArcgis] [Auto] Aplicado fator de escala E=${scaleE}, N=${scaleN} para todo o conjunto.`);
-    }
-    // 3. Filtrar apenas pares plausíveis
-    let filtered = out.filter(p => p.east >= minE && p.east <= maxE && p.north >= minN && p.north <= maxN);
-    if (filtered.length < 3) filtered = out; // fallback: se filtrou tudo, mantém original
-    // 4. Checar alinhamento (mais de 80% dos pontos quase na mesma linha)
-    const stdE = Math.sqrt(filtered.reduce((a, p) => a + Math.pow(p.east - (filtered.reduce((s, q) => s + q.east, 0) / filtered.length), 2), 0) / filtered.length);
-    const stdN = Math.sqrt(filtered.reduce((a, p) => a + Math.pow(p.north - (filtered.reduce((s, q) => s + q.north, 0) / filtered.length), 2), 0) / filtered.length);
-    if ((stdE < 2 || stdN < 2) && filtered.length > 3) {
-      console.warn('[PDFtoArcgis] ⚠️ Mais de 80% dos pontos estão alinhados. Polígono inválido.');
-      return [];
-    }
-    // 5. Checar área mínima
-    if (filtered.length > 3) {
-      const area = Math.abs(filtered.reduce((acc, curr, i, arr) => {
-        const next = arr[(i + 1) % arr.length];
-        return acc + (curr.east * next.north - next.east * curr.north);
-      }, 0) / 2);
-      if (area < 10) {
-        console.warn('[PDFtoArcgis] ⚠️ Área do polígono < 10 m². Polígono microscópico.');
-        return [];
-      }
-    }
-    return filtered;
-  }
   return out;
 }
 
