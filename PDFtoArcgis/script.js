@@ -1735,13 +1735,26 @@ function gerarCsvParaVertices(vertices, epsg, docId = null, topologyInfo = null,
   // Cabeçalho da tabela
   csv += "Point_ID;Ordem;Norte_Y;Este_X;EPSG;Dist_M;Azimute_Deg;Qualidade;Notas\n";
   
-  for (let i = 0; i < vertices.length; i++) {
-    const c = vertices[i];
-    
+  // Estratégia de fechamento: se não estiver fechado, adiciona o primeiro vértice ao final
+  let verticesToExport = [...vertices];
+  if (topologyInfo && topologyInfo.closed === false && vertices.length > 2) {
+    const first = vertices[0];
+    // Cria um novo vértice de fechamento (Point_ID e Ordem incrementados)
+    const closingVertex = {
+      ...first,
+      id: (first.id || "F") + "_close", // Sufixo para evitar duplicata
+      ordem: vertices.length + 1,
+      distCalc: "---",
+      azCalc: "---"
+    };
+    verticesToExport.push(closingVertex);
+  }
+
+  for (let i = 0; i < verticesToExport.length; i++) {
+    const c = verticesToExport[i];
     // Determinação de qualidade baseada em validação
     let quality = "✓ OK";
     let notes = "";
-    
     // Verificar coerência com memorial se disponível
     if (memorialInfo && memorialInfo.matches[i]) {
       const match = memorialInfo.matches[i];
@@ -1753,21 +1766,18 @@ function gerarCsvParaVertices(vertices, epsg, docId = null, topologyInfo = null,
         }
       }
     }
-    
-    // Verificar se há distância "---" (último vértice)
+    // Verificar se há distância "---" (último vértice ou fechamento)
     if (c.distCalc === "---") {
       notes = "Fechamento";
     }
-    
     // Verificar duplicatas ou problemas topológicos
     if (i > 0) {
-      const prev = vertices[i - 1];
+      const prev = verticesToExport[i - 1];
       if (prev.east === c.east && prev.north === c.north) {
         quality = "❌ ERRO";
         notes = "Duplicado";
       }
     }
-    
     csv += `${c.id};${c.ordem};${c.north};${c.east};${epsg};${c.distCalc || ""};${c.azCalc || ""};${quality};${notes}\n`;
   }
   
