@@ -1,4 +1,3 @@
-
 # PDFSpliter
 
 > Suite modular para processamento avançado de PDFs — Android WebView & Browser
@@ -140,6 +139,12 @@ Contribuições são bem-vindas! Siga o fluxo padrão GitHub (fork, branch, PR).
 ### v1.0
 - 6 módulos iniciais, PDF/JPG, i18n, Android WebView
 
+## Novidade: Footer Profissional
+
+- Todas as páginas agora possuem um rodapé fixo, responsivo e integrado ao tema do app.
+- Exibe: **Desenvolvido por Marcos Roberto Nunes Lindolpho** e **© 2026**.
+- Visual moderno, responsivo e compatível com Android e desktop.
+
 ## Casos de Uso
 
 - Processamento de documentos fiscais brasileiros (split por contribuinte, extração GIS)
@@ -148,4 +153,7 @@ Contribuições são bem-vindas! Siga o fluxo padrão GitHub (fork, branch, PR).
 
 ---
 Desenvolvido com ❤️ em JavaScript
+
+> Todas as páginas do app exibem no rodapé: **Desenvolvido por Marcos Roberto Nunes Lindolpho © 2026**
+
 Última atualização: Janeiro 2026 | Versão: 2.0
