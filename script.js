@@ -38,6 +38,17 @@ function nativeDownload(fileName, blob) {
         const base64Data = event.target.result.split(',')[1];
         if (window.Android && typeof window.Android.downloadPdf === 'function') {
             window.Android.downloadPdf(base64Data, fileName);
+
+// --- PWA: Registrar Service Worker ---
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', function() {
+        navigator.serviceWorker.register('service-worker.js').then(function(registration) {
+            console.log('[PWA] Service Worker registrado com sucesso:', registration.scope);
+        }, function(err) {
+            console.log('[PWA] Falha ao registrar Service Worker:', err);
+        });
+    });
+}
         } else {
             // Fallback download navegador
             const url = window.URL.createObjectURL(blob);

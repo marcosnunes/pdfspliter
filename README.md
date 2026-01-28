@@ -36,6 +36,23 @@ git clone https://github.com/marcosnunes/pdfspliter.git
 4. Use o menu lateral para navegar entre ferramentas.
 5. Faça upload/processamento e baixe os resultados localmente (nunca há upload para servidor).
 
+
+## Instalação como App (PWA)
+
+O PDFSpliter pode ser instalado como aplicativo no Android ou iPhone diretamente pelo navegador, sem necessidade de loja de apps:
+
+- Abra o `index.html` principal no navegador do celular (Chrome, Edge, Safari, etc).
+- Procure a opção “Adicionar à tela inicial” (geralmente no menu do navegador).
+- O app será instalado com ícone, tela cheia e funcionamento offline básico.
+
+**Funcionalidades PWA:**
+- Manifesto e ícones para instalação.
+- Service Worker para funcionamento offline e cache local.
+- Compatível com Android, iOS (Safari), Windows e desktop.
+- 100% local, sem upload para servidores.
+
+> Para personalizar o ícone, substitua os arquivos `icon-192.png` e `icon-512.png` na raiz.
+
 pdfspliter/
 ## Estrutura do Projeto
 
