@@ -45,32 +45,45 @@
     text-align: center;
     font-size: 16px;
     font-weight: 500;
-    padding: 18px 0 12px 0;
-    position: fixed;
-    left: 0;
-    bottom: 0;
-    z-index: 1002;
+    padding: 14px 0 10px 0;
     letter-spacing: 0.5px;
     box-shadow: 0 -2px 8px rgba(0,0,0,0.07);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    margin-top: 40px;
 }
+.footer-main {
+    font-size: 1em;
+    font-weight: 500;
+    display: block;
+}
+.footer-copy {
+    font-size: 0.95em;
+    opacity: 0.85;
+    display: block;
+}
+@media (max-width: 600px) {
+    .app-footer {
+        font-size: 13px;
+        padding: 10px 0 6px 0;
+    }
+    .footer-main, .footer-copy {
+        font-size: 0.95em;
+    }
+}
+/* Footer profissional */
 
 @media (max-width: 600px) {
     .app-footer {
         font-size: 13px;
         padding: 12px 0 8px 0;
-        position: static;
-        box-shadow: none;
     }
 }
 body {
     font-family: sans-serif;
-    line-height: 1.6;
     margin: 0;
-}
-
-h1,
-h2 {
-    color: #333;
 }
 
 .navigation {
@@ -100,7 +113,7 @@ h2 {
     font-size: 28px;
     cursor: pointer;
     color: white;
-    padding-right: 15px;
+    padding-right: 20px;
 }
 
 /* Estilos para o menu lateral (Sidenav) */
@@ -191,14 +204,12 @@ span {
 }
 
 .hero-section {
-    padding: 8px;
+    padding: 50px 20px;
     margin: 0px;
     display: flex;
     flex-wrap: wrap;
-    min-height: 50vh;
-    background-image: linear-gradient(0deg,
-            rgba(0, 0, 0, 0.5),
-            rgba(0, 0, 0, 0.5)),
+    min-height: 400px;
+    background-image: linear-gradient(0deg, rgba(0, 0, 0, 0.7), rgba(0, 0, 0, 0.7)),
         url("https://cdn.hubblecontent.osi.office.net/m365content/publish/26f1035c-f169-4e0c-948a-0d5c861becc9/thumbnails/xxlarge.jpg");
     background-position: center center;
     background-repeat: no-repeat;
