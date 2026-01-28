@@ -59,7 +59,7 @@ loadScript(pdfjsLibUrl, () => {
         logMessages.textContent = message;
         console.log(message);
     }
-    
+
     // Limpa áreas de visualização/download
     function clearPreviousResults() {
         thumbnailsContainer.innerHTML = '';
@@ -102,7 +102,7 @@ loadScript(pdfjsLibUrl, () => {
 
                 for (let i = 1; i <= pdfDoc.numPages; i++) {
                     displayLogMessage(`Convertendo página ${i} de ${pdfDoc.numPages}...`);
-                    
+
                     const page = await pdfDoc.getPage(i);
                     const scale = 1.5; // Escala para qualidade
                     const viewport = page.getViewport({ scale });
@@ -135,17 +135,17 @@ loadScript(pdfjsLibUrl, () => {
                     downloadLink.textContent = `Baixar Página ${i} (JPG)`;
                     downloadLink.classList.add('custom-download-link');
                     jpgDownloadContainer.appendChild(downloadLink);
-                    
+
                     // Quebra de linha para organização
                     jpgDownloadContainer.appendChild(document.createElement('br'));
                 }
-                
+
                 displayLogMessage('Conversão concluída! Baixe suas imagens abaixo.');
                 jpgDownloadContainer.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
             };
-            
-            reader.onerror = function(error) {
+
+            reader.onerror = function (error) {
                 console.error('Erro ao ler o arquivo PDF:', error);
                 displayLogMessage('Erro ao ler o arquivo PDF.');
             };

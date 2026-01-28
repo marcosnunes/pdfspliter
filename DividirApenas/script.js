@@ -156,7 +156,7 @@ async function processarPdf() {
                         console.log("Revoked URL for:", downloadFileName);
                     }, 100);
                 };
-                downloadLink.addEventListener('click', revokeObjectUrl , { once: false });
+                downloadLink.addEventListener('click', revokeObjectUrl, { once: false });
 
                 const pageItem = document.createElement("div");
                 pageItem.classList.add("custom-pdf-page-item");
@@ -196,9 +196,9 @@ document.addEventListener('DOMContentLoaded', function () {
     loadScript(jspdfUrl, () => {
         console.log("jsPDF carregado."); if (typeof window.jspdf?.jsPDF !== 'undefined') { jsPDF = window.jspdf.jsPDF; } else { console.warn("jsPDF não carregado."); }
         loadScript(pdfLibUrl, () => {
-            console.log("pdf-lib carregado."); if (typeof window.PDFLib === 'undefined') { console.error("PDFLib não definido."); displayLogMessage("Erro pdf-lib."); if(initialProcessButton) initialProcessButton.disabled = true; return; }
+            console.log("pdf-lib carregado."); if (typeof window.PDFLib === 'undefined') { console.error("PDFLib não definido."); displayLogMessage("Erro pdf-lib."); if (initialProcessButton) initialProcessButton.disabled = true; return; }
             PDFLib = window.PDFLib;
-             if (initialProcessButton) { initialProcessButton.addEventListener("click", processarPdf); initialProcessButton.disabled = false; initialProcessButton.textContent = "Processar PDF"; updateFileName(); }
+            if (initialProcessButton) { initialProcessButton.addEventListener("click", processarPdf); initialProcessButton.disabled = false; initialProcessButton.textContent = "Processar PDF"; updateFileName(); }
             else { console.error("Botão 'processarPDF' não encontrado."); }
         }, 'pdf-lib-script');
     }, 'jspdf-script');

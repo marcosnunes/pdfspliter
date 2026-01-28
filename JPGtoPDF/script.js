@@ -153,7 +153,7 @@ loadScript(pdfLibUrl, () => {
                     continue;
                 }
 
-                 try {
+                try {
                     // Verificação: garante que a imagem foi incorporada
                     if (!image) {
                         console.error(`Imagem ${file.name} não foi incorporada corretamente.`);
@@ -161,7 +161,7 @@ loadScript(pdfLibUrl, () => {
                         continue;
                     }
 
-                     // Garante ao menos uma página
+                    // Garante ao menos uma página
                     let page = pdfDoc.addPage();
                     // Usa width/height do objeto image
                     const width = image.width;

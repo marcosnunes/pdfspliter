@@ -34,7 +34,7 @@ function performAndroidOCR(base64Image) {
 // Envia PDF final para Android ou faz download no browser
 function nativeDownload(fileName, blob) {
     const reader = new FileReader();
-    reader.onload = function(event) {
+    reader.onload = function (event) {
         const base64Data = event.target.result.split(',')[1];
         if (window.Android && typeof window.Android.downloadPdf === 'function') {
             window.Android.downloadPdf(base64Data, fileName);
@@ -163,7 +163,7 @@ function extractNameInfo(textToSearch, pageNumber, source = "Texto") {
         if (/^[A-Z\s]{10,}$/.test(line)) {
             let clean = cleanNameStr(line);
             if (isValidName(clean) && !/(IMPOSTO|RENDA|FEDERAL|RECEITA|BRASIL|MINISTERIO|COMPROVANTE)/i.test(clean)) {
-                 return { nome: clean };
+                return { nome: clean };
             }
         }
     }
@@ -209,7 +209,7 @@ async function processarPagina(pdfJsDoc, pdfLibDoc, pageNum, pageIndex, total) {
                 const info = extractNameInfo(textStr, pageNum, "Texto Digital");
                 nomeIdentificado = info.nome;
             }
-        } catch(e) {
+        } catch (e) {
             console.error("Erro ao ler texto digital", e);
         }
 

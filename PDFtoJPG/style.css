@@ -4,22 +4,25 @@ body {
 }
 
 .navigation {
-  position: sticky;
-  width: 100%;
-  top: 0;
-  z-index: 1000;
+    position: sticky;
+    width: 100%;
+    top: 0;
+    z-index: 1000;
 }
 
 .nav-wrapper {
-  background-color: #ffc107;
-  padding: 10px;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-  text-align: right; /* Alinha o conteúdo (span) à direita */
-  height: 60px; /* Define uma altura fixa para a barra */
-  box-sizing: border-box; /* Garante que padding não adicione altura */
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
+    background-color: #ffc107;
+    padding: 10px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    text-align: right;
+    /* Alinha o conteúdo (span) à direita */
+    height: 60px;
+    /* Define uma altura fixa para a barra */
+    box-sizing: border-box;
+    /* Garante que padding não adicione altura */
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
 }
 
 /* Estilos para o ícone de abrir o menu */
@@ -33,15 +36,21 @@ body {
 /* Estilos para o menu lateral (Sidenav) */
 .sidenav {
     height: 100%;
-    width: 0; /* Começa fechado */
+    width: 0;
+    /* Começa fechado */
     position: fixed;
-    z-index: 1001; /* Fica acima de outros conteúdos */
+    z-index: 1001;
+    /* Fica acima de outros conteúdos */
     top: 0;
     right: 0;
-    background-color: #ff9800; /* Cor de fundo */
-    overflow-x: hidden; /* Desabilita scroll horizontal */
-    transition: 0.5s; /* Efeito de transição */
-    padding-top: 60px; /* Espaço no topo */
+    background-color: #ff9800;
+    /* Cor de fundo */
+    overflow-x: hidden;
+    /* Desabilita scroll horizontal */
+    transition: 0.5s;
+    /* Efeito de transição */
+    padding-top: 60px;
+    /* Espaço no topo */
 }
 
 /* Estilos para os links do menu lateral */
