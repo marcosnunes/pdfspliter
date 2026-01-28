@@ -1540,48 +1540,51 @@ function parseVertices(text, crsKeyInput) {
     if (!isClosed(out)) needsFix = true;
     if (!needsFix && hasSelfIntersection(out)) needsFix = true;
 
-    // Ordenação por vizinho mais próximo (sempre que precisar corrigir)
+    // Filtro de clusters/duplicados e hull externo
     if (needsFix) {
-      // Remove duplicados exatos
+      // 1. Remove duplicados exatos
       const unique = [];
       for (const p of out) {
         if (!unique.some(q => Math.abs(q.east - p.east) < 1e-6 && Math.abs(q.north - p.north) < 1e-6)) unique.push(p);
       }
-      // Começa pelo ponto mais ao sul (ou mais à esquerda em caso de empate)
-      let startIdx = 0;
-      for (let i = 1; i < unique.length; i++) {
-        if (
-          unique[i].north < unique[startIdx].north ||
-          (unique[i].north === unique[startIdx].north && unique[i].east < unique[startIdx].east)
-        ) {
-          startIdx = i;
-        }
+      // 2. Remove clusters (pontos muito próximos)
+      const clusterMinDist = 2.0; // metros
+      const filtered = [];
+      for (const p of unique) {
+        if (!filtered.some(q => dist(p, q) < clusterMinDist)) filtered.push(p);
       }
-      const used = new Array(unique.length).fill(false);
-      const ordered = [unique[startIdx]];
-      used[startIdx] = true;
-      for (let i = 1; i < unique.length; i++) {
-        const last = ordered[ordered.length - 1];
-        let minD = Infinity, minIdx = -1;
-        for (let j = 0; j < unique.length; j++) {
-          if (!used[j]) {
-            const d = dist(last, unique[j]);
-            if (d < minD) { minD = d; minIdx = j; }
-          }
-        }
-        ordered.push(unique[minIdx]);
-        used[minIdx] = true;
+      if (unique.length !== filtered.length) {
+        console.log(`[PDFtoArcgis] [Filtro] Removidos ${unique.length - filtered.length} pontos em clusters.`);
       }
+      // 3. Convex hull externo
+      function convexHull(points) {
+        const pts = points.slice().sort((a, b) => a.east - b.east || a.north - b.north);
+        const cross = (o, a, b) => (a.east - o.east) * (b.north - o.north) - (a.north - o.north) * (b.east - o.east);
+        const lower = [];
+        for (const p of pts) {
+          while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) lower.pop();
+          lower.push(p);
+        }
+        const upper = [];
+        for (let i = pts.length - 1; i >= 0; i--) {
+          const p = pts[i];
+          while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) upper.pop();
+          upper.push(p);
+        }
+        upper.pop(); lower.pop();
+        return lower.concat(upper);
+      }
+      const hull = convexHull(filtered);
       // Fechar ciclo
-      if (ordered.length > 2 && (ordered[0].east !== ordered[ordered.length - 1].east || ordered[0].north !== ordered[ordered.length - 1].north)) {
-        ordered.push({ ...ordered[0] });
+      if (hull.length > 2 && (hull[0].east !== hull[hull.length - 1].east || hull[0].north !== hull[hull.length - 1].north)) {
+        hull.push({ ...hull[0] });
       }
       // Re-atribuir IDs
       out.length = 0;
-      for (let i = 0; i < ordered.length; i++) {
-        out.push({ id: `V${String(i + 1).padStart(3, '0')}`, north: ordered[i].north, east: ordered[i].east });
+      for (let i = 0; i < hull.length; i++) {
+        out.push({ id: `V${String(i + 1).padStart(3, '0')}`, north: hull[i].north, east: hull[i].east });
       }
-      console.log('[PDFtoArcgis] [RobustFallback] Polígono reordenado por vizinho mais próximo e fechado automaticamente.');
+      console.log('[PDFtoArcgis] [HullFallback] Polígono externo gerado por convex hull + filtro de clusters.');
     }
   }
   return out;
