@@ -2720,6 +2720,12 @@ saveToFolderBtn.onclick = async () => {
             updateStatus("Operação de salvamento cancelada pelo usuário.", "warning");
             return;
           }
+          // Se for NotFoundError, pasta/arquivo não existe mais
+          if (err && err.name === "NotFoundError") {
+            updateStatus("❌ Pasta ou arquivo não encontrado. Reabra a pasta de destino e tente novamente.", "error");
+            console.error("[Salvar na pasta] NotFoundError:", err);
+            return;
+          }
           updateStatus("Erro ao salvar na pasta: " + (err && err.message ? err.message : err), "error");
           console.error("[Salvar na pasta] Erro:", err);
         }
@@ -2727,6 +2733,12 @@ saveToFolderBtn.onclick = async () => {
       } catch (err) {
         // Se o usuário cancelar, não mostrar erro
         if (err && err.name === "AbortError") return;
+        // Se for NotFoundError, pasta/arquivo não existe mais
+        if (err && err.name === "NotFoundError") {
+          updateStatus("❌ Pasta ou arquivo não encontrado. Reabra a pasta de destino e tente novamente.", "error");
+          console.error("[Salvar na pasta] NotFoundError:", err);
+          return;
+        }
         // Mensagem amigável para arquivo aberto em outro programa
         let msg = String(err && err.message ? err.message : err);
         if (
@@ -2746,6 +2758,11 @@ saveToFolderBtn.onclick = async () => {
           await w.write(data);
           await w.close();
         } catch (err2) {
+          if (err2 && err2.name === "NotFoundError") {
+            updateStatus("❌ Pasta ou arquivo não encontrado. Reabra a pasta de destino e tente novamente.", "error");
+            console.error("[Salvar na pasta] NotFoundError:", err2);
+            return;
+          }
           updateStatus("❌ Erro ao salvar arquivo: " + (err2 && err2.message ? err2.message : err2), "error");
           console.error("[Salvar na pasta] Erro ao salvar arquivo:", err2);
         }
