@@ -3,10 +3,10 @@
 # PDFSpliter – AI Coding Agent Guide
 
 ## Project Overview
-PDFSpliter is a modular suite for advanced PDF processing, focused on Brazilian fiscal documents, with Android-first integration and full i18n (Portuguese primary). Each tool is fully isolated in its own directory—no shared code, no central utilities.
+PDFSpliter is a modular suite for advanced PDF processing, focused on Brazilian fiscal documents, with Android-first integration and full i18n (Portuguese primary). Each tool is fully isolated in its own directory—no shared code, no central utilities. All processing is 100% local (no server upload).
 
 ## Architecture & Patterns
-- **Strict per-tool isolation**: Each tool (Dividir, UnirPDF, etc.) has its own `index.html`, `script.js`, `style.css`, and Google verification file. Utility functions are intentionally duplicated per tool.
+- **Strict per-tool isolation**: Each tool (Dividir, UnirPDF, etc.) has its own `index.html`, `script.js`, `style.css`, and Google verification file. Utility functions are intentionally duplicated per tool—never centralize utilities.
 - **Additive-only changes**: Never refactor or remove working logic. Always add new strategies as fallbacks (see `parseVertices()` in PDFtoArcgis/script.js).
 - **Android-first**: Always check for `window.Android` before using browser fallbacks for OCR, downloads, and translations.
 - **i18n**: Use `data-i18n` in HTML and call `updateUI(translations)` to update UI text. Translations are loaded via `window.Android.getTranslations(lang)` or web fallback.
@@ -26,7 +26,7 @@ PDFSpliter is a modular suite for advanced PDF processing, focused on Brazilian 
 ## Developer Workflows
 - **Adding a tool**: Duplicate an existing tool folder, update HTML, add to sidenav in all HTMLs, copy utility functions, implement logic in `script.js`, and duplicate `style.css`.
 - **Testing**: Open any tool's `index.html` directly in the browser (no build or server needed). Android-specific code degrades gracefully if `window.Android` is missing.
-- **Debugging**: Use browser console (F12) for troubleshooting extraction/processing issues. All processing is 100% local—no server upload.
+- **Debugging**: Use browser console (F12) for troubleshooting extraction/processing issues.
 
 ## Project Conventions
 - **Naming**: Use `nomeIdentificado` for extracted names, `Outros_Documentos` for unknowns, and strip formatting from document IDs.
@@ -58,5 +58,7 @@ PDFSpliter is a modular suite for advanced PDF processing, focused on Brazilian 
 - [PDFtoArcgis/script.js](PDFtoArcgis/script.js): Multi-strategy coordinate extraction, document ID detection
 - [index.html](index.html): i18n markup, sidenav pattern
 
+---
+**If unclear, review the above files for concrete examples. When adding features, always preserve existing logic and add new strategies as fallbacks.**
 ---
 **If unclear, review the above files for concrete examples. When adding features, always preserve existing logic and add new strategies as fallbacks.**
