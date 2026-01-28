@@ -1506,6 +1506,111 @@ function parseVertices(text, crsKeyInput) {
     }
   }
 
+  // === Fallback: robust ordering and main-contour selection ===
+  // Only if more than 3 vertices and not already a simple closed polygon
+  if (out.length > 3) {
+    // Helper: Euclidean distance
+    function dist(a, b) {
+      return Math.sqrt(Math.pow(a.north - b.north, 2) + Math.pow(a.east - b.east, 2));
+    }
+
+    // Helper: Check if polygon is closed
+    function isClosed(arr, tol = 0.5) {
+      if (arr.length < 3) return false;
+      const first = arr[0], last = arr[arr.length - 1];
+      return dist(first, last) <= tol;
+    }
+
+    // Helper: Shoelace area (signed)
+    function area(poly) {
+      let sum = 0;
+      for (let i = 0; i < poly.length; i++) {
+        const a = poly[i], b = poly[(i + 1) % poly.length];
+        sum += (a.east * b.north - b.east * a.north);
+      }
+      return 0.5 * sum;
+    }
+
+    // Helper: Convex hull (Graham scan, returns ordered array)
+    function convexHull(points) {
+      // Sort by east, then north
+      const pts = points.slice().sort((a, b) => a.east - b.east || a.north - b.north);
+      const cross = (o, a, b) => (a.east - o.east) * (b.north - o.north) - (a.north - o.north) * (b.east - o.east);
+      const lower = [];
+      for (const p of pts) {
+        while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) lower.pop();
+        lower.push(p);
+      }
+      const upper = [];
+      for (let i = pts.length - 1; i >= 0; i--) {
+        const p = pts[i];
+        while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) upper.pop();
+        upper.push(p);
+      }
+      upper.pop(); lower.pop();
+      return lower.concat(upper);
+    }
+
+    // Helper: Nearest neighbor ordering (greedy, not optimal but robust)
+    function orderByNearest(points) {
+      const used = new Array(points.length).fill(false);
+      const ordered = [points[0]];
+      used[0] = true;
+      for (let i = 1; i < points.length; i++) {
+        const last = ordered[ordered.length - 1];
+        let minD = Infinity, minIdx = -1;
+        for (let j = 0; j < points.length; j++) {
+          if (!used[j]) {
+            const d = dist(last, points[j]);
+            if (d < minD) { minD = d; minIdx = j; }
+          }
+        }
+        ordered.push(points[minIdx]);
+        used[minIdx] = true;
+      }
+      return ordered;
+    }
+
+    // 1. Try to detect if the current order is already a simple closed polygon (no self-intersections, closed)
+    let needsFix = false;
+    if (!isClosed(out)) needsFix = true;
+    // Check for self-intersections (simple O(n^2) test)
+    function hasSelfIntersection(poly) {
+      for (let i = 0; i < poly.length - 1; i++) {
+        for (let j = i + 2; j < poly.length - 1; j++) {
+          if (i === 0 && j === poly.length - 2) continue;
+          // Segments: (i,i+1) and (j,j+1)
+          const a1 = poly[i], a2 = poly[i + 1], b1 = poly[j], b2 = poly[j + 1];
+          // Helper: orientation
+          function ccw(A, B, C) {
+            return (C.north - A.north) * (B.east - A.east) > (B.north - A.north) * (C.east - A.east);
+          }
+          if (ccw(a1, b1, b2) !== ccw(a2, b1, b2) && ccw(a1, a2, b1) !== ccw(a1, a2, b2)) {
+            return true;
+          }
+        }
+      }
+      return false;
+    }
+    if (!needsFix && hasSelfIntersection(out)) needsFix = true;
+
+    if (needsFix) {
+      // 2. Try convex hull (guaranteed simple, but may lose concavities)
+      let hull = convexHull(out);
+      // 3. If hull is too small (e.g., all points colinear), fallback to nearest-neighbor ordering
+      if (hull.length < 3) hull = orderByNearest(out);
+      // 4. Ensure closure
+      if (hull.length > 2 && (hull[0].east !== hull[hull.length - 1].east || hull[0].north !== hull[hull.length - 1].north)) {
+        hull.push({ ...hull[0] });
+      }
+      // 5. Re-assign IDs sequentially
+      out.length = 0;
+      for (let i = 0; i < hull.length; i++) {
+        out.push({ id: `V${String(i + 1).padStart(3, '0')}`, north: hull[i].north, east: hull[i].east });
+      }
+      console.log('[PDFtoArcgis] [RobustFallback] Polígono reordenado e fechado automaticamente.');
+    }
+  }
   return out;
 }
 
