@@ -393,6 +393,20 @@ function loadScript(src, cb) {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
+    // Esconde o botão de instalar app se já estiver instalado (PWA/standalone)
+    const installBtn = document.getElementById('installPwaBtn');
+    function isAppInstalled() {
+        return (
+            window.matchMedia('(display-mode: standalone)').matches ||
+            window.matchMedia('(display-mode: minimal-ui)').matches ||
+            window.matchMedia('(display-mode: fullscreen)').matches ||
+            (window.navigator.standalone === true)
+        );
+    }
+    if (installBtn && isAppInstalled()) {
+        installBtn.style.display = 'none';
+    }
+
     const btn = document.getElementById("processarPDF");
     if (btn) {
         btn.disabled = true;
@@ -414,7 +428,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // --- PWA: Instalar App (com feedback visual) ---
     let deferredPrompt = null;
-    const installBtn = document.getElementById('installPwaBtn');
     window.addEventListener('beforeinstallprompt', (e) => {
         e.preventDefault();
         deferredPrompt = e;

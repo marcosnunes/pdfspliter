@@ -1,16 +1,3 @@
-    // Esconde o botão de instalar app se já estiver instalado (PWA/standalone)
-    const installBtn = document.getElementById('installPwaBtn');
-    function isAppInstalled() {
-        return (
-            window.matchMedia('(display-mode: standalone)').matches ||
-            window.matchMedia('(display-mode: minimal-ui)').matches ||
-            window.matchMedia('(display-mode: fullscreen)').matches ||
-            (window.navigator.standalone === true)
-        );
-    }
-    if (installBtn && isAppInstalled()) {
-        installBtn.style.display = 'none';
-    }
 // Menu lateral (Sidenav)
 function openNav() {
     document.getElementById("mySidenav").style.width = "250px";
