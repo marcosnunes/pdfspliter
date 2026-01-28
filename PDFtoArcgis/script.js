@@ -485,50 +485,56 @@ function validatePolygonTopology(vertices, projectionKey = null) {
     return { isValid: false, errors, warnings, corrected: vertices };
   }
   
-  // 1. Verificar fechamento
-  const closed = isPolygonClosed(vertices, 0.5);
+  // Estratégia de fechamento: se não estiver fechado, adiciona o primeiro vértice ao final para validação
+  let verticesToValidate = [...vertices];
+  let closed = isPolygonClosed(verticesToValidate, 0.5);
+  if (!closed && verticesToValidate.length > 2) {
+    const first = verticesToValidate[0];
+    verticesToValidate.push({ ...first });
+    closed = true; // Considera fechado para validação e relatório
+  }
   if (!closed) {
     warnings.push("⚠️ Polígono não fechado (distância > 0.5m entre primeiro e último)");
   }
   
   // 2. Calcular área
-  const { area, isCCW, signed } = calcularAreaShoelace(vertices);
+  const { area, isCCW, signed } = calcularAreaShoelace(verticesToValidate);
   if (area < 1) {
     errors.push(`❌ Área muito pequena (${area.toFixed(2)} m²) - possível erro de extração`);
   }
-  
+
   // 3. Detectar auto-intersecções
-  const intersections = detectPolygonSelfIntersections(vertices);
+  const intersections = detectPolygonSelfIntersections(verticesToValidate);
   if (intersections.length > 0) {
     errors.push(`❌ Auto-intersecções detectadas em ${intersections.length} pares de edges`);
   }
-  
+
   // 4. Verificar ordenação
   if (isCCW === false) {
     warnings.push("⚠️ Vértices em ordem horária (CW) - convertendo para anti-horária (CCW)");
   }
-  
+
   // 5. Validar coerência de distâncias calculadas vs Euclidiana
   const distThreshold = 10; // metros
   let distCoherence = true;
-  for (let i = 0; i < vertices.length - 1; i++) {
-    const v1 = vertices[i];
-    const v2 = vertices[i + 1];
-    
+  for (let i = 0; i < verticesToValidate.length - 1; i++) {
+    const v1 = verticesToValidate[i];
+    const v2 = verticesToValidate[i + 1];
+
     if (v1.distCalc && v2.distCalc) {
       const euclidian = calcularDistancia(v1, v2);
       const stated = parseFloat(v1.distCalc);
-      
+
       if (!Number.isNaN(stated) && Math.abs(euclidian - stated) > distThreshold) {
         distCoherence = false;
         warnings.push(`⚠️ Distância V${i+1}→V${i+2}: calculada ${euclidian.toFixed(2)}m ≠ documentada ${stated}m`);
       }
     }
   }
-  
-  const corrected = isCCW === false ? ensureCounterClockwiseOrder(vertices) : vertices;
+
+  const corrected = isCCW === false ? ensureCounterClockwiseOrder(verticesToValidate) : verticesToValidate;
   const isValid = errors.length === 0 && intersections.length === 0;
-  
+
   return {
     isValid,
     errors,
@@ -537,7 +543,8 @@ function validatePolygonTopology(vertices, projectionKey = null) {
     isCCW: corrected.length > 0 ? true : null,
     distCoherence,
     corrected,
-    intersections
+    intersections,
+    closed
   };
 }
 
