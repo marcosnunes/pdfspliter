@@ -1540,73 +1540,48 @@ function parseVertices(text, crsKeyInput) {
     if (!isClosed(out)) needsFix = true;
     if (!needsFix && hasSelfIntersection(out)) needsFix = true;
 
-    // Se só precisa fechar, e tem muitos pontos, só fecha mantendo ordem
-    if (needsFix && out.length > 10 && !hasSelfIntersection(out)) {
-      // Só fechar o polígono
-      if (!isClosed(out)) {
-        out.push({ ...out[0], id: `V${String(out.length + 1).padStart(3, '0')}` });
-        console.log('[PDFtoArcgis] [RobustFallback] Apenas fechamento automático aplicado (ordem original mantida).');
-      }
-      needsFix = false;
-    }
-
-    // Se ainda precisa corrigir (auto-interseção ou poucos pontos), aí sim hull/ordenação
+    // Ordenação por vizinho mais próximo (sempre que precisar corrigir)
     if (needsFix) {
-      // Helper: Convex hull (Graham scan, returns ordered array)
-      function convexHull(points) {
-        const pts = points.slice().sort((a, b) => a.east - b.east || a.north - b.north);
-        const cross = (o, a, b) => (a.east - o.east) * (b.north - o.north) - (a.north - o.north) * (b.east - o.east);
-        const lower = [];
-        for (const p of pts) {
-          while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) lower.pop();
-          lower.push(p);
-        }
-        const upper = [];
-        for (let i = pts.length - 1; i >= 0; i--) {
-          const p = pts[i];
-          while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) upper.pop();
-          upper.push(p);
-        }
-        upper.pop(); lower.pop();
-        return lower.concat(upper);
+      // Remove duplicados exatos
+      const unique = [];
+      for (const p of out) {
+        if (!unique.some(q => Math.abs(q.east - p.east) < 1e-6 && Math.abs(q.north - p.north) < 1e-6)) unique.push(p);
       }
-      // Helper: Nearest neighbor ordering (greedy)
-      function orderByNearest(points) {
-        const used = new Array(points.length).fill(false);
-        const ordered = [points[0]];
-        used[0] = true;
-        for (let i = 1; i < points.length; i++) {
-          const last = ordered[ordered.length - 1];
-          let minD = Infinity, minIdx = -1;
-          for (let j = 0; j < points.length; j++) {
-            if (!used[j]) {
-              const d = dist(last, points[j]);
-              if (d < minD) { minD = d; minIdx = j; }
-            }
+      // Começa pelo ponto mais ao sul (ou mais à esquerda em caso de empate)
+      let startIdx = 0;
+      for (let i = 1; i < unique.length; i++) {
+        if (
+          unique[i].north < unique[startIdx].north ||
+          (unique[i].north === unique[startIdx].north && unique[i].east < unique[startIdx].east)
+        ) {
+          startIdx = i;
+        }
+      }
+      const used = new Array(unique.length).fill(false);
+      const ordered = [unique[startIdx]];
+      used[startIdx] = true;
+      for (let i = 1; i < unique.length; i++) {
+        const last = ordered[ordered.length - 1];
+        let minD = Infinity, minIdx = -1;
+        for (let j = 0; j < unique.length; j++) {
+          if (!used[j]) {
+            const d = dist(last, unique[j]);
+            if (d < minD) { minD = d; minIdx = j; }
           }
-          ordered.push(points[minIdx]);
-          used[minIdx] = true;
         }
-        return ordered;
+        ordered.push(unique[minIdx]);
+        used[minIdx] = true;
       }
-      // Prefer hull if poucos pontos, senão nearest-neighbor
-      let fixed = out;
-      if (out.length <= 10) {
-        fixed = convexHull(out);
-        if (fixed.length < 3) fixed = orderByNearest(out);
-      } else {
-        fixed = orderByNearest(out);
-      }
-      // Fechar
-      if (fixed.length > 2 && (fixed[0].east !== fixed[fixed.length - 1].east || fixed[0].north !== fixed[fixed.length - 1].north)) {
-        fixed.push({ ...fixed[0] });
+      // Fechar ciclo
+      if (ordered.length > 2 && (ordered[0].east !== ordered[ordered.length - 1].east || ordered[0].north !== ordered[ordered.length - 1].north)) {
+        ordered.push({ ...ordered[0] });
       }
       // Re-atribuir IDs
       out.length = 0;
-      for (let i = 0; i < fixed.length; i++) {
-        out.push({ id: `V${String(i + 1).padStart(3, '0')}`, north: fixed[i].north, east: fixed[i].east });
+      for (let i = 0; i < ordered.length; i++) {
+        out.push({ id: `V${String(i + 1).padStart(3, '0')}`, north: ordered[i].north, east: ordered[i].east });
       }
-      console.log('[PDFtoArcgis] [RobustFallback] Polígono reordenado e fechado automaticamente.');
+      console.log('[PDFtoArcgis] [RobustFallback] Polígono reordenado por vizinho mais próximo e fechado automaticamente.');
     }
   }
   return out;
@@ -2762,11 +2737,28 @@ saveToFolderBtn.onclick = async () => {
       } catch (err) {
         // Se o usuário cancelar, não mostrar erro
         if (err && err.name === "AbortError") return;
+        // Mensagem amigável para arquivo aberto em outro programa
+        let msg = String(err && err.message ? err.message : err);
+        if (
+          msg.includes("state cached in an interface object") ||
+          msg.includes("being used by another process") ||
+          msg.includes("acesso ao arquivo") ||
+          msg.includes("used by another process")
+        ) {
+          updateStatus("❌ Erro ao salvar: O arquivo está aberto em outro programa (ex: QGIS, Explorer, etc). Feche o arquivo e tente novamente.", "error");
+          console.error("[Salvar na pasta] Arquivo em uso por outro processo. Feche no QGIS/Explorer e tente novamente.", err);
+          return;
+        }
         // Se falhar, tenta com truncate
-        const fh = await handle.getFileHandle(name, { create: true });
-        const w = await fh.createWritable({ keepExistingData: false });
-        await w.write(data);
-        await w.close();
+        try {
+          const fh = await handle.getFileHandle(name, { create: true });
+          const w = await fh.createWritable({ keepExistingData: false });
+          await w.write(data);
+          await w.close();
+        } catch (err2) {
+          updateStatus("❌ Erro ao salvar arquivo: " + (err2 && err2.message ? err2.message : err2), "error");
+          console.error("[Salvar na pasta] Erro ao salvar arquivo:", err2);
+        }
       }
     };
 
