@@ -4,6 +4,9 @@
 let pdfjsLib = null;
 let PDFLib = null;
 
+// Referência global para o botão de instalação PWA
+let installBtn = null;
+
 // Mapa de promessas de OCR (Android)
 const ocrPromises = {};
 
@@ -367,7 +370,7 @@ function loadScript(src, cb) {
 
 document.addEventListener("DOMContentLoaded", () => {
     // Esconde o botão de instalar app se já estiver instalado (PWA/standalone)
-    const installBtn = document.getElementById('installPwaBtn');
+    installBtn = document.getElementById('installPwaBtn');
     function isAppInstalled() {
         return (
             window.matchMedia('(display-mode: standalone)').matches ||
