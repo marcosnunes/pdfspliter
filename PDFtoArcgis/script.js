@@ -1006,6 +1006,52 @@ function parseVertices(text, crsKeyInput) {
   }
   const clean = (text || "").replace(/\u00A0/g, " ").replace(/[‐‑‒–—]/g, "-");
   const out = [];
+  const classified = [];
+    // Regex para latitude/longitude (graus decimais, com ou sem sinal)
+    const rxLatLon = /([+-]?\d{1,2}(?:[.,]\d+)?)[°º]?\s*[;,]?\s*([+-]?\d{1,3}(?:[.,]\d+)?)[°º]?/g;
+    // Regex para azimute/distância (ex: "azimute 45°30'27", distância 258,85m")
+    const rxAzDist = /azimute\s*([0-9]{1,3})[°º](?:\s*([0-9]{1,2})[\'’])?(?:\s*([0-9]{1,2})[\"”])?[^\d]{0,20}dist[aâ]ncia\s*([0-9]+(?:[.,][0-9]+)?)\s*m/gi;
+    // 1. Detectar e classificar latitude/longitude
+    let latlonMatch;
+    while ((latlonMatch = rxLatLon.exec(clean)) !== null) {
+      const lat = parseFloat(latlonMatch[1].replace(',', '.'));
+      const lon = parseFloat(latlonMatch[2].replace(',', '.'));
+      if (
+        Math.abs(lat) <= 90 && Math.abs(lon) <= 180 &&
+        (Math.abs(lat) > 0.01 || Math.abs(lon) > 0.01)
+      ) {
+        const id = `LL${String(classified.length + 1).padStart(3, '0')}`;
+        classified.push({
+          id,
+          type: 'latlon',
+          lat,
+          lon,
+          raw: latlonMatch[0],
+          origem: 'latlon',
+        });
+      }
+    }
+
+    // 2. Detectar e classificar azimute/distância
+    let azdistMatch;
+    while ((azdistMatch = rxAzDist.exec(clean)) !== null) {
+      const deg = parseInt(azdistMatch[1] || '0', 10);
+      const min = parseInt(azdistMatch[2] || '0', 10);
+      const sec = parseInt(azdistMatch[3] || '0', 10);
+      const az = deg + min / 60 + sec / 3600;
+      const dist = parseFloat((azdistMatch[4] || '0').replace(',', '.'));
+      if (az > 0 && dist > 0) {
+        const id = `AZ${String(classified.length + 1).padStart(3, '0')}`;
+        classified.push({
+          id,
+          type: 'azimute_dist',
+          azimuth: az,
+          distance: dist,
+          raw: azdistMatch[0],
+          origem: 'azimute_dist',
+        });
+      }
+    }
   // Garantir fallback de crsKey
   if (!crsKey) {
     crsKey = (window._arcgis_crs_key || "SIRGAS2000_22S");
@@ -1075,6 +1121,7 @@ function parseVertices(text, crsKeyInput) {
         if (v && !processedIds.has(id)) {
           out.push(v);
           processedIds.add(id);
+          classified.push({ id, type: 'utm', north, east, raw: localMatch[0], origem: 'descContext' });
         }
       }
     }
@@ -1101,6 +1148,7 @@ function parseVertices(text, crsKeyInput) {
         if (v && !processedIds.has(id)) {
           out.push(v);
           processedIds.add(id);
+          classified.push({ id, type: 'utm', north, east, raw: globalMatch[0], origem: 'global' });
         }
       }
     }
@@ -1580,7 +1628,8 @@ function parseVertices(text, crsKeyInput) {
     }
   }
 
-  return out;
+  // Exporta ambos: lista de vértices UTM (out) e classificados (classified)
+  return { utm: out, classified };
 }
 
 /* =========================
@@ -2353,10 +2402,40 @@ async function processExtractUnified(pagesText) {
   console.log(`[PDFtoArcgis] 📄 Processando PDF completo (sem separação por ID)`);
   console.log(`[PDFtoArcgis] CRS detectado: ${projKey || "não identificado"}`);
 
-  // Extrair TODAS as coordenadas
-  let allVertices = parseVertices(fullText, projKey);
+  // Extrair e classificar TODAS as coordenadas e dados
+  let parseResult = parseVertices(fullText, projKey);
+  let allVertices = parseResult.utm;
+  let classified = parseResult.classified;
   const projInfo = detectProjectionFromText(fullText, allVertices);
-  console.log(`[PDFtoArcgis] Total de coordenadas extraídas: ${allVertices.length}`);
+  console.log(`[PDFtoArcgis] Total de coordenadas UTM extraídas: ${allVertices.length}`);
+  if (classified && classified.length) {
+    const latlonCount = classified.filter(c => c.type === 'latlon').length;
+    const azdistCount = classified.filter(c => c.type === 'azimute_dist').length;
+    console.log(`[PDFtoArcgis] Classificação extraída: ${latlonCount} lat/lon, ${azdistCount} azimute/distância`);
+    // Exibir na interface (previewTable) se possível
+    if (previewTableBody) {
+      // Limpar preview
+      previewTableBody.innerHTML = '';
+      // Adicionar UTM
+      for (const v of allVertices) {
+        const row = document.createElement('tr');
+        row.innerHTML = `<td>${v.id}</td><td>UTM</td><td>${v.north}</td><td>${v.east}</td><td></td><td></td><td></td>`;
+        previewTableBody.appendChild(row);
+      }
+      // Adicionar lat/lon
+      for (const c of classified.filter(c => c.type === 'latlon')) {
+        const row = document.createElement('tr');
+        row.innerHTML = `<td>${c.id}</td><td>Lat/Lon</td><td>${c.lat}</td><td>${c.lon}</td><td></td><td></td><td></td>`;
+        previewTableBody.appendChild(row);
+      }
+      // Adicionar azimute/distância
+      for (const c of classified.filter(c => c.type === 'azimute_dist')) {
+        const row = document.createElement('tr');
+        row.innerHTML = `<td>${c.id}</td><td>Azimute/Dist</td><td></td><td></td><td>${c.azimuth}</td><td>${c.distance}</td><td></td>`;
+        previewTableBody.appendChild(row);
+      }
+    }
+  }
 
 
   // --- UTM ZONE AUTO-DETECTION ---
