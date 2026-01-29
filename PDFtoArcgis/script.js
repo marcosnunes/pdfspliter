@@ -19,9 +19,10 @@ function openNav() {
 }
 function closeNav() { document.getElementById("mySidenav").style.width = "0"; }
 
+
 // --- PWA: Instalar App (com feedback visual) ---
 let deferredPrompt = null;
-const installBtn = document.getElementById('installPwaBtn');
+let installBtn = null;
 
 function hideInstallBtn() {
   if (installBtn) installBtn.style.display = 'none';
@@ -46,8 +47,10 @@ if (isAppInstalled()) {
 }
 
 window.addEventListener('appinstalled', hideInstallBtn);
+
 window.addEventListener('DOMContentLoaded', function() {
-    if (isAppInstalled()) hideInstallBtn();
+  installBtn = document.getElementById('installPwaBtn');
+  if (isAppInstalled()) hideInstallBtn();
 });
 
 window.addEventListener('beforeinstallprompt', (e) => {
@@ -63,40 +66,43 @@ window.addEventListener('beforeinstallprompt', (e) => {
     installBtn.textContent = 'Instalar App';
   }
 });
-if (installBtn) {
-  installBtn.addEventListener('click', async () => {
-    if (deferredPrompt) {
-      try {
-        deferredPrompt.prompt();
-        const { outcome } = await deferredPrompt.userChoice;
-        if (outcome === 'accepted') {
-          installBtn.classList.add('success');
-          installBtn.textContent = 'App instalado!';
-          setTimeout(() => {
-            installBtn.style.display = 'none';
-            installBtn.classList.remove('success');
-            installBtn.textContent = 'Instalar App';
-          }, 2000);
-        } else {
-          installBtn.classList.add('error');
-          installBtn.textContent = 'Instalação cancelada';
-          setTimeout(() => {
-            installBtn.classList.remove('error');
-            installBtn.textContent = 'Instalar App';
-          }, 2000);
-        }
-      } catch (err) {
-        installBtn.classList.add('error');
-        installBtn.textContent = 'Erro ao instalar';
-        setTimeout(() => {
-          installBtn.classList.remove('error');
-          installBtn.textContent = 'Instalar App';
-        }, 2000);
-      }
-      deferredPrompt = null;
+window.addEventListener('DOMContentLoaded', function() {
+    installBtn = document.getElementById('installPwaBtn');
+    if (installBtn) {
+        installBtn.addEventListener('click', async () => {
+            if (deferredPrompt) {
+                try {
+                    deferredPrompt.prompt();
+                    const { outcome } = await deferredPrompt.userChoice;
+                    if (outcome === 'accepted') {
+                        installBtn.classList.add('success');
+                        installBtn.textContent = 'App instalado!';
+                        setTimeout(() => {
+                            installBtn.style.display = 'none';
+                            installBtn.classList.remove('success');
+                            installBtn.textContent = 'Instalar App';
+                        }, 2000);
+                    } else {
+                        installBtn.classList.add('error');
+                        installBtn.textContent = 'Instalação cancelada';
+                        setTimeout(() => {
+                            installBtn.classList.remove('error');
+                            installBtn.textContent = 'Instalar App';
+                        }, 2000);
+                    }
+                } catch (err) {
+                    installBtn.classList.add('error');
+                    installBtn.textContent = 'Erro ao instalar';
+                    setTimeout(() => {
+                        installBtn.classList.remove('error');
+                        installBtn.textContent = 'Instalar App';
+                    }, 2000);
+                }
+                deferredPrompt = null;
+            }
+        });
     }
-  });
-}
+});
 function scrollToResults() {
   const box = document.getElementById("resultBox");
   if (box && box.style.display !== "none") box.scrollIntoView({ behavior: "smooth", block: "start" });
