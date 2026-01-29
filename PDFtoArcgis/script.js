@@ -605,9 +605,114 @@ function findSeedCandidates(fullText, parsedEN = []) {
 
     /* Wraps all logic: tries E/N; if insufficient, tries Lat/Lon; if still insufficient,
       tries to reconstruct via Azimuth/Bearing + Distance if at least one seed point exists. */
+
+  // Nova estratégia: extrair apenas o bloco do memorial descritivo
+  function extractDescriptiveBlock(text) {
+    // Padrões comuns de início e fim do memorial
+    const startPatterns = [
+      /memorial descritivo/i,
+      /descrição do perímetro/i,
+      /descrição da área/i,
+      /inicia-se no ponto/i,
+      /começa no vértice/i,
+      /inicia-se no vértice/i
+    ];
+    const endPatterns = [
+      /fecha-se o perímetro/i,
+      /fecha-se o polígono/i,
+      /abrangendo uma área/i,
+      /totalizando uma área/i,
+      /fim do perímetro/i
+    ];
+    let startIdx = -1, endIdx = -1;
+    for (const rx of startPatterns) {
+      const m = rx.exec(text);
+      if (m && (startIdx === -1 || m.index < startIdx)) startIdx = m.index;
+    }
+    for (const rx of endPatterns) {
+      const m = rx.exec(text);
+      if (m && (endIdx === -1 || m.index > endIdx)) endIdx = m.index;
+    }
+    if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
+      return text.substring(startIdx, endIdx + 200); // pega um pouco além do fim
+    }
+    // fallback: só início
+    if (startIdx !== -1) return text.substring(startIdx);
+    return null;
+  }
+
+
+  function isClosedPolygon(verts, tol = 0.5) {
+    if (!Array.isArray(verts) || verts.length < 3) return false;
+    const first = verts[0], last = verts[verts.length - 1];
+    const d = Math.hypot(last.east - first.east, last.north - first.north);
+    return d <= tol;
+  }
+
+  function areaPolygon(verts) {
+    if (!Array.isArray(verts) || verts.length < 3) return 0;
+    let area = 0;
+    for (let i = 0; i < verts.length; i++) {
+      const a = verts[i], b = verts[(i + 1) % verts.length];
+      area += a.east * b.north - b.east * a.north;
+    }
+    return Math.abs(area) / 2;
+  }
+
+  function selectBestPolygon(candidates) {
+    // Seleciona o maior polígono fechado válido
+    let best = null, bestArea = 0;
+    for (const verts of candidates) {
+      if (verts.length >= 3 && isClosedPolygon(verts)) {
+        const area = areaPolygon(verts);
+        if (area > bestArea) {
+          best = verts;
+          bestArea = area;
+        }
+      }
+    }
+    return best;
+  }
+
   function parseVerticesEnhanced(text, crsKeyInput) {
     const crsKeyDetected = (typeof getActiveProjectionKey === 'function') ? getActiveProjectionKey() : (crsKeyInput || 'SIRGAS2000_22S');
 
+    // 1) Extrair todos os conjuntos possíveis de coordenadas (E/N, Lat/Lon, X/Y)
+    let candidates = [];
+    // E/N padrão
+    if (typeof window.parseVertices === 'function' && !window.__parseVertices_isPatched) {
+      const vertsEN = window.parseVertices.call(window, text, crsKeyDetected) || [];
+      if (vertsEN.length >= 3) candidates.push(ensureSingleRing(vertsEN));
+    }
+    // Lat/Lon
+    const latlon = parseLatLonPairs(text);
+    if (latlon.length >= 3) {
+      const utmVerts = convertLatLonPairsToUtm(latlon, crsKeyDetected);
+      if (utmVerts.length >= 3) candidates.push(ensureSingleRing(utmVerts));
+    }
+    // Azimute+Distância
+    let seed = null;
+    if (candidates.length && candidates[0].length === 1) {
+      seed = { east: candidates[0][0].east, north: candidates[0][0].north };
+    }
+    if (!seed && latlon.length >= 1) {
+      const utm = convertLatLonPairsToUtm([latlon[0]], crsKeyDetected);
+      if (utm && utm.length === 1) seed = { east: utm[0].east, north: utm[0].north };
+    }
+    const segments = extractAzimuthDistanceFromText_Patch(text);
+    if (seed && segments.length >= 2) {
+      const v = buildVerticesFromAzimuths(seed, segments);
+      if (v.length >= 3) candidates.push(ensureSingleRing(v));
+    }
+
+    // Selecionar o maior polígono fechado válido
+    const best = selectBestPolygon(candidates);
+    if (best) return best;
+
+    // Fallback: tentar qualquer conjunto com 3+ pontos
+    if (candidates.length) return candidates[0];
+
+    // Fallbacks antigos
     // 1) Try the original parser (E/N), if it exists
     const hasOriginal = (typeof window.parseVertices === 'function') && !window.__parseVertices_isPatched;
     const originalRef = hasOriginal ? window.parseVertices : null;
@@ -620,60 +725,36 @@ function findSeedCandidates(fullText, parsedEN = []) {
       console.warn('[PDFtoArcgis] parseVertices (original) falhou:', e);
       vertices = [];
     }
-
-    // If we already have 3+ UTM vertices, validate and return
     if (Array.isArray(vertices) && vertices.length >= 3) {
       return ensureSingleRing(vertices);
     }
-
     // 2) Try Lat/Lon (DMS/decimal) → UTM
-    const latlon = parseLatLonPairs(text);
     if (latlon.length >= 3) {
       const utmVerts = convertLatLonPairsToUtm(latlon, crsKeyDetected);
       if (utmVerts.length >= 3) {
         return ensureSingleRing(utmVerts);
       }
     }
-
     // 3) Try to reconstruct by Azimuth + Distance
-    //    For this, we need a seed point (preferably: PP / V1) in UTM
-    //    Search for any isolated E/N as a seed point (reuse regex from original parser as fallback)
-    let seed = null;
+    let fallbackSeed = null;
     try {
-      // Use the original to see if at least one point appears
       if (Array.isArray(vertices) && vertices.length === 1) {
-        seed = { east: vertices[0].east, north: vertices[0].north };
+        fallbackSeed = { east: vertices[0].east, north: vertices[0].north };
       }
-      if (!seed) {
-
-        // Accept E/N with variation of spaces and separators
-        const rxOneEN = /\bE\s*=?\s*([0-9\.\,]{5,})\s*m?\s*(?:;|,|\s+)\s*N\s*=?\s*([0-9\.\,]{6,})\s*m?\b/i;
-        const mEN = rxOneEN.exec(fullText || "");
-        if (mEN) {
-          const east = parseFloat(normalizeNumber(mEN[1]));
-          const north = parseFloat(normalizeNumber(mEN[2]));
-          if (Number.isFinite(east) && Number.isFinite(north)) seed = { east, north, source: 'EN_text_seed' };
-        }
-
-      }
-      // If there is no UTM seed, try to get one from a single Lat/Lon
-      if (!seed && latlon.length >= 1) {
+      if (!fallbackSeed && latlon.length >= 1) {
         const utm = convertLatLonPairsToUtm([latlon[0]], crsKeyDetected);
-        if (utm && utm.length === 1) seed = { east: utm[0].east, north: utm[0].north };
+        if (utm && utm.length === 1) fallbackSeed = { east: utm[0].east, north: utm[0].north };
       }
     } catch (e) {
       console.warn('[PDFtoArcgis] seed UTM falhou:', e);
     }
-
-    const segments = extractAzimuthDistanceFromText_Patch(text);
-    if (seed && segments.length >= 2) {
-      // reconstruct vertices
-      const v = buildVerticesFromAzimuths(seed, segments);
+    const fallbackSegments = extractAzimuthDistanceFromText_Patch(text);
+    if (fallbackSeed && fallbackSegments.length >= 2) {
+      const v = buildVerticesFromAzimuths(fallbackSeed, fallbackSegments);
       if (v.length >= 3) {
         return ensureSingleRing(v);
       }
     }
-
     // 4) Last resort: if unable to build a polygon, return whatever is available (may be <3)
     return vertices || [];
   }
