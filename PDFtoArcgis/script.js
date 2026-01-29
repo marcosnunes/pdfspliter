@@ -1,13 +1,13 @@
-  // Esconde o botão de instalar app se já estiver instalado (PWA/standalone)
-  function isAppInstalled() {
-    return (
-      window.matchMedia('(display-mode: standalone)').matches ||
-      window.matchMedia('(display-mode: minimal-ui)').matches ||
-      window.matchMedia('(display-mode: fullscreen)').matches ||
-      (window.navigator.standalone === true)
-    );
-  }
-  
+// Esconde o botão de instalar app se já estiver instalado (PWA/standalone)
+function isAppInstalled() {
+  return (
+    window.matchMedia('(display-mode: standalone)').matches ||
+    window.matchMedia('(display-mode: minimal-ui)').matches ||
+    window.matchMedia('(display-mode: fullscreen)').matches ||
+    (window.navigator.standalone === true)
+  );
+}
+
 // UI: Navegação lateral e rolagem para resultados
 function openNav() {
   document.getElementById("mySidenav").style.width = "250px";
@@ -28,25 +28,25 @@ function hideInstallBtn() {
 
 // Detecta se já está instalado (standalone ou appinstalled)
 function isAppInstalled() {
-    // Checa standalone (PWA instalado) e display-mode
-    if (window.matchMedia('(display-mode: standalone)').matches) return true;
-    if (window.navigator.standalone === true) return true;
-    // Checa se já existe service worker controlando e não há prompt
-    if (window.matchMedia('(display-mode: minimal-ui)').matches) return true;
-    // iOS: verifica se está rodando como app
-    if (window.navigator && window.navigator.standalone) return true;
-    // Android Chrome: verifica se não há prompt e já está instalado
-    if (window.matchMedia('(display-mode: fullscreen)').matches) return true;
-    return false;
+  // Checa standalone (PWA instalado) e display-mode
+  if (window.matchMedia('(display-mode: standalone)').matches) return true;
+  if (window.navigator.standalone === true) return true;
+  // Checa se já existe service worker controlando e não há prompt
+  if (window.matchMedia('(display-mode: minimal-ui)').matches) return true;
+  // iOS: verifica se está rodando como app
+  if (window.navigator && window.navigator.standalone) return true;
+  // Android Chrome: verifica se não há prompt e já está instalado
+  if (window.matchMedia('(display-mode: fullscreen)').matches) return true;
+  return false;
 }
 
 if (isAppInstalled()) {
-    hideInstallBtn();
+  hideInstallBtn();
 }
 
 window.addEventListener('appinstalled', hideInstallBtn);
 
-window.addEventListener('DOMContentLoaded', function() {
+window.addEventListener('DOMContentLoaded', function () {
   installBtn = document.getElementById('installPwaBtn');
   if (isAppInstalled()) hideInstallBtn();
 });
@@ -64,42 +64,42 @@ window.addEventListener('beforeinstallprompt', (e) => {
     installBtn.textContent = 'Instalar App';
   }
 });
-window.addEventListener('DOMContentLoaded', function() {
-    installBtn = document.getElementById('installPwaBtn');
-    if (installBtn) {
-        installBtn.addEventListener('click', async () => {
-            if (deferredPrompt) {
-                try {
-                    deferredPrompt.prompt();
-                    const { outcome } = await deferredPrompt.userChoice;
-                    if (outcome === 'accepted') {
-                        installBtn.classList.add('success');
-                        installBtn.textContent = 'App instalado!';
-                        setTimeout(() => {
-                            installBtn.style.display = 'none';
-                            installBtn.classList.remove('success');
-                            installBtn.textContent = 'Instalar App';
-                        }, 2000);
-                    } else {
-                        installBtn.classList.add('error');
-                        installBtn.textContent = 'Instalação cancelada';
-                        setTimeout(() => {
-                            installBtn.classList.remove('error');
-                            installBtn.textContent = 'Instalar App';
-                        }, 2000);
-                    }
-                } catch (err) {
-                    installBtn.classList.add('error');
-                    installBtn.textContent = 'Erro ao instalar';
-                    setTimeout(() => {
-                        installBtn.classList.remove('error');
-                        installBtn.textContent = 'Instalar App';
-                    }, 2000);
-                }
-                deferredPrompt = null;
-            }
-        });
-    }
+window.addEventListener('DOMContentLoaded', function () {
+  installBtn = document.getElementById('installPwaBtn');
+  if (installBtn) {
+    installBtn.addEventListener('click', async () => {
+      if (deferredPrompt) {
+        try {
+          deferredPrompt.prompt();
+          const { outcome } = await deferredPrompt.userChoice;
+          if (outcome === 'accepted') {
+            installBtn.classList.add('success');
+            installBtn.textContent = 'App instalado!';
+            setTimeout(() => {
+              installBtn.style.display = 'none';
+              installBtn.classList.remove('success');
+              installBtn.textContent = 'Instalar App';
+            }, 2000);
+          } else {
+            installBtn.classList.add('error');
+            installBtn.textContent = 'Instalação cancelada';
+            setTimeout(() => {
+              installBtn.classList.remove('error');
+              installBtn.textContent = 'Instalar App';
+            }, 2000);
+          }
+        } catch (err) {
+          installBtn.classList.add('error');
+          installBtn.textContent = 'Erro ao instalar';
+          setTimeout(() => {
+            installBtn.classList.remove('error');
+            installBtn.textContent = 'Instalar App';
+          }, 2000);
+        }
+        deferredPrompt = null;
+      }
+    });
+  }
 });
 function scrollToResults() {
   const box = document.getElementById("resultBox");
@@ -1007,51 +1007,51 @@ function parseVertices(text, crsKeyInput) {
   const clean = (text || "").replace(/\u00A0/g, " ").replace(/[‐‑‒–—]/g, "-");
   const out = [];
   const classified = [];
-    // Regex para latitude/longitude (graus decimais, com ou sem sinal)
-    const rxLatLon = /([+-]?\d{1,2}(?:[.,]\d+)?)[°º]?\s*[;,]?\s*([+-]?\d{1,3}(?:[.,]\d+)?)[°º]?/g;
-    // Regex para azimute/distância (ex: "azimute 45°30'27", distância 258,85m")
-    const rxAzDist = /azimute\s*([0-9]{1,3})[°º](?:\s*([0-9]{1,2})[\'’])?(?:\s*([0-9]{1,2})[\"”])?[^\d]{0,20}dist[aâ]ncia\s*([0-9]+(?:[.,][0-9]+)?)\s*m/gi;
-    // 1. Detectar e classificar latitude/longitude
-    let latlonMatch;
-    while ((latlonMatch = rxLatLon.exec(clean)) !== null) {
-      const lat = parseFloat(latlonMatch[1].replace(',', '.'));
-      const lon = parseFloat(latlonMatch[2].replace(',', '.'));
-      if (
-        Math.abs(lat) <= 90 && Math.abs(lon) <= 180 &&
-        (Math.abs(lat) > 0.01 || Math.abs(lon) > 0.01)
-      ) {
-        const id = `LL${String(classified.length + 1).padStart(3, '0')}`;
-        classified.push({
-          id,
-          type: 'latlon',
-          lat,
-          lon,
-          raw: latlonMatch[0],
-          origem: 'latlon',
-        });
-      }
+  // Regex para latitude/longitude (graus decimais, com ou sem sinal)
+  const rxLatLon = /([+-]?\d{1,2}(?:[.,]\d+)?)[°º]?\s*[;,]?\s*([+-]?\d{1,3}(?:[.,]\d+)?)[°º]?/g;
+  // Regex para azimute/distância (ex: "azimute 45°30'27", distância 258,85m")
+  const rxAzDist = /azimute\s*([0-9]{1,3})[°º](?:\s*([0-9]{1,2})[\'’])?(?:\s*([0-9]{1,2})[\"”])?[^\d]{0,20}dist[aâ]ncia\s*([0-9]+(?:[.,][0-9]+)?)\s*m/gi;
+  // 1. Detectar e classificar latitude/longitude
+  let latlonMatch;
+  while ((latlonMatch = rxLatLon.exec(clean)) !== null) {
+    const lat = parseFloat(latlonMatch[1].replace(',', '.'));
+    const lon = parseFloat(latlonMatch[2].replace(',', '.'));
+    if (
+      Math.abs(lat) <= 90 && Math.abs(lon) <= 180 &&
+      (Math.abs(lat) > 0.01 || Math.abs(lon) > 0.01)
+    ) {
+      const id = `LL${String(classified.length + 1).padStart(3, '0')}`;
+      classified.push({
+        id,
+        type: 'latlon',
+        lat,
+        lon,
+        raw: latlonMatch[0],
+        origem: 'latlon',
+      });
     }
+  }
 
-    // 2. Detectar e classificar azimute/distância
-    let azdistMatch;
-    while ((azdistMatch = rxAzDist.exec(clean)) !== null) {
-      const deg = parseInt(azdistMatch[1] || '0', 10);
-      const min = parseInt(azdistMatch[2] || '0', 10);
-      const sec = parseInt(azdistMatch[3] || '0', 10);
-      const az = deg + min / 60 + sec / 3600;
-      const dist = parseFloat((azdistMatch[4] || '0').replace(',', '.'));
-      if (az > 0 && dist > 0) {
-        const id = `AZ${String(classified.length + 1).padStart(3, '0')}`;
-        classified.push({
-          id,
-          type: 'azimute_dist',
-          azimuth: az,
-          distance: dist,
-          raw: azdistMatch[0],
-          origem: 'azimute_dist',
-        });
-      }
+  // 2. Detectar e classificar azimute/distância
+  let azdistMatch;
+  while ((azdistMatch = rxAzDist.exec(clean)) !== null) {
+    const deg = parseInt(azdistMatch[1] || '0', 10);
+    const min = parseInt(azdistMatch[2] || '0', 10);
+    const sec = parseInt(azdistMatch[3] || '0', 10);
+    const az = deg + min / 60 + sec / 3600;
+    const dist = parseFloat((azdistMatch[4] || '0').replace(',', '.'));
+    if (az > 0 && dist > 0) {
+      const id = `AZ${String(classified.length + 1).padStart(3, '0')}`;
+      classified.push({
+        id,
+        type: 'azimute_dist',
+        azimuth: az,
+        distance: dist,
+        raw: azdistMatch[0],
+        origem: 'azimute_dist',
+      });
     }
+  }
   // Garantir fallback de crsKey
   if (!crsKey) {
     crsKey = (window._arcgis_crs_key || "SIRGAS2000_22S");
