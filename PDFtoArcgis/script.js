@@ -1,4 +1,62 @@
-// UI: Navegação lateral e rolagem para resultados
+// Selects either selectable text or OCR per page
+async function getBestPageText(pdfPage, pageNum, pdfjsLib, ocrCanvasFn) {
+  // 1. Extract selectable text
+  let selectableText = "";
+  try {
+    const textContent = await pdfPage.getTextContent();
+    selectableText = buildPageTextWithLines(textContent);
+  } catch (e) {
+    selectableText = "";
+  }
+
+  // 2. Heuristic: is text sufficient? (min. 30 chars and coordinate pattern)
+  const hasCoords = /\b(E|X)\s*=?\s*[0-9]{4,}/i.test(selectableText) && /\b(N|Y)\s*=?\s*[0-9]{5,}/i.test(selectableText);
+  const isTextSufficient = (selectableText && selectableText.replace(/\s+/g, "").length > 30 && hasCoords);
+
+  if (isTextSufficient) {
+    displayLogMessage(`[LogUI] Página ${pageNum}: Usando texto selecionável (PDF.js)`);
+    return { text: selectableText, method: "selectable" };
+  }
+
+  // 3. Fallback: OCR (Android/Tesseract.js)
+  let ocrText = "";
+  try {
+    if (window.Android && window.Android.performOCR) {
+      // Android bridge
+      ocrText = await window.Android.performOCR(pageNum);
+    } else if (ocrCanvasFn) {
+      // Browser: render canvas and OCR
+      const canvas = await ocrCanvasFn(pdfPage);
+      ocrText = await getOcrTextFromCanvas(canvas);
+    }
+  } catch (e) {
+    ocrText = "";
+  }
+  const hasOcrCoords = /\b(E|X)\s*=?\s*[0-9]{4,}/i.test(ocrText) && /\b(N|Y)\s*=?\s*[0-9]{5,}/i.test(ocrText);
+  const isOcrSufficient = (ocrText && ocrText.replace(/\s+/g, "").length > 30 && hasOcrCoords);
+
+  if (isOcrSufficient) {
+    displayLogMessage(`[LogUI] Página ${pageNum}: Usando OCR (${window.Android ? "Android" : "Tesseract.js"})`);
+    return { text: ocrText, method: "ocr" };
+  }
+
+  // 4. If both fail, return the longest available text
+  const bestText = (ocrText.length > selectableText.length) ? ocrText : selectableText;
+  displayLogMessage(`[LogUI] Página ${pageNum}: Texto insuficiente, usando o mais longo disponível.`);
+  return { text: bestText, method: (ocrText.length > selectableText.length ? "ocr_fallback" : "selectable_fallback") };
+}
+
+// Render page to canvas for OCR (browser)
+async function renderPageToCanvas(pdfPage) {
+  const viewport = pdfPage.getViewport({ scale: 2.0 });
+  const canvas = document.createElement("canvas");
+  canvas.width = viewport.width;
+  canvas.height = viewport.height;
+  const ctx = canvas.getContext("2d");
+  await pdfPage.render({ canvasContext: ctx, viewport }).promise;
+  return canvas;
+}
+// UI: Sidenav and scroll to results
 function openNav() { document.getElementById("mySidenav").style.width = "250px"; }
 function closeNav() { document.getElementById("mySidenav").style.width = "0"; }
 function scrollToResults() {
@@ -6,11 +64,11 @@ function scrollToResults() {
   if (box && box.style.display !== "none") box.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
-// Configuração do PDF.js para uso local/Android
+// PDF.js worker for local/Android
 pdfjsLib.GlobalWorkerOptions.workerSrc =
   "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js";
 
-// Elementos principais da UI e variáveis globais
+// UI elements and global variables
 const fileInput = document.getElementById("fileInput");
 const statusDiv = document.getElementById("status");
 const progressBar = document.getElementById("progressBar");
@@ -36,11 +94,11 @@ let fileNameBase = "coordenadas_extracao";
 let pdfOrigemNomeBase = "";
 let pdfOrigemSrc = "";
 
-// Resultados por matrícula (PDF unificado): [{docId,pages,projectionKey,manualProjectionKey,projectionInfo,vertices,warnings}]
+// Results per document: [{docId, pages, projectionKey, ...}]
 let documentsResults = [];
 let activeDocIndex = -1;
 
-// Projeções suportadas (WKT)
+// Supported projections
 const PROJECTIONS = {
   SIRGAS2000_25S: {
     name: "SIRGAS 2000 / UTM zone 25S",
@@ -85,7 +143,7 @@ const PROJECTIONS = {
 
   LOCAL_M: {
     name: "Local Engineering (metres)",
-    epsg: "", // sem EPSG
+    epsg: "", // no EPSG
     wkt: 'LOCAL_CS["PDF2ArcGIS_Local_M",UNIT["metre",1.0]]'
   }
 
@@ -147,19 +205,19 @@ function findSeedCandidates(fullText, parsedEN = []) {
 }
 
 /* =======================================================================
-   PATCH: Extração robusta (E/N, Lat/Lon, Rumo/Az + Dist) → UTM (SIRGAS 2000)
-   Objetivo:
-   - Reconhecer coordenadas em E/N, Latitude/Longitude (DMS e decimal),
-     e também apenas “Rumo/Azimute + Distância”, reconstruindo os vértices.
-   - Converter tudo para UTM (SIRGAS 2000, fuso correto).
-   - Manter uma única geometria por documento (sem multi-polígonos) e
-     compatível com OCR (Tesseract) e extração direta.
-   Integrações existentes que este patch usa/estende:
+   PATCH: Robust extraction (E/N, Lat/Lon, Azimuth+Distance) → UTM (SIRGAS 2000)
+   Purpose:
+   - Recognize coordinates in E/N, Latitude/Longitude (DMS and decimal),
+     and also "Azimuth + Distance" only, reconstructing vertices.
+   - Convert everything to UTM (SIRGAS 2000, correct zone).
+   - Keep a single geometry per document (no multipolygons),
+     compatible with OCR (Tesseract) and direct extraction.
+   Integrations this patch uses/extends:
    - detectProjectionFromText, inferCrsByCoordinates, PROJECTIONS, validatePolygonTopology,
-     calcularAzimute, calcularDistancia, documentsResults, getActiveProjectionKey, etc.  [1](https://copel0-my.sharepoint.com/personal/marcos_lindolpho_externo_copel_com/Documents/Arquivos%20de%20Microsoft%20Copilot%20Chat/script.js)
+     calcularAzimute, calcularDistancia, documentsResults, getActiveProjectionKey, etc.
    ======================================================================= */
 
-/* ---------- Utilidades GEO/Ângulo ---------- */
+/* ---------- GEO/Angle Utilities ---------- */
 (function () {
   const DEG2RAD = Math.PI / 180;
   const RAD2DEG = 180 / Math.PI;
@@ -167,7 +225,7 @@ function findSeedCandidates(fullText, parsedEN = []) {
   function toRadians(deg) { return deg * DEG2RAD; }
   function toDegrees(rad) { return rad * RAD2DEG; }
 
-  /* DMS → decimal. hemisphere: 'N','S','E','W' OU sinal explícito */
+  /* DMS → decimal. hemisphere: 'N','S','E','W' or explicit sign */
   function dmsToDecimal(deg, min = 0, sec = 0, hemisphere = null) {
     let sign = 1;
     if (typeof deg === 'string') deg = deg.replace(',', '.');
@@ -188,14 +246,14 @@ function findSeedCandidates(fullText, parsedEN = []) {
     return sign * val;
   }
 
-  /* Converte lat/lon (graus) → UTM usando proj4 quando disponível; se não, retorna null */
+  /* Convert lat/lon (degrees) → UTM using proj4 if available; else return null */
   function latLonToUtm(lat, lon, targetProjectionKey) {
     try {
       const zone = getUtmZoneFromLon(lon);
       const key = targetProjectionKey || `SIRGAS2000_${zone}S`;
       const wkt = PROJECTIONS[key]?.wkt || null;
       if (typeof proj4 === 'function' && wkt) {
-        // proj4 aceita WKT? Em muitos builds, usa proj string/epsg. Vamos usar EPSG quando possível.
+        // proj4 accepts WKT? In many builds, uses proj string/epsg. Prefer EPSG when possible.
         const def = PROJECTIONS[key].epsg || wkt;
         const p = proj4('EPSG:4326', def, [lon, lat]);
         return { east: p[0], north: p[1], projectionKey: key };
@@ -207,13 +265,13 @@ function findSeedCandidates(fullText, parsedEN = []) {
   }
 
   function getUtmZoneFromLon(lon) {
-    // Zona UTM padrão
+    // Default UTM zone
     return Math.floor((lon + 180) / 6) + 1;
   }
 
-  /* ---------- Reconstrução por Azimute/Rumo + Distância ---------- */
+  /* ---------- Reconstruction by Azimuth/Bearing + Distance ---------- */
 
-  // Normaliza texto numérico tolerante a OCR (reutiliza se existir no script)
+  // Normalize numeric text tolerant to OCR errors (reuse if exists in script)
   const _normalizeNumber =
     (typeof normalizeNumber === 'function')
       ? normalizeNumber
@@ -233,7 +291,7 @@ function findSeedCandidates(fullText, parsedEN = []) {
         return v;
       };
 
-  /* ---------- Extração de Azimute/Distância (sentença + proximidade) ---------- */
+  /* ---------- Azimuth/Distance Extraction (sentence + proximity) ---------- */
   function extractAzimuthDistanceFromText_Patch(text) {
     const out = [];
 
@@ -357,8 +415,8 @@ function findSeedCandidates(fullText, parsedEN = []) {
   })();
 
 
-  /* Dado um ponto semente (E/N) e uma lista de segmentos {azimuth, distance},
-     reconstrói vértices sucessivos (azimute medido a partir do Norte, sentido horário).  */
+    /* Given a seed point (E/N) and a list of segments {azimuth, distance},
+      reconstructs successive vertices (azimuth measured from North, clockwise). */
   function buildVerticesFromAzimuths(seedEN, segments) {
     const verts = [];
     if (!seedEN || !Number.isFinite(seedEN.east) || !Number.isFinite(seedEN.north)) return verts;
@@ -383,7 +441,7 @@ function findSeedCandidates(fullText, parsedEN = []) {
     return verts;
   }
 
-  /* ---------- Extração de Latitude/Longitude (DMS e decimal, OCR-tolerante) ---------- */
+  /* ---------- Extraction of Latitude/Longitude (DMS and decimal, OCR-tolerant) ---------- */
   function parseLatLonPairs(text) {
     const found = [];
 
@@ -393,28 +451,28 @@ function findSeedCandidates(fullText, parsedEN = []) {
       .replace(/[,;]/g, ',')
       .replace(/\s+/g, ' ');
 
-    // Padrão decimal com sinais e separadores mistas (lon, lat)
+    // Decimal pattern with mixed signs and separators (lon, lat)
     const rxDecLoose = /(-?\d{1,3}[.,]\d+)[^0-9\-+]{0,20}(-?\d{1,2}[.,]\d+)/g;
 
-    // DMS mais permissivo (°, ', " opcionais podem virar caracteres parecidos no OCR)
+    // More permissive DMS (°, ', " optional, may be replaced by similar characters in OCR)
     const rxDmsLoose = /(-?\d{1,3})\D{0,3}(\d{1,2})\D{0,3}(\d{1,2}(?:[.,]\d+)?)[^\w]{0,10}([NnSsWwOoLl])/g;
 
-    // 1) Linha SIGEF: "Longitude -50°43'12,738" ... "Latitude -24°04'28,579" (ordem Lon, Lat)
+    // 1) SIGEF line: "Longitude -50°43'12,738" ... "Latitude -24°04'28,579" (order Lon, Lat)
     const rxSigefRow = /\b(?:lon(?:gitude)?)[^\d\-+]*([\-+]?\d{1,3})[°º]?\s*(\d{1,2})[’'′]?\s*(\d{1,2}(?:[\.,]\d+)?)["”″]?\s+.*?\b(?:lat(?:itude)?)[^\d\-+]*([\-+]?\d{1,2})[°º]?\s*(\d{1,2})[’'′]?\s*(\d{1,2}(?:[\.,]\d+)?)["”″]?/gi;
 
-    // 2) DMS “solto” com hemisfério explícito: 24°04'28,579" S ; 50°43'12,738" W (ou O/L)
+    // 2) Loose DMS with explicit hemisphere: 24°04'28,579" S ; 50°43'12,738" W (or O/L)
     const rxDmsHemi = /([\-+]?\d{1,3})[°º]\s*(\d{1,2})[’'′]?\s*(\d{1,2}(?:[\.,]\d+)?)["”″]?\s*([NnSsEeWwOoLl])/g;
 
-    // 3) Decimais nomeados "Latitude: -24.0 ... Longitude: -50.0"
+    // 3) Named decimals "Latitude: -24.0 ... Longitude: -50.0"
     const rxDecNamed = /\b(?:latitude)\s*[:=]?\s*([\-+]?\d{1,2}(?:[.,]\d+)?)[°º]?\b.*?\b(?:longitude)\s*[:=]?\s*([\-+]?\d{1,3}(?:[.,]\d+)?)[°º]?\b/gi;
 
-    // 4) Decimais com rótulos "Lat ... Lon ..."
+    // 4) Decimals with labels "Lat ... Lon ..."
     const rxDecPair = /\b(?:lat(?:itude)?)[^\d\-+]*([\-+]?\d{1,2}(?:[.,]\d+)?)\b[^\d\-+]+(?:lon(?:gitude)?)[^\d\-+]*([\-+]?\d{1,3}(?:[.,]\d+)?)\b/gi;
 
-    // 5) DMS pareado (sem palavras) na ordem "Lon , Lat"
+    // 5) Paired DMS (no words) in order "Lon , Lat"
     const rxDmsLonLat = /([\-+]?\d{1,3})[°º]\s*(\d{1,2})[’'′]?\s*(\d{1,2}(?:[\.,]\d+)?)["”″]?\s+[,\s;]+\s*([\-+]?\d{1,2})[°º]\s*(\d{1,2})[’'′]?\s*(\d{1,2}(?:[\.,]\d+)?)["”″]?/gi;
 
-    // 6) NOVO — DMS sem símbolos (OCR perdeu ° ' "): "24 04 28,579 S ... 50 43 12,738 W"
+    // 6) NEW — DMS without symbols (OCR lost ° ' "): "24 04 28,579 S ... 50 43 12,738 W"
     const rxDmsNoMarks = /([\-+]?\d{1,3})\s+(\d{1,2})\s+(\d{1,2}(?:[.,]\d{1,3})?)\s*([NnSs])[^0-9\-+]+([\-+]?\d{1,3})\s+(\d{1,2})\s+(\d{1,2}(?:[.,]\d{1,3})?)\s*([EeWwOoLl])/g;
 
     // (1) SIGEF
@@ -424,28 +482,28 @@ function findSeedCandidates(fullText, parsedEN = []) {
       if (Number.isFinite(lat) && Number.isFinite(lon)) found.push({ lat, lon });
     }
 
-    // (3) Decimais nomeados
+    // (3) Named decimals
     let m3; while ((m3 = rxDecNamed.exec(s)) !== null) {
       const lat = parseFloat(_normalizeNumber(m3[1]));
       const lon = parseFloat(_normalizeNumber(m3[2]));
       if (Number.isFinite(lat) && Number.isFinite(lon)) found.push({ lat, lon });
     }
 
-    // (4) Decimais com rótulos
+    // (4) Decimals with labels
     let m4; while ((m4 = rxDecPair.exec(s)) !== null) {
       const lat = parseFloat(_normalizeNumber(m4[1]));
       const lon = parseFloat(_normalizeNumber(m4[2]));
       if (Number.isFinite(lat) && Number.isFinite(lon)) found.push({ lat, lon });
     }
 
-    // (5) DMS pareado (Lon, Lat)
+    // (5) Paired DMS (Lon, Lat)
     let m5; while ((m5 = rxDmsLonLat.exec(s)) !== null) {
       const lon = dmsToDecimal(m5[1], m5[2], m5[3], 'W');
       const lat = dmsToDecimal(m5[4], m5[5], m5[6], 'S');
       if (Number.isFinite(lat) && Number.isFinite(lon)) found.push({ lat, lon });
     }
 
-    // (2) DMS “solto” + (6) DMS sem símbolos — emparelhamento por proximidade
+    // (2) Loose DMS + (6) DMS without symbols — pair by proximity
     const dmsHits = [];
     let m2; while ((m2 = rxDmsHemi.exec(s)) !== null) {
       const val = dmsToDecimal(m2[1], m2[2], m2[3], (m2[4] || '').toUpperCase());
@@ -453,16 +511,16 @@ function findSeedCandidates(fullText, parsedEN = []) {
       dmsHits.push({ isLat, val, idx: m2.index });
     }
     let m6; while ((m6 = rxDmsNoMarks.exec(s)) !== null) {
-      // lat blocos 1..4 / lon blocos 5..8 (ajuste O/L → W/E)
+      // lat blocks 1..4 / lon blocks 5..8 (adjust O/L → W/E)
       let lat = dmsToDecimal(m6[1], m6[2], m6[3], m6[4]);
       let lon = dmsToDecimal(m6[5], m6[6], m6[7], m6[8]);
       const hemEW = String(m6[8] || '').toUpperCase();
-      if (hemEW === 'O') lon = -Math.abs(Math.abs(lon));
-      if (hemEW === 'L') lon = Math.abs(Math.abs(lon));
+      if (hemEW === 'O') lon = -Math.abs(Math.abs(lon)); // 'O' (Oeste) means West
+      if (hemEW === 'L') lon = Math.abs(Math.abs(lon));  // 'L' (Leste) means East
       if (Number.isFinite(lat) && Number.isFinite(lon)) found.push({ lat, lon });
     }
 
-    // Emparelhamento dos DMS "soltos"
+    // Pairing loose DMS
     dmsHits.sort((a, b) => a.idx - b.idx);
     for (let i = 0; i < dmsHits.length - 1; i++) {
       const a = dmsHits[i], b = dmsHits[i + 1];
@@ -471,7 +529,7 @@ function findSeedCandidates(fullText, parsedEN = []) {
         const lon = a.isLat ? b.val : a.val;
         if (Number.isFinite(lat) && Number.isFinite(lon)) {
           found.push({ lat, lon });
-          i++; // pula o vizinho pareado
+          i++; // skip the paired neighbor
         }
       }
     }
@@ -480,11 +538,11 @@ function findSeedCandidates(fullText, parsedEN = []) {
   }
 
 
-  /* Converte um conjunto de pares Lat/Lon para UTM (SIRGAS2000_fusoS).
-     Se o fuso não for explícito, infere a partir da longitude média. */
+    /* Converts a set of Lat/Lon pairs to UTM (SIRGAS2000_zoneS).
+      If the zone is not explicit, infers from the mean longitude. */
   function convertLatLonPairsToUtm(latlonList, projectionKeyHint) {
     if (!Array.isArray(latlonList) || latlonList.length === 0) return [];
-    // Se vier um hint “WGS84”, mapeia para SIRGAS 2000 zona pela lon média.  [1](https://copel0-my.sharepoint.com/personal/marcos_lindolpho_externo_copel_com/Documents/Arquivos%20de%20Microsoft%20Copilot%20Chat/script.js)
+    // If a "WGS84" hint is given, map to SIRGAS 2000 zone by mean longitude.
     let targetKey = projectionKeyHint;
     if (!targetKey || targetKey === 'WGS84') {
       const meanLon = latlonList.reduce((s, p) => s + p.lon, 0) / latlonList.length;
@@ -501,22 +559,22 @@ function findSeedCandidates(fullText, parsedEN = []) {
     return out;
   }
 
-  /* ---------- Montagem robusta de vértices a partir do texto ---------- */
+  /* ---------- Robust assembly of vertices from text ---------- */
 
   function ensureSingleRing(vertices) {
-    // Garante apenas 1 anel “principal” (maior área) por documento.  [1](https://copel0-my.sharepoint.com/personal/marcos_lindolpho_externo_copel_com/Documents/Arquivos%20de%20Microsoft%20Copilot%20Chat/script.js)
+    // Ensures only one "main" ring (largest area) per document.
     if (!Array.isArray(vertices) || vertices.length < 3) return vertices;
-    // Aqui assumimos vertices como um único anel; se houver repetição do primeiro no fim, mantemos.
-    // Se em algum fluxo anterior vierem múltiplos anéis concatenados, esta função deveria separá-los.
-    // Por simplicidade (e para não quebrar sua UI), apenas retorna como está.
+    // Here we assume vertices as a single ring; if the first is repeated at the end, keep it.
+    // If previous flows bring multiple concatenated rings, this function should separate them.
+    // For simplicity (and to avoid breaking the UI), just return as is.
     return vertices;
   }
 
-  // Novo: X/Y → tratar como UTM (X≈E, Y≈N) quando houver contexto de UTM/datum
+  // New: X/Y → treat as UTM (X≈E, Y≈N) when UTM/datum context is present
   function parseXyPairs(text) {
     const out = [];
     const s = (text || "").replace(/\u00A0/g, ' ').replace(/\s+/g, ' ');
-    // X=..., Y=... (ordem livre). Ex.: "X=693.718,072 ; Y=7.186.725,466"
+    // X=..., Y=... (any order). Ex.: "X=693.718,072 ; Y=7.186.725,466"
     const rxXY = /(X)\s*=?\s*([0-9\.,]{5,})\s*(?:m)?[^A-Za-z0-9]{0,10}(Y)\s*=?\s*([0-9\.,]{6,})\s*(?:m)?/gi;
     const rxYX = /(Y)\s*=?\s*([0-9\.,]{6,})\s*(?:m)?[^A-Za-z0-9]{0,10}(X)\s*=?\s*([0-9\.,]{5,})\s*(?:m)?/gi;
     const asNum = v => parseFloat(String(v).replace(/\./g, '').replace(',', '.'));
@@ -533,12 +591,12 @@ function findSeedCandidates(fullText, parsedEN = []) {
   }
 
 
-  /* Empacota toda a lógica: tenta E/N; se insuficiente, tenta Lat/Lon; se ainda insuficiente,
-     tenta reconstruir via Azimute/Rumo + Distância se houver ao menos 1 ponto semente. */
+    /* Wraps all logic: tries E/N; if insufficient, tries Lat/Lon; if still insufficient,
+      tries to reconstruct via Azimuth/Bearing + Distance if at least one seed point exists. */
   function parseVerticesEnhanced(text, crsKeyInput) {
     const crsKeyDetected = (typeof getActiveProjectionKey === 'function') ? getActiveProjectionKey() : (crsKeyInput || 'SIRGAS2000_22S');
 
-    // 1) Tentar o parser original (E/N), se existir
+    // 1) Try the original parser (E/N), if it exists
     const hasOriginal = (typeof window.parseVertices === 'function') && !window.__parseVertices_isPatched;
     const originalRef = hasOriginal ? window.parseVertices : null;
     let vertices = [];
@@ -551,12 +609,12 @@ function findSeedCandidates(fullText, parsedEN = []) {
       vertices = [];
     }
 
-    // Se já temos 3+ vértices UTM, validamos e devolvemos
+    // If we already have 3+ UTM vertices, validate and return
     if (Array.isArray(vertices) && vertices.length >= 3) {
       return ensureSingleRing(vertices);
     }
 
-    // 2) Tentar Lat/Lon (DMS/decimal) → UTM
+    // 2) Try Lat/Lon (DMS/decimal) → UTM
     const latlon = parseLatLonPairs(text);
     if (latlon.length >= 3) {
       const utmVerts = convertLatLonPairsToUtm(latlon, crsKeyDetected);
@@ -565,18 +623,18 @@ function findSeedCandidates(fullText, parsedEN = []) {
       }
     }
 
-    // 3) Tentar reconstruir por Azimute + Distância
-    //    Para isso, precisamos de um ponto semente (preferência: PP / V1) em UTM
-    //    Buscar algum E/N isolado para ponto semente (reaproveitando regex do parser original via fallback)
+    // 3) Try to reconstruct by Azimuth + Distance
+    //    For this, we need a seed point (preferably: PP / V1) in UTM
+    //    Search for any isolated E/N as a seed point (reuse regex from original parser as fallback)
     let seed = null;
     try {
-      // Usa o original para ver se ao menos um ponto aparece
+      // Use the original to see if at least one point appears
       if (Array.isArray(vertices) && vertices.length === 1) {
         seed = { east: vertices[0].east, north: vertices[0].north };
       }
       if (!seed) {
 
-        // Aceitar E/N com variação de espaços e separadores
+        // Accept E/N with variation of spaces and separators
         const rxOneEN = /\bE\s*=?\s*([0-9\.\,]{5,})\s*m?\s*(?:;|,|\s+)\s*N\s*=?\s*([0-9\.\,]{6,})\s*m?\b/i;
         const mEN = rxOneEN.exec(fullText || "");
         if (mEN) {
@@ -586,7 +644,7 @@ function findSeedCandidates(fullText, parsedEN = []) {
         }
 
       }
-      // Se não há semente em UTM, tentar obter uma de Lat/Lon única
+      // If there is no UTM seed, try to get one from a single Lat/Lon
       if (!seed && latlon.length >= 1) {
         const utm = convertLatLonPairsToUtm([latlon[0]], crsKeyDetected);
         if (utm && utm.length === 1) seed = { east: utm[0].east, north: utm[0].north };
@@ -597,23 +655,23 @@ function findSeedCandidates(fullText, parsedEN = []) {
 
     const segments = extractAzimuthDistanceFromText_Patch(text);
     if (seed && segments.length >= 2) {
-      // reconstrói vértices
+      // reconstruct vertices
       const v = buildVerticesFromAzimuths(seed, segments);
       if (v.length >= 3) {
         return ensureSingleRing(v);
       }
     }
 
-    // 4) Último recurso: se não foi possível montar um polígono, retornar o que houver (pode ser <3)
+    // 4) Last resort: if unable to build a polygon, return whatever is available (may be <3)
     return vertices || [];
   }
 
-  /* ---------- PATCH de integração no script existente ---------- */
+  /* ---------- Integration PATCH into the existing script ---------- */
 
-  // Guardar referência do parseVertices original (se existir) e substituir
+  // Save reference to the original parseVertices (if it exists) and replace
   const __old_parseVertices = (typeof window.parseVertices === 'function') ? window.parseVertices : null;
 
-  // Marcador para evitar patch recursivo/duplo
+  // Marker to avoid recursive/double patch
   Object.defineProperty(window, '__parseVertices_isPatched', {
     value: true, writable: false, enumerable: false, configurable: false
   });
@@ -633,7 +691,7 @@ function findSeedCandidates(fullText, parsedEN = []) {
     }
   };
 
-  // Expor helpers úteis (opcional)
+  // Expose useful helpers (optional)
   window.__pdf2gis_patch = {
     parseLatLonPairs,
     convertLatLonPairsToUtm,
@@ -806,7 +864,7 @@ function findSeedCandidates(fullText, parsedEN = []) {
   };
 })();
 
-// Helpers de status e normalização
+// Status and normalization helpers
 function updateStatus(msg, type) {
   statusDiv.style.display = "block";
   statusDiv.innerText = msg;
@@ -823,34 +881,34 @@ function sanitizeFileName(name) {
 function normalizeNumber(raw) {
   if (!raw) return raw;
   let v = String(raw);
-  v = v.replace(/\u00A0/g, " ").replace(/[\s\t]+/g, "");  // Remove espaços e tabs em branco
-  v = v.replace(/[Oo]/g, "0");  // Corrige O por 0
-  v = v.replace(/[lI]/g, "1");  // Corrige l/I por 1
+  v = v.replace(/\u00A0/g, " ").replace(/[\s\t]+/g, "");  // Remove spaces and tabs
+  v = v.replace(/[Oo]/g, "0");  // Fix O mistaken for 0
+  v = v.replace(/[lI]/g, "1");  // Fix l/I mistaken for 1
 
-  // Normaliza separadores decimais (lógica tolerante a OCR)
+  // Normalize decimal separators (OCR-tolerant logic)
   if (v.includes(",") && !v.includes(".")) {
     v = v.replace(",", ".");  // "1234,56" -> "1234.56"
   } else if (v.includes(",") && v.includes(".")) {
-    // "1.234,56" (formato europeu) -> "1234.56"
+    // "1.234,56" (European format) -> "1234.56"
     const lastCommaIdx = v.lastIndexOf(",");
     const lastDotIdx = v.lastIndexOf(".");
     if (lastCommaIdx > lastDotIdx) {
       v = v.replace(/\./g, "").replace(",", ".");
     } else {
-      v = v.replace(/,/g, "");  // Remover vírgula se for separador de milhares
+      v = v.replace(/,/g, "");  // Remove comma if it's a thousands separator
     }
   }
 
   return v;
 }
 
-// Corrige valores de coordenadas fora do intervalo esperado (tolerância a erros de OCR)
+// Fix coordinate values outside expected range (tolerant to OCR errors)
 function autoScaleCoordinate(value, expectedMin, expectedMax) {
   if (Number.isNaN(value)) return NaN;
   if (value >= expectedMin && value <= expectedMax) return value;
 
   if (value < expectedMin && value > 0) {
-    // Número muito pequeno - multiplicar
+    // Value too small - try multiplying
     let scaled = value;
     for (let power = 1; power <= 4; power++) {
       scaled = value * Math.pow(10, power);
@@ -862,10 +920,10 @@ function autoScaleCoordinate(value, expectedMin, expectedMax) {
   }
 
   if (value > expectedMax && value > 0) {
-    // Número muito grande - tentar dividir
+    // Value too large - try dividing
     let scaled = value;
 
-    // PRIMEIRO: Testar divisão por 1000 (mais comum para OCR concatenado)
+    // FIRST: Try dividing by 1000 (common for concatenated OCR)
     for (let power = 1; power <= 7; power++) {
       scaled = value / Math.pow(10, power);
       if (scaled >= expectedMin && scaled <= expectedMax) {
@@ -875,10 +933,10 @@ function autoScaleCoordinate(value, expectedMin, expectedMax) {
     }
   }
 
-  return NaN; // Não conseguiu escalar
+  return NaN; // Could not scale
 }
 
-// Cálculos rápidos para exibição (distância/azimute)
+// Quick calculations for display (distance/azimuth)
 function calcularDistancia(p1, p2) {
   return Math.sqrt(Math.pow(p2.east - p1.east, 2) + Math.pow(p2.north - p1.north, 2));
 }
@@ -890,9 +948,9 @@ function calcularAzimute(p1, p2) {
   return az < 0 ? az + 360 : az;
 }
 
-// Geodésia profissional: Vincenty e validação topológica
+// Professional geodesy: Vincenty and topological validation
 
-// Parâmetros elipsoidais por CRS
+// Ellipsoid parameters by CRS
 const ELLIPSOID_PARAMS = {
   "SIRGAS2000_21S": { a: 6378137.0, f: 1 / 298.257222101, name: "WGS84/GRS1980" },
   "SIRGAS2000_22S": { a: 6378137.0, f: 1 / 298.257222101, name: "WGS84/GRS1980" },
@@ -904,17 +962,17 @@ const ELLIPSOID_PARAMS = {
 };
 
 /**
- * Calcular área de polígono via Shoelace (Gauss Area Formula)
- * Retorna área em m² e direção (positivo=CCW, negativo=CW)
+ * Calculate polygon area using Shoelace (Gauss Area Formula)
+ * Returns area in m² and direction (positive=CCW, negative=CW)
  */
 /**
- * Reordena vértices em sequência CCW correta usando centroide
- * Soluciona problema de auto-intersecção quando vértices estão fora de ordem
+ * Reorder vertices in correct CCW sequence using centroid
+ * Solves self-intersection when vertices are out of order
  */
 function orderVerticesCCW(vertices) {
   if (vertices.length < 3) return vertices;
 
-  // Calcular centroide
+  // Calculate centroid
   let centerN = 0, centerE = 0;
   for (const v of vertices) {
     centerN += v.north;
@@ -925,7 +983,7 @@ function orderVerticesCCW(vertices) {
 
   console.log(`[PDFtoArcgis] 📍 Centroide calculado: N=${centerN.toFixed(2)}, E=${centerE.toFixed(2)}`);
 
-  // Ordenar por ângulo polar (CCW a partir do eixo E)
+  // Sort by polar angle (CCW from E axis)
   const ordered = vertices.map(v => {
     const angle = Math.atan2(v.north - centerN, v.east - centerE);
     return { ...v, angle };
@@ -949,14 +1007,14 @@ function calcularAreaShoelace(vertices) {
   const area = Math.abs(signed) / 2;
   const isCCW = signed > 0;
 
-  // Validar se área é absurda
-  // Intervalo razoável para lotes: 100 m² a 100 km² (1e8 m²)
-  // Muito acima disso indica erro de parsing
+  // Validate if area is absurd
+  // Reasonable range for lots: 100 m² to 100 km² (1e8 m²)
+  // Much above this indicates parsing error
   let warning = null;
   if (area > 1e8) {
-    warning = `⚠️ Área absurda: ${(area / 1e4).toFixed(1)} ha (${area.toExponential(2)} m²) - Possível erro de coordenadas`;
+    warning = `⚠️ Absurd area: ${(area / 1e4).toFixed(1)} ha (${area.toExponential(2)} m²) - Possible coordinate error`;
   } else if (area < 100) {
-    warning = `⚠️ Área muito pequena: ${area.toFixed(0)} m² - Polígono microscópico`;
+    warning = `⚠️ Very small area: ${area.toFixed(0)} m² - Microscopic polygon`;
   }
 
   if (warning) {
@@ -967,7 +1025,7 @@ function calcularAreaShoelace(vertices) {
 }
 
 /**
- * Verificar se polígono está fechado (primeiro e último vértices próximos)
+ * Check if polygon is closed (first and last vertices are close)
  */
 function isPolygonClosed(vertices, tolerance = 0.5) {
   if (!vertices || vertices.length < 3) return false;
@@ -983,19 +1041,19 @@ function isPolygonClosed(vertices, tolerance = 0.5) {
   return dist <= tolerance;
 }
 
-// Detecta auto-intersecções em polígonos (retorna pares de índices)
+// Detect self-intersections in polygons (returns pairs of indices)
 function detectPolygonSelfIntersections(vertices) {
   const intersections = [];
 
   if (vertices.length < 4) return intersections;
 
-  // Helper: verifica se dois segmentos se cruzam
+  // Helper: checks if two segments intersect
   function segmentsIntersect(p1, p2, p3, p4) {
     const ccw = (A, B, C) => (C.north - A.north) * (B.east - A.east) > (B.north - A.north) * (C.east - A.east);
     return ccw(p1, p3, p4) !== ccw(p2, p3, p4) && ccw(p1, p2, p3) !== ccw(p1, p2, p4);
   }
 
-  // Verifica cada par de edges (não-adjacentes)
+  // Check each pair of edges (non-adjacent)
   for (let i = 0; i < vertices.length - 1; i++) {
     for (let j = i + 2; j < vertices.length - 1; j++) {
       if (i === 0 && j === vertices.length - 2) continue; // Skip closing edge
@@ -1015,7 +1073,7 @@ function detectPolygonSelfIntersections(vertices) {
 }
 
 /**
- * Corrigir ordem de vértices (garantir CCW para polígonos válidos)
+ * Fix vertex order (ensure CCW for valid polygons)
  */
 function ensureCounterClockwiseOrder(vertices) {
   if (!vertices || vertices.length < 3) return vertices;
@@ -1023,7 +1081,7 @@ function ensureCounterClockwiseOrder(vertices) {
   const { isCCW } = calcularAreaShoelace(vertices);
 
   if (isCCW === false) {
-    // Está em CW, reverter
+    // If in CW, reverse
     return [...vertices].reverse();
   }
 
@@ -1031,7 +1089,7 @@ function ensureCounterClockwiseOrder(vertices) {
 }
 
 /**
- * Validação completa de topologia poligonal
+ * Complete validation of polygon topology
  */
 function validatePolygonTopology(vertices, projectionKey = null) {
   const errors = [];
@@ -1042,36 +1100,36 @@ function validatePolygonTopology(vertices, projectionKey = null) {
     return { isValid: false, errors, warnings, corrected: vertices };
   }
 
-  // Estratégia de fechamento: se não estiver fechado, adiciona o primeiro vértice ao final para validação
+  // Closing strategy: if not closed, add the first vertex at the end for validation
   let verticesToValidate = [...vertices];
   let closed = isPolygonClosed(verticesToValidate, 0.5);
   if (!closed && verticesToValidate.length > 2) {
     const first = verticesToValidate[0];
     verticesToValidate.push({ ...first });
-    closed = true; // Considera fechado para validação e relatório
+    closed = true; // Consider as closed for validation and reporting
   }
   if (!closed) {
-    warnings.push("⚠️ Polígono não fechado (distância > 0.5m entre primeiro e último)");
+    warnings.push("⚠️ Polygon not closed (distance > 0.5m between first and last)");
   }
 
-  // 2. Calcular área
+  // 2. Calculate area
   const { area, isCCW, signed } = calcularAreaShoelace(verticesToValidate);
   if (area < 1) {
-    errors.push(`❌ Área muito pequena (${area.toFixed(2)} m²) - possível erro de extração`);
+    errors.push(`❌ Very small area (${area.toFixed(2)} m²) - possible extraction error`);
   }
 
-  // 3. Detectar auto-intersecções
+  // 3. Detect self-intersections
   const intersections = detectPolygonSelfIntersections(verticesToValidate);
   if (intersections.length > 0) {
-    errors.push(`❌ Auto-intersecções detectadas em ${intersections.length} pares de edges`);
+    errors.push(`❌ Self-intersections detected in ${intersections.length} edge pairs`);
   }
 
-  // 4. Verificar ordenação
+  // 4. Check ordering
   if (isCCW === false) {
-    warnings.push("⚠️ Vértices em ordem horária (CW) - convertendo para anti-horária (CCW)");
+    warnings.push("⚠️ Vertices in clockwise order (CW) - converting to counterclockwise (CCW)");
   }
 
-  // 5. Validar coerência de distâncias calculadas vs Euclidiana
+  // 5. Validate coherence of calculated vs Euclidean distances
   const distThreshold = 10; // metros
   let distCoherence = true;
   for (let i = 0; i < verticesToValidate.length - 1; i++) {
@@ -1084,7 +1142,7 @@ function validatePolygonTopology(vertices, projectionKey = null) {
 
       if (!Number.isNaN(stated) && Math.abs(euclidian - stated) > distThreshold) {
         distCoherence = false;
-        warnings.push(`⚠️ Distância V${i + 1}→V${i + 2}: calculada ${euclidian.toFixed(2)}m ≠ documentada ${stated}m`);
+        warnings.push(`⚠️ Distance V${i + 1}→V${i + 2}: calculated ${euclidian.toFixed(2)}m ≠ documented ${stated}m`);
       }
     }
   }
@@ -1106,24 +1164,24 @@ function validatePolygonTopology(vertices, projectionKey = null) {
 }
 
 /**
- * Calcular distância via Vincenty (iterativo, alta precisão para UTM)
- * Mais preciso que Euclidiano para distâncias longas
+ * Calculate distance using Vincenty (iterative, high precision for UTM)
+ * More accurate than Euclidean for long distances
  */
 function calculateDistanceVincenty(p1, p2, projectionKey = "SIRGAS2000_22S") {
-  // Para UTM, Vincenty é overkill - usar Euclidiano é suficiente
-  // Mas deixar base para futuro uso com transformações de CRS
+  // For UTM, Vincenty is overkill - Euclidean is enough
+  // But keep base for future use with CRS transformations
 
   const params = ELLIPSOID_PARAMS[projectionKey] || ELLIPSOID_PARAMS["SIRGAS2000_22S"];
   const { a, f } = params;
 
-  // Em UTM (projeção conforme), distância Euclidiana é ≈ distância real
-  // Diferença < 0.1% para distâncias até 1km
-  // Usar Vincenty completo seria overkill aqui
+  // In UTM (conformal projection), Euclidean distance ≈ real distance
+  // Difference < 0.1% for distances up to 1km
+  // Using full Vincenty would be overkill here
 
   const distance = calcularDistancia(p1, p2);
 
-  // Fator de escala em UTM (típico: 0.9996)
-  // Para alta precisão, poderia ajustar baseado na longitude relativa
+  // UTM scale factor (typical: 0.9996)
+  // For high precision, could adjust based on relative longitude
   const scaleFactor = 0.9996;
   const adjustedDistance = distance * scaleFactor;
 
@@ -1137,8 +1195,8 @@ function calculateDistanceVincenty(p1, p2, projectionKey = "SIRGAS2000_22S") {
 }
 
 /**
- * Extrair azimutes e distâncias documentadas do texto (memorial)
- * Procura por padrões como "45°30'27" e 258,45m"
+ * Extract azimuths and documented distances from text (memorial)
+ * Looks for patterns like "45°30'27" and 258,45m"
  */
 function extractAzimuthDistanceFromText(text) {
   const memorialData = [];
@@ -1568,13 +1626,13 @@ function normalizeId(id) {
 }
 
 /* =========================
-   VÉRTICES (v2 – robusto a OCR/cartório)
-   - EN com múltiplas variantes (E=... e N=..., N ... e E ..., sem "m", com lixo OCR)
-   - Tabelas/linhas "amassadas"
-   - Dígitos colados / vírgula/ponto trocados
-   - Detecção de ordem (E/N ou N/E) e correção automática
-   - Fallback: Lat/Lon → UTM
-   - Fallback: Azimute+Distância com seed obtida do texto
+  VERTICES (v2 – OCR/registry robust)
+  - EN with multiple variants (E=... and N=..., N ... and E ..., without "m", with OCR noise)
+  - Smashed tables/lines
+  - Stuck digits / swapped comma/dot
+  - Order detection (E/N or N/E) and automatic correction
+  - Fallback: Lat/Lon → UTM
+  - Fallback: Azimuth+Distance with seed obtained from text
 ========================= */
 function parseVertices(text, crsKeyInput) {
   const t0 = performance.now();
@@ -1627,10 +1685,8 @@ function parseVertices(text, crsKeyInput) {
     out.push({ id, north: N, east: E, origem });
   }
 
-  // ================================
-  // 1) Padrões de cartório/linha (E... e N...) – com tolerância a OCR
-  // ================================
-  // Cartório clássico com "m" (E=xxx m e N=yyy m)
+  // 1) Registry/line patterns (E... and N...) – OCR tolerant
+  // Classic registry with "m" (E=xxx m and N=yyy m)
   let rx = /E\s*=?\s*([0-9.,\s]{5,})\s*m?\s*e\s*N\s*=?\s*([0-9.,\s]{6,})\s*m?/gi;
   for (let m; (m = rx.exec(cleanAll)) !== null;) {
     const E = asNum(m[1]), N = asNum(m[2]);
@@ -1638,7 +1694,7 @@ function parseVertices(text, crsKeyInput) {
     pushVertex(id, N, E, 'cartorio_EN');
   }
 
-  // Variação comum: N primeiro, depois E (com lixo entre)
+  // Common variant: N first, then E (with noise between)
   rx = /N\s*=?\s*([0-9.,\s]{6,})\s*m?.{0,40}?E\s*=?\s*([0-9.,\s]{5,})\s*m?/gi;
   for (let m; (m = rx.exec(cleanAll)) !== null;) {
     const N = asNum(m[1]), E = asNum(m[2]);
@@ -1646,7 +1702,7 @@ function parseVertices(text, crsKeyInput) {
     pushVertex(id, N, E, 'cartorio_NE');
   }
 
-  // Variante OCR "suja": aceita :, /, - como separadores no campo numérico
+  // Dirty OCR variant: accepts :, /, - as numeric field separators
   rx = /E\W*([0-9:.,/ \-]{5,})\W*e\W*N\W*([0-9:.,/ \-]{6,})/gi;
   for (let m; (m = rx.exec(cleanAll)) !== null;) {
     const E = asNum(m[1].replace(/[:/]/g, '.')), N = asNum(m[2].replace(/[:/]/g, '.'));
@@ -1654,7 +1710,7 @@ function parseVertices(text, crsKeyInput) {
     pushVertex(id, N, E, 'ocr_relaxed_EN');
   }
 
-  // Variante OCR "suja" N/E
+  // Dirty OCR variant N/E
   rx = /N\W*([0-9:.,/ \-]{6,})\W*(?:m)?[^A-Za-z0-9]{0,40}E\W*([0-9:.,/ \-]{5,})/gi;
   for (let m; (m = rx.exec(cleanAll)) !== null;) {
     const N = asNum(m[1].replace(/[:/]/g, '.')), E = asNum(m[2].replace(/[:/]/g, '.'));
@@ -1662,9 +1718,7 @@ function parseVertices(text, crsKeyInput) {
     pushVertex(id, N, E, 'ocr_relaxed_NE');
   }
 
-  // ================================
-  // 2) Tabela/linha "amassada": ID  E  N  (com ruído)
-  // ================================
+  // 2) Smashed table/line: ID  E  N  (with noise)
   rx = /([A-Z0-9]{1,10})\s+([0-9]{5,}[.,][0-9]{1,3})\s+([0-9]{6,}[.,][0-9]{1,3})/gi;
   for (let m; (m = rx.exec(cleanAll)) !== null;) {
     const label = m[1].trim();
@@ -1673,17 +1727,15 @@ function parseVertices(text, crsKeyInput) {
     pushVertex(id, N, E, 'tabela');
   }
 
-  // ================================
-  // 3) Fallback genérico: procurar blocos com "E" e "N" e dois números grandes próximos
-  // ================================
-  // Fallback genérico (mais restrito): só se o chunk tiver rótulos E/N explícitos
+  // 3) Generic fallback: look for blocks with "E" and "N" and two large numbers nearby
+  // More restricted generic fallback: only if the chunk has explicit E/N labels
   const windowChunks = cleanAll.split(/[;\n]+/);
   for (const chunk of windowChunks) {
     const hasENLabels = /\bE\s*=?\s*\d|\bN\s*=?\s*\d/i.test(chunk);
     const hasWords = /(utm|sirgas|sad-?\s?69|coordena|este\s*\(x\)|norte\s*\(y\))/i.test(chunk);
-    if (!hasENLabels && !hasWords) continue; // sem contexto geográfico, ignora
+    if (!hasENLabels && !hasWords) continue; // skip if no geographic context
 
-    // Agora, sim, procure pares com E ... N ... próximos
+    // Now, look for pairs with E ... N ... nearby
     let m;
     const rxEN = /E\s*=?\s*([\d\.,]{5,})\s*m?\s*\D{0,40}N\s*=?\s*([\d\.,]{6,})\s*m?/gi;
     while ((m = rxEN.exec(chunk)) !== null) {
@@ -1699,24 +1751,20 @@ function parseVertices(text, crsKeyInput) {
     }
   }
 
-  // Hard cap: se > 500 vértices em EN, suspeito de ruído => reexecuta com apenas regras estritas
+  // Hard cap: if >500 EN vertices, likely noise => re-run with strict rules only
   if (out.length > 500) {
     __log?.warn?.('parseVertices_v2', 'Muitos vértices (provável ruído). Refiltrando...', { total: out.length });
-    return []; // força camadas seguintes (Lat/Lon e Az+Dist) / ou retorne apenas IDs/tabela
+    return []; // force next layers (Lat/Lon and Az+Dist) / or return only IDs/table
   }
 
 
-  // ================================
-  // 4) Se já deu 3+, retorna imediatamente
-  // ================================
+  // 4) If already 3+, return immediately
   if (out.length >= 3) {
     __log?.log?.('parseVertices_v2', 'Resumo', { vertices: out.length, strategy: 'EN (multivariantes)' });
     return out;
   }
 
-  // ================================
   // 5) Fallback Lat/Lon (DMS/decimal) → UTM
-  // ================================
   try {
     const hasPatch = !!(window.__pdf2gis_patch?.parseLatLonPairs && window.__pdf2gis_patch?.convertLatLonPairsToUtm);
     if (hasPatch) {
@@ -1733,11 +1781,9 @@ function parseVertices(text, crsKeyInput) {
     __log?.warn?.('parseVertices_v2', 'Lat/Lon fallback falhou', { error: e?.message });
   }
 
-  // ================================
-  // 6) Fallback Azimute+Distância com seed
-  //    - Procura seed (qualquer EN válido encontrado acima; se não, tenta um par único no texto)
-  //    - Usa os segmentos azimutais já extraídos pela função Patch (ou a sua)
-  // ================================
+  // 6) Fallback Azimuth+Distance with seed
+  //    - Looks for seed (any valid EN found above; if not, tries a unique pair in text)
+  //    - Uses azimuth segments already extracted by Patch function (or own)
   try {
     const segments =
       (window.__pdf2gis_patch?.extractAzimuthDistanceFromText_Patch?.(text))
@@ -1745,13 +1791,13 @@ function parseVertices(text, crsKeyInput) {
         : []);
 
     if (Array.isArray(segments) && segments.length >= 2) {
-      // seed preferida: algum ponto já encontrado (mesmo que 1 ou 2)
+      // Preferred seed: any point already found (even if only 1 or 2)
       let seed = null;
       if (out.length >= 1) {
         seed = { east: out[0].east, north: out[0].north };
       }
 
-      // se ainda não, procurar um único par EN no texto
+      // if still not found, look for a single EN pair in the text
       if (!seed) {
         const m = /E\s*=?\s*([0-9\.,]{5,})\s*m?\s*e\s*N\s*=?\s*([0-9\.,]{6,})\s*m?/i.exec(cleanAll)
           || /N\s*=?\s*([0-9\.,]{6,})\s*m?.{0,40}?E\s*=?\s*([0-9\.,]{5,})\s*m?/i.exec(cleanAll);
@@ -1767,7 +1813,7 @@ function parseVertices(text, crsKeyInput) {
         }
       }
 
-      // Se ainda não há seed, tenta obter 1 ponto a partir de Lat/Lon
+      // If still no seed, try to get 1 point from Lat/Lon
       if (!seed && window.__pdf2gis_patch?.parseLatLonPairs) {
         const latlon = window.__pdf2gis_patch.parseLatLonPairs(text);
         if (Array.isArray(latlon) && latlon.length >= 1 && window.__pdf2gis_patch?.convertLatLonPairsToUtm) {
@@ -1779,7 +1825,7 @@ function parseVertices(text, crsKeyInput) {
       if (seed) {
         const verts = (typeof window.__pdf2gis_patch?.buildVerticesFromAzimuths === 'function')
           ? window.__pdf2gis_patch.buildVerticesFromAzimuths(seed, segments)
-          : []; // se não existir, retorna vazio
+          : []; // if not available, return empty
 
         if (Array.isArray(verts) && verts.length >= 3) {
           __log?.log?.('parseVertices_v2', 'Resumo', { vertices: verts.length, strategy: 'Az+Dist (seed)' });
@@ -1791,8 +1837,8 @@ function parseVertices(text, crsKeyInput) {
     __log?.warn?.('parseVertices_v2', 'Rumo+Dist fallback falhou', { error: e?.message });
   }
 
-  __log?.warn?.('parseVertices_v2', 'Sem vértices extraídos', { durMs: +(performance.now() - t0).toFixed(1) });
-  return out; // pode retornar <3 para diagnóstico em camadas seguintes
+  __log?.warn?.('parseVertices_v2', 'No vertices extracted', { durMs: +(performance.now() - t0).toFixed(1) });
+  return out; // may return <3 for diagnosis in next layers
 }
 
 // === LOG BLOCK 2/5: Decorator parseVertices =================================
@@ -1861,7 +1907,7 @@ function parseVertices(text, crsKeyInput) {
 })();
 
 /* =========================
-   AUTO-FIX UTM (decimais colados)
+  AUTO-FIX UTM (stuck decimals)
 ========================= */
 function chooseBestScale(value, minv, maxv, target) {
   if (!Number.isFinite(value)) return { value, scalePow: 0, ok: false };
@@ -1878,6 +1924,7 @@ function chooseBestScale(value, minv, maxv, target) {
 }
 
 function autoFixUtmDecimals(coords) {
+  // Fixes stuck decimal errors in UTM coordinates by testing possible scales
   const validE = coords.map(c => c.east).filter(v => v >= 100000 && v <= 900000);
   const validN = coords.map(c => c.north).filter(v => v >= 0 && v <= 10000000);
 
@@ -1904,34 +1951,34 @@ function autoFixUtmDecimals(coords) {
 }
 
 /* =========================
-   VALIDAÇÃO E RECUPERAÇÃO DE COORDENADAS
+  VALIDATION AND RECOVERY OF COORDINATES
 ========================= */
 
 /**
- * Define ranges válidos de coordenadas por zona UTM
- * Baseado em padrões de cartório brasileiro
+ * Defines valid coordinate ranges by UTM zone
+ * Based on Brazilian registry standards
  */
 function getValidRanges(projectionKey) {
   const ranges = {
-    // Sul/Sudeste
+    // South/Southeast
     "SIRGAS2000_21S": { nMin: 6.45e6, nMax: 6.75e6, eMin: 300e3, eMax: 850e3 },
     "SAD69_21S": { nMin: 6.45e6, nMax: 6.75e6, eMin: 300e3, eMax: 850e3 },
     "SIRGAS2000_22S": { nMin: 7.10e6, nMax: 7.45e6, eMin: 300e3, eMax: 850e3 },
     "SAD69_22S": { nMin: 7.10e6, nMax: 7.45e6, eMin: 300e3, eMax: 850e3 },
     "SIRGAS2000_23S": { nMin: 8.0e6, nMax: 9.0e6, eMin: 300e3, eMax: 850e3 },
     "SAD69_23S": { nMin: 8.0e6, nMax: 9.0e6, eMin: 300e3, eMax: 850e3 },
-    // Nordeste/Norte (Ceará, Maranhão, Pará, etc)
+    // Northeast/North (Ceará, Maranhão, Pará, etc)
     "SIRGAS2000_24S": { nMin: 9.0e6, nMax: 10.5e6, eMin: 300e3, eMax: 850e3 },
     "SAD69_24S": { nMin: 9.0e6, nMax: 10.5e6, eMin: 300e3, eMax: 850e3 },
     "SIRGAS2000_25S": { nMin: 10.0e6, nMax: 10.5e6, eMin: 300e3, eMax: 850e3 },
-    // Padrão fallback: zona 22S (Paraná)
+    // Fallback standard: zone 22S (Paraná)
     "WGS84_UTM": { nMin: 7.15e6, nMax: 7.45e6, eMin: 300e3, eMax: 850e3 },
   };
   return ranges[projectionKey] || ranges["WGS84_UTM"];
 }
 
 /**
- * Valida e tenta recuperar coordenadas fora do intervalo válido
+ * Validates and tries to recover coordinates outside the valid range
  */
 function validateAndFixCoordinates(coords, projectionKey) {
   const range = getValidRanges(projectionKey);
@@ -1947,7 +1994,7 @@ function validateAndFixCoordinates(coords, projectionKey) {
     let east = c.east;
     let scaled = false;
 
-    // PRIMEIRO: Tentar auto-escalar se estão fora do intervalo
+    // FIRST: Try auto-scaling if outside the range
     if (!(north >= range.nMin && north <= range.nMax)) {
       const scaledN = autoScaleCoordinate(north, range.nMin, range.nMax);
       if (!Number.isNaN(scaledN)) {
@@ -1980,7 +2027,7 @@ function validateAndFixCoordinates(coords, projectionKey) {
       // Tentar outras estratégias de recuperação
       let fixed = null;
 
-      // PROBLEMA 1: Número começando com 73 (deveria ser 7.3)
+      // PROBLEM 1: Number starting with 73 (should be 7.3)
       if (!fixed && c.north > 70e6 && c.north < 80e6) {
         const corrected = Math.floor(c.north / 10);
         if (corrected >= range.nMin && corrected <= range.nMax) {
@@ -1989,7 +2036,7 @@ function validateAndFixCoordinates(coords, projectionKey) {
         }
       }
 
-      // PROBLEMA 2: Número truncado (7.33 deveria ser 7.3XX.XXX)
+      // PROBLEM 2: Truncated number (7.33 should be 7.3XX.XXX)
       if (!fixed && c.north < 1e6 && c.north > 0) {
         // Procurar próxima coordenada válida para estimar posição
         const nearValid = coords
@@ -2010,7 +2057,7 @@ function validateAndFixCoordinates(coords, projectionKey) {
         }
       }
 
-      // PROBLEMA 3: E (east) muito grande - tentar escalar
+      // PROBLEM 3: E (east) too large - try scaling
       if (!fixed && !eValid && c.east > range.eMax) {
         const scaledE = autoScaleCoordinate(c.east, range.eMin, range.eMax);
         if (!Number.isNaN(scaledE)) {
@@ -2019,7 +2066,7 @@ function validateAndFixCoordinates(coords, projectionKey) {
         }
       }
 
-      // PROBLEMA 4: N (north) muito grande - tentar escalar
+      // PROBLEM 4: N (north) too large - try scaling
       if (!fixed && !nValid && c.north > range.nMax) {
         const scaledN = autoScaleCoordinate(c.north, range.nMin, range.nMax);
         if (!Number.isNaN(scaledN)) {
@@ -2044,7 +2091,7 @@ function validateAndFixCoordinates(coords, projectionKey) {
   return { valid, invalid, recovered };
 }
 
-// === LOG BLOCK 3/5: Decorator validateAndFixCoordinates =====================
+// === LOG BLOCK 3/5: Decorator for validateAndFixCoordinates ===
 (function () {
   if (window.__validateAndFixDecorated || typeof window.validateAndFixCoordinates !== 'function') return;
 
@@ -2101,13 +2148,11 @@ function validateCoords(coords, projectionKey) {
   return warnings;
 }
 
-/* =========================
-   CSV helper (com diagnóstico profissional)
-========================= */
+// === CSV helper (with professional diagnostics) ===
 function gerarCsvParaVertices(vertices, epsg, docId = null, topologyInfo = null, memorialInfo = null) {
   let csv = "\ufeffsep=;\n";
 
-  // Cabeçalho profissional com metadados
+  // Professional header with metadata
   csv += `# MATRÍCULA;${docId || "N/A"}\n`;
   csv += `# EPSG;${epsg}\n`;
   if (topologyInfo) {
@@ -2121,14 +2166,14 @@ function gerarCsvParaVertices(vertices, epsg, docId = null, topologyInfo = null,
   }
   csv += `#\n`;
 
-  // Cabeçalho da tabela
+  // Table header
   csv += "Point_ID;Ordem;Norte_Y;Este_X;EPSG;Dist_M;Azimute_Deg;Qualidade;Notas\n";
 
-  // Estratégia de fechamento: se não estiver fechado, adiciona o primeiro vértice ao final
+  // Closing strategy: if not closed, add the first vertex at the end
   let verticesToExport = [...vertices];
   if (topologyInfo && topologyInfo.closed === false && vertices.length > 2) {
     const first = vertices[0];
-    // Cria um novo vértice de fechamento (Point_ID e Ordem incrementados)
+    // Create a new closing vertex (Point_ID and Order incremented)
     const closingVertex = {
       ...first,
       id: (first.id || "F") + "_close", // Sufixo para evitar duplicata
@@ -2141,10 +2186,10 @@ function gerarCsvParaVertices(vertices, epsg, docId = null, topologyInfo = null,
 
   for (let i = 0; i < verticesToExport.length; i++) {
     const c = verticesToExport[i];
-    // Determinação de qualidade baseada em validação
+    // Quality determination based on validation
     let quality = "✓ OK";
     let notes = "";
-    // Verificar coerência com memorial se disponível
+    // Check coherence with memorial if available
     if (memorialInfo && memorialInfo.matches[i]) {
       const match = memorialInfo.matches[i];
       if (!match.coherent) {
@@ -2155,11 +2200,11 @@ function gerarCsvParaVertices(vertices, epsg, docId = null, topologyInfo = null,
         }
       }
     }
-    // Verificar se há distância "---" (último vértice ou fechamento)
+    // Check if there is distance "---" (last vertex or closing)
     if (c.distCalc === "---") {
       notes = "Fechamento";
     }
-    // Verificar duplicatas ou problemas topológicos
+    // Check for duplicates or topological problems
     if (i > 0) {
       const prev = verticesToExport[i - 1];
       if (prev.east === c.east && prev.north === c.north) {
@@ -2225,9 +2270,7 @@ function gerarRelatorioValidacao(docId, pages, topologyInfo, memorialInfo, warni
   return report;
 }
 
-/* =========================
-   CSV helper (original - compatibilidade)
-========================= */
+// === CSV helper (original - compatibility) ===
 function gerarCsvParaVerticesSimples(vertices, epsg) {
   let csv = "\ufeffsep=;\n";
   csv += "Point_ID;Ordem;Norte_Y;Este_X;EPSG;Dist_M;Azimute_Deg\n";
@@ -2237,27 +2280,25 @@ function gerarCsvParaVerticesSimples(vertices, epsg) {
   return csv;
 }
 
-/* =========================
-   Split por matrícula
-========================= */
+// === Split by document ID (matrícula) ===
 function detectDocIdFromPageText(pageText) {
   const t = (pageText || "").replace(/\u00A0/g, " ");
 
-  // DEBUG: Mostrar primeiras 500 chars do texto para debugging
+  // DEBUG: Show first 500 chars of text for debugging
   console.log(`[PDFtoArcgis] Detectando ID de: "${t.substring(0, 300)}..."`);
 
-  // ===== ESTRATÉGIA CRÍTICA: Usar APENAS a primeira ocorrência de MATRÍCULA =====
-  // Em cartórios, MATRÍCULA que aparece no cabeçalho é a ID do documento
-  // Referências a outras matrículas aparecem depois no memorial (ex: "conforme referido Orozimbo Ciuffa de MATRÍCULA: 8.462")
-  // SOLUÇÃO: Pegar APENAS a PRIMEIRA matrícula do texto (cabeçalho/início)
+  // ===== CRITICAL STRATEGY: Use ONLY the first occurrence of MATRÍCULA =====
+  // In registries, MATRÍCULA in the header is the document ID
+  // References to other IDs appear later in the memorial (e.g., "conforme referido Orozimbo Ciuffa de MATRÍCULA: 8.462")
+  // SOLUTION: Take ONLY the FIRST matrícula from the text (header/start)
 
-  // ESTRATÉGIA 1: Procurar APENAS no início do texto (primeiros 2000 caracteres - cabeçalho)
+  // STRATEGY 1: Search ONLY at the beginning of the text (first 2000 characters - header)
   const headerText = t.substring(0, 2000);
 
   const matriculaPatterns = [
-    // Padrões para MATRÍCULA - com variações OCR degradado
-    // ORDEM IMPORTANTE: Do mais específico para o mais genérico
-    // Padrões que garantem ser o ID do documento (aparecem no cabeçalho/título)
+    // Patterns for MATRÍCULA - with degraded OCR variations
+    // IMPORTANT ORDER: From most specific to most generic
+    // Patterns that guarantee document ID (appear in header/title)
     { rx: /MATR[ÍI]CULA\s*N[ºo°e]\s*([\d.,]+)/i, name: "MATRÍCULA Nº (com Ne)" },
     { rx: /MATR[ÍI]CULA\s*N[ºo°e]?\s*([\d.,]+)/i, name: "MATRÍCULA N (OCR flex)" },
     { rx: /^MATR[ÍI]CULA\s*N[ºo°]?\s*([\d.,]+)/im, name: "MATRÍCULA Nº (linha)" },
@@ -2272,7 +2313,7 @@ function detectDocIdFromPageText(pageText) {
   for (const { rx, name } of matriculaPatterns) {
     const m = headerText.match(rx);
     if (m && m[1]) {
-      // Normalizar: remover pontos E vírgulas (separadores OCR podem variar)
+      // Normalize: remove dots AND commas (OCR separators may vary)
       let id = m[1].replace(/[.,]/g, "").replace(/^0+/, "");
       if (id && id.length > 0) {
         console.log(`[PDFtoArcgis] ✅ MATRÍCULA (cabeçalho): ${id} (padrão: ${name}) - Raw: "${m[1]}"`);
@@ -2281,12 +2322,12 @@ function detectDocIdFromPageText(pageText) {
     }
   }
 
-  // Se nenhum padrão de matrícula funcionou, logar aviso
+  // If no matrícula pattern worked, log warning
   console.log(`[PDFtoArcgis] ⚠️ Nenhum padrão de MATRÍCULA encontrado no cabeçalho`);
 
-  // ===== ESTRATÉGIA 2: Procurar por PROTOCOLO (apenas como fallback) =====
-  // PROTOCOLO nunca deve ter prioridade sobre MATRÍCULA
-  // Usar apenas se MATRÍCULA não foi encontrada
+  // ===== STRATEGY 2: Search for PROTOCOL (only as fallback) =====
+  // PROTOCOL should never take priority over MATRÍCULA
+  // Use only if MATRÍCULA was not found
   const protocoloPatterns = [
     { rx: /PROTOCOLO\s*N[ºo°e]\s*([\d.,]+)/i, name: "PROTOCOLO Nº" },
   ];
@@ -2302,10 +2343,10 @@ function detectDocIdFromPageText(pageText) {
     }
   }
 
-  // ===== ETAPA 3: Procurar por alternativas (se nenhuma matrícula foi encontrada) =====
-  // DESABILITADO: Padrões alternativos muito genéricos causam falsos positivos
-  // Exemplo: "M. 339" pegava número de outra parte do documento que não era matrícula
-  // Melhor deixar como "SEM_ID" e depois usar heurística de recuperação com páginas próximas
+  // ===== STEP 3: Search for alternatives (if no matrícula was found) =====
+  // DISABLED: Alternative patterns too generic cause false positives
+  // Example: "M. 339" would pick up a number from another part of the document that was not the matrícula
+  // Better to leave as "SEM_ID" and later use recovery heuristics with nearby pages
   const alternativePatterns = [
     // { rx: /PROCESSO\s*(?:N[ºo°]|#)?\s*([\d.]+)/i, name: "PROCESSO" },
     // { rx: /IMÓVEL\s*(?:N[ºo°]|#)?\s*([\d.]+)/i, name: "IMÓVEL" },
@@ -2360,8 +2401,8 @@ function splitPagesIntoDocuments(pagesText) {
   console.log(`[PDFtoArcgis] Documentos iniciais: ${docs.length}`);
   docs.forEach(d => console.log(`  - ID: ${d.docId}, Páginas: ${d.pages.join(", ")}`));
 
-  // MELHORIA ADITIVA: Tentar recuperar documentos SEM_ID combinando com IDs adjacentes
-  // Estratégia: se um documento "SEM_ID" está cercado por documentos com o mesmo ID, unir-se a ele
+  // IMPROVEMENT: Try to recover SEM_ID docs by combining with adjacent IDs
+  // If a "SEM_ID" doc is surrounded by docs with the same ID, merge with them
   const improvedDocs = [];
   for (let i = 0; i < docs.length; i++) {
     const doc = docs[i];
@@ -2371,10 +2412,10 @@ function splitPagesIntoDocuments(pagesText) {
       continue;
     }
 
-    // Se é SEM_ID, tentar encontrar ID em contexto próximo
+    // If SEM_ID, try to find ID in nearby context
     let foundId = null;
 
-    // Buscar ID em documento anterior (se existir e tiver poucas páginas diferença)
+    // Look for ID in previous doc (if exists and page gap is small)
     if (i > 0 && docs[i - 1].docId !== "SEM_ID") {
       const prevPages = docs[i - 1].pages;
       const currPages = doc.pages;
@@ -2384,7 +2425,7 @@ function splitPagesIntoDocuments(pagesText) {
       }
     }
 
-    // Buscar ID em documento seguinte (se não encontrou anterior)
+    // Look for ID in next doc (if previous not found)
     if (!foundId && i < docs.length - 1 && docs[i + 1].docId !== "SEM_ID") {
       const currPages = doc.pages;
       const nextPages = docs[i + 1].pages;
@@ -2394,7 +2435,7 @@ function splitPagesIntoDocuments(pagesText) {
       }
     }
 
-    // Se encontrou ID, usar esse; senão, manter como SEM_ID mas com log
+    // If found ID, use it; else, keep as SEM_ID and log
     const pageStr = Array.isArray(doc.pages) ? doc.pages.join(", ") : (typeof doc.pages === 'string' ? doc.pages : "(desconhecido)");
     if (foundId) {
       doc.docId = foundId;
@@ -2406,27 +2447,24 @@ function splitPagesIntoDocuments(pagesText) {
     improvedDocs.push(doc);
   }
 
-  // MELHORIA: Detectar e corrigir IDs de PROTOCOLO cercados por MATRÍCULA
-  // DESABILITADO: A heurística estava quebrando documentos válidos com IDs diferentes
-  // Exemplo: Arquivo com M.8.402, M.8.462, M.5737 estava sendo mesclado incorretamente
-  // Esta heurística deveria SÓ ser usada para documentos com ID "SEM_ID", não para IDs válidos
+  // IMPROVEMENT: Detect/correct PROTOCOLO IDs surrounded by MATRÍCULA (DISABLED: caused merging of valid docs with different IDs)
+  // This heuristic should only be used for "SEM_ID" docs, not valid IDs
   console.log(`[PDFtoArcgis] Heurística de correção desabilitada para não quebrar documentos com múltiplos IDs válidos`);
 
-  // Agora mesclar documentos que têm o MESMO ID mas foram separados
-  // IMPORTANTE: Mesclar TODOS com mesmo ID, mesmo que não sejam consecutivos
+  // Now merge docs with the SAME ID even if not consecutive
   const mergedDocs = [];
   const processedIds = new Set();
 
   for (const doc of improvedDocs) {
     if (processedIds.has(doc.docId)) {
-      continue;  // Já foi processado como parte de um grupo
+      continue;  // Already processed as part of a group
     }
 
-    // Encontrar TODOS os documentos com este ID
+    // Find ALL docs with this ID
     const docsWithSameId = improvedDocs.filter(d => d.docId === doc.docId);
 
     if (docsWithSameId.length > 1) {
-      // Há múltiplos documentos com este ID - mesclar
+      // Multiple docs with this ID - merge
       const merged = {
         docId: doc.docId,
         pages: [],
@@ -2439,13 +2477,13 @@ function splitPagesIntoDocuments(pagesText) {
         processedIds.add(d.docId);
       }
 
-      // Ordenar páginas
+      // Sort pages
       merged.pages.sort((a, b) => a - b);
 
       console.log(`[PDFtoArcgis] Mesclando ${docsWithSameId.length} fragmentos da matrícula ${doc.docId}: páginas ${merged.pages.join(", ")}`);
       mergedDocs.push(merged);
     } else {
-      // Apenas um documento com este ID
+      // Only one doc with this ID
       mergedDocs.push(doc);
       processedIds.add(doc.docId);
     }
@@ -2473,9 +2511,7 @@ function classifyDocType(text) {
   return { type: 'desconhecido', confidence: 'baixa' };
 }
 
-/* =========================
-   UI seletor de matrícula
-========================= */
+// === UI: document ID selector ===
 function renderDocSelector() {
   if (!docSelectorBox || !docSelect) return;
 
@@ -2505,7 +2541,7 @@ function updateActiveDocUI() {
 
   const projKey = doc.manualProjectionKey || doc.projectionKey || "(não detectado)";
   const epsg = PROJECTIONS[projKey]?.epsg || "";
-  // Suportar tanto array de páginas (v2.0) quanto string (v3.0)
+  // Support both array of pages (v2.0) and string (v3.0)
   const pages = Array.isArray(doc.pages)
     ? doc.pages.join(", ")
     : (typeof doc.pages === 'string' ? doc.pages : "(desconhecido)");
@@ -2529,9 +2565,7 @@ if (docSelect) {
   });
 }
 
-/* =========================
-   Display tabela
-========================= */
+// === Display table ===
 function displayResults() {
   resultBox.style.display = "block";
   countDisplay.innerText = extractedCoordinates.length;
@@ -2550,10 +2584,9 @@ function displayResults() {
   scrollToResults();
 }
 
-/* =========================
-   PROCESSAMENTO DO PDF (OCR TOTAL → processExtractUnified)
-   Opção B: OCR full aqui + delega pipeline completo para processExtractUnified(pagesText)
-========================= */
+// === PDF PROCESSING (Full OCR → processExtractUnified) ===
+// Option B: Full OCR here + delegate full pipeline to processExtractUnified(pagesText)
+
 fileInput.addEventListener("change", async (event) => {
   const file = event.target.files[0];
   if (!file) return;
@@ -2579,47 +2612,27 @@ fileInput.addEventListener("change", async (event) => {
     const arrayBuffer = await file.arrayBuffer();
     const pdf = await pdfjsLib.getDocument(arrayBuffer).promise;
 
-    // === OCR TOTAL (todas as páginas) ===
+    // === Robust text extraction (OCR/selectable) per page ===
     const pagesText = [];
     for (let i = 1; i <= pdf.numPages; i++) {
       progressBar.value = Math.round((i / pdf.numPages) * 100);
       document.getElementById("progressLabel").innerText = `Lendo página ${i}/${pdf.numPages}...`;
 
       const page = await pdf.getPage(i);
-      // 1) Texto nativo
-      let pageText = "";
-      try {
-        const textContent = await page.getTextContent({ normalizeWhitespace: true });
-        pageText = buildPageTextWithLines(textContent) || "";
-      } catch (_) { pageText = ""; }
-
-      // 2) OCR como fallback
-      const low = pageText.toLowerCase();
-
-      const looksWeak =
-        pageText.trim().length < 80 ||
-        !/(matr[ií]cula|registro de im[óo]veis|utm|sirgas|sad-?\s?69|latitude|longitude|e\s*=?\s*\d{5,}\s*m|n\s*=?\s*\d{6,}\s*m)/i
-          .test(pageText);
-
-      if (looksWeak) {
-        document.getElementById("progressLabel").innerText = `OCR (fallback) página ${i}/${pdf.numPages}...`;
-        const viewport = page.getViewport({ scale: 3.0 });
-        const canvas = document.createElement("canvas");
-        const ctx = canvas.getContext("2d");
-        canvas.width = viewport.width; canvas.height = viewport.height;
-        await page.render({ canvasContext: ctx, viewport }).promise;
-        const ocrText = await getOcrTextFromCanvas(canvas);
-        if ((ocrText || "").trim().length > 40) pageText = ocrText;
-      }
-
-      pagesText.push(pageText || "");
+      // Uses smart function to decide between selectable text and OCR
+      const { text: bestText } = await getBestPageText(
+        page,
+        i,
+        pdfjsLib,
+        renderPageToCanvas
+      );
+      pagesText.push(bestText || "");
     }
 
-
-    // === Delegação para o pipeline decorado (inicia/encerra telemetria automaticamente) ===
+    // === Delegation to the decorated pipeline (automatically starts/ends telemetry) ===
     await processExtractUnified(pagesText); // logs/sessões via decorator já existente
 
-    // ATENÇÃO: não esconder progressContainer aqui – o processExtractUnified já controla o fim do fluxo/UX.
+    // NOTE: do not hide progressContainer here – processExtractUnified already controls the end of the flow/UX.
 
   } catch (e) {
     console.error("Erro no processamento:", e);
@@ -2631,17 +2644,18 @@ fileInput.addEventListener("change", async (event) => {
 
 
 
+// Detects closed polygon cycles in a list of vertices (within tolerance)
 function detectPolygonCycles(vertices) {
   if (vertices.length < 3) return [];
 
   const cycles = [];
   let currentCycle = [];
-  const CLOSURE_TOLERANCE = 5; // metros de tolerância para considerar que fechou
+  const CLOSURE_TOLERANCE = 5; // meters tolerance for closure
 
   for (let i = 0; i < vertices.length; i++) {
     const v = vertices[i];
 
-    // Se temos pontos no ciclo atual
+    // If current cycle has enough points, check for closure
     if (currentCycle.length > 2) {
       const firstPoint = currentCycle[0];
       const distance = Math.sqrt(
@@ -2649,46 +2663,44 @@ function detectPolygonCycles(vertices) {
         Math.pow(v.north - firstPoint.north, 2)
       );
 
-      // Se este ponto fecha o polígono (volta ao ponto inicial)
+      // If this point closes the polygon (returns to start)
       if (distance < CLOSURE_TOLERANCE) {
-        console.log(`[PDFtoArcgis] 🔄 Ciclo detectado: ${currentCycle.length} vértices (fechamento em ${distance.toFixed(2)}m)`);
-
-        // Adicionar o ponto de fechamento para completar
-        currentCycle.push({ ...v, isClosure: true });
+        console.log(`[PDFtoArcgis] 🔄 Cycle detected: ${currentCycle.length} vertices (closure at ${distance.toFixed(2)}m)`);
+        currentCycle.push({ ...v, isClosure: true }); // Add closing point
         cycles.push(currentCycle);
         currentCycle = [];
-        continue; // Não adicionar este ponto ao próximo ciclo
+        continue; // Do not add this point to next cycle
       }
     }
 
     currentCycle.push(v);
   }
 
-  // Se sobraram vértices, adicionar como ciclo
+  // If vertices remain, add as a cycle
   if (currentCycle.length >= 3) {
-    console.log(`[PDFtoArcgis] 🔄 Ciclo final detectado: ${currentCycle.length} vértices`);
+    console.log(`[PDFtoArcgis] 🔄 Final cycle detected: ${currentCycle.length} vertices`);
     cycles.push(currentCycle);
   }
 
-  console.log(`[PDFtoArcgis] Total de ciclos detectados: ${cycles.length}`);
+  console.log(`[PDFtoArcgis] Total cycles detected: ${cycles.length}`);
   return cycles;
 }
 
 async function processExtractUnified(pagesText) {
 
-  const MODE = 'geometry-first'; // 'text-first' (atual) ou 'hybrid'
+  const MODE = 'geometry-first'; // 'text-first' (current) or 'hybrid'
 
   let docsUnified = (MODE === 'geometry-first')
     ? await buildGeometryDocs(pagesText)
     : splitPagesIntoDocuments(pagesText);
 
-  // Novo: agrega páginas até fechar o polígono
+  // Aggregates pages until a polygon is closed
   async function buildGeometryDocs(pagesText) {
     const docsGeometry = [];
     let buf = { pages: [], text: "", vertsAbs: [], segs: [], usedRelative: false };
 
     function tryCloseAndFlush() {
-      // Fechou com tolerância?
+      // Check if closed within tolerance
       const cycles = detectPolygonCycles(buf.vertsAbs);
       if (cycles.length) {
         const cycle = cycles[0];
@@ -2706,19 +2718,19 @@ async function processExtractUnified(pagesText) {
       const segs = (window.___pdf2gis_patch?.extractAzimuthDistanceFromText_Patch?.(t)) || [];
       let verts = parseVertices(t, getActiveProjectionKey?.() || null);
 
-      // 1) Se vieram 3+ vértices absolutos, agregue direto
+      // 1) If 3+ absolute vertices, aggregate directly
       if (Array.isArray(verts) && verts.length >= 3) {
         buf.vertsAbs.push(...verts);
       } else if (segs.length >= 2) {
-        // 2) Sem vértices: tentar reconstruir por Az+Dist
-        // 2.1) Tentar âncora nesta página
+        // 2) No vertices: try to reconstruct by Az+Dist
+        // 2.1) Try anchor on this page
         let seed = null;
-        const mEN = /\bE\s*=?\s*([0-9\.\,]{5,}).{0,30}N\s*=?\s*([0-9\.\,]{6,})/i.exec(t);
+        const mEN = /\bE\s*=*\s*([0-9\.\,]{5,}).{0,30}N\s*=*\s*([0-9\.\,]{6,})/i.exec(t);
         if (mEN) {
           seed = { east: parseFloat(normalizeNumber(mEN[1])), north: parseFloat(normalizeNumber(mEN[2])) };
         }
         if (!seed && buf.vertsAbs.length >= 1) {
-          // usar 1º vértice absoluto já encontrado como âncora
+          // Use first absolute vertex found as anchor
           seed = { east: buf.vertsAbs[0].east, north: buf.vertsAbs[0].north };
         }
         const built = seed && window.___pdf2gis_patch?.buildVerticesFromAzimuths
@@ -2726,27 +2738,27 @@ async function processExtractUnified(pagesText) {
           : buildRelativePolygonFromAzimuths(segs);
         if (built?.length) {
           buf.vertsAbs.push(...built);
-          buf.usedRelative = !seed; // marca se ficou relativo
+          buf.usedRelative = !seed; // mark if relative
         }
         buf.segs.push(...segs);
       }
 
-      // Atualiza buf de páginas/texto e tenta fechar
+      // Update buffer of pages/text and try to close
       buf.pages.push(i + 1);
       buf.text += "\n" + t;
 
-      // Fechamento pelo menos com 3 pontos:
+      // Try to close if at least 3 points
       if ((buf.vertsAbs?.length || 0) >= 3) {
         const closed = tryCloseAndFlush();
         if (!closed && buf.vertsAbs.length > 400) {
-          // evita crescer demais sem fechar — força flush “não fechado”
+          // Avoid growing too much without closing — force flush as "not closed"
           docsGeometry.push({ docId: null, pages: [...buf.pages], text: buf.text, vertices: buf.vertsAbs, mode: 'open' });
           buf = { pages: [], text: "", vertsAbs: [], segs: [], usedRelative: false };
         }
       }
     }
 
-    // Sobrou algo não fechado => salvar como “open/relative”
+    // If something left not closed => save as "open/relative"
     if (buf.pages.length) {
       docsGeometry.push({ docId: null, pages: [...buf.pages], text: buf.text, vertices: buf.vertsAbs, mode: buf.usedRelative ? 'relative' : 'open' });
     }
@@ -2755,8 +2767,8 @@ async function processExtractUnified(pagesText) {
   }
 
 
-  // 0) Separa por documento/matrícula
-  const docs = splitPagesIntoDocuments(pagesText); // você já tem esta função
+  // 0) Split by document/ID
+  const docs = splitPagesIntoDocuments(pagesText); // you already have this function
   documentsResults = [];
 
   for (const doc of docs) {
@@ -2767,24 +2779,24 @@ async function processExtractUnified(pagesText) {
     try {
       const fullText = doc.text || "";
 
-      // 1) Detecta CRS por doc
+      // 1) Detect CRS per doc
       let det = detectProjectionFromText(fullText);
       let projKey = det?.key || null;
 
-      // 2) Extrai vértices por doc (EN/LatLon/Az+Dist seedless)
+      // 2) Extract vertices per doc (EN/LatLon/Az+Dist seedless)
       let rawVertices = parseVertices(fullText, projKey);
       window.__log?.log?.('parseVertices', 'Resumo', { vertices: rawVertices?.length ?? 0 });
 
-      // --- Azimute + Distância: tentar se EN/LatLon não renderam 3+ vértices ---
+      // --- Azimuth + Distance: try if EN/LatLon did not yield 3+ vertices ---
       const segs = window.__pdf2gis_patch?.extractAzimuthDistanceFromText_Patch?.(fullText) || [];
       let usedRelative = false;
 
       if ((!rawVertices || rawVertices.length < 3) && Array.isArray(segs) && segs.length >= 2) {
-        // 1) Procurar sementes (em EN já parseado, soltas no texto, ou Lat/Lon → UTM)
+        // 1) Look for seeds (in already parsed EN, loose in text, or Lat/Lon → UTM)
         const seedCandidates = findSeedCandidates(fullText, rawVertices);
 
         if (seedCandidates.length > 0) {
-          // âncora existente — reconstrói direto em UTM (absoluto)
+          // existing anchor — reconstruct directly in UTM (absolute)
           const { east, north } = seedCandidates[0];
 
           if (window.__pdf2gis_patch?.buildVerticesFromAzimuths) {
@@ -2796,19 +2808,19 @@ async function processExtractUnified(pagesText) {
             usedRelative = true;
           }
 
-          // Se por algum motivo a reconstrução retornou <3 vértices, usar relativo
+          // If reconstruction returned <3 vertices, use relative
           if (!rawVertices || rawVertices.length < 3) {
             rawVertices = buildRelativePolygonFromAzimuths(segs);
             usedRelative = true;
           }
         } else {
-          // 2) Sem âncora — constrói polígono RELATIVO (0,0) e marca como pendente
+          // 2) No anchor — build RELATIVE polygon (0,0) and mark as pending
           rawVertices = buildRelativePolygonFromAzimuths(segs);
           usedRelative = true;
         }
       }
 
-      // === Late-binding: TENTAR ancorar o polígono relativo, se for o caso ===
+      // === Late-binding: TRY to anchor relative polygon, if possible ===
       if (usedRelative) {
         const lateSeeds = findSeedCandidates(fullText, []); // buscar âncoras no texto deste doc
         if (lateSeeds.length > 0) {
@@ -2817,9 +2829,9 @@ async function processExtractUnified(pagesText) {
         }
       }
 
-      // === Se continuar relativo, NÃO validamos UTM; registramos e seguimos para o próximo doc ===
+      // === If still relative, do NOT validate UTM; just register and continue to next doc ===
       if (usedRelative) {
-        // Medidas entre vértices (relativas) para enriquecer a saída
+        // Relative vertex measures for output enrichment
         const relVerts = rawVertices.map((pt, i) => {
           const out = { ...pt, ordem: i + 1 };
           if (i < rawVertices.length - 1) {
@@ -2832,11 +2844,11 @@ async function processExtractUnified(pagesText) {
           return out;
         });
 
-        const topologyRel = validatePolygonTopology(relVerts, null); // valida forma apenas
+        const topologyRel = validatePolygonTopology(relVerts, null); // validate shape only
         const memorialData = extractAzimuthDistanceFromText(fullText);
 
         const warnings = [
-          'Polígono relativo — faltam E/N ou Lat/Lon (1 ponto) para georreferenciar.'
+          'Relative polygon — missing E/N or Lat/Lon (need 1 point) to georeference.'
         ];
         warnings.push(...topologyRel.warnings);
 
@@ -2859,14 +2871,14 @@ async function processExtractUnified(pagesText) {
           warnings
         });
         window.__log?.groupEnd?.();
-        continue; // segue para o próximo doc
+        continue; // continue to next doc
       }
 
-      // 3) Valida/corrige por doc, usando o CRS detectado (SAD69/SIRGAS/WGS)
+      // 3) Validate/fix per doc, using detected CRS (SAD69/SIRGAS/WGS)
       let validation = validateAndFixCoordinates(rawVertices, projKey);
       let valid = validation.valid;
 
-      // 3.1) Fallback Brasil por doc (se <3 válidas)
+      // 3.1) Brazil fallback per doc (if <3 valid)
       if (valid.length < 3) {
         const ns = rawVertices.map(v => v.north).filter(n => n > 6.45e6 && n < 10.5e6);
         if (ns.length) {
@@ -2885,18 +2897,18 @@ async function processExtractUnified(pagesText) {
         }
       }
 
-      // 4) Auto-fix (decimais colados), se UTM
+      // 4) Auto-fix (stuck decimals), if UTM
       const fixes = (projKey && projKey !== "WGS84") ? autoFixUtmDecimals(valid) : [];
       if (fixes.length) console.log(`[PDFtoArcgis] ✓ Auto-fix aplicado: ${fixes.join("; ")}`);
 
-      // 5) Detecta ciclos por doc
+      // 5) Detect cycles per doc
       const cycles = detectPolygonCycles(valid);
       if (!cycles.length) {
-        // Registrar doc sem ciclo (conta 1 documento na UI)
+        // Register doc without cycle (counts as 1 doc in UI)
         const warnings = ['Sem ciclos detectados — não foi possível fechar o polígono.'];
         const memorialData = extractAzimuthDistanceFromText(fullText);
 
-        // (opcional) calcular dist/az sequenciais só para a tabela
+        // (optional) calculate sequential dist/az for table only
         const vertsSeq = valid.map((pt, i, arr) => {
           const out = { ...pt, ordem: i + 1 };
           if (i < arr.length - 1) {
@@ -2941,7 +2953,7 @@ async function processExtractUnified(pagesText) {
         continue;
       }
 
-      // 6) Medidas entre vértices
+      // 6) Measures between vertices
       const cycleVertices = cycles[0];
       const verts = cycleVertices.map((pt, i) => {
         pt.ordem = i + 1;
@@ -2955,23 +2967,23 @@ async function processExtractUnified(pagesText) {
         return pt;
       });
 
-      // 7) Remover duplicados consecutivos
+      // 7) Remove consecutive duplicates
       const cleaned = [];
       for (const p of verts) {
         const last = cleaned[cleaned.length - 1];
         if (!last || last.east !== p.east || last.north !== p.north) cleaned.push(p);
       }
 
-      // 8) Topologia
+      // 8) Topology
       const topology = validatePolygonTopology(cleaned, projKey);
 
-      // 9) Memorial (opcional)
+      // 9) Memorial (optional)
       const memorialData = extractAzimuthDistanceFromText(fullText);
       const memorialValidation = memorialData.azimutes?.length > 0
         ? validateMemorialCoherence(cleaned, memorialData, projKey)
         : null;
 
-      // 10) Avisos
+      // 10) Warnings
       const warnings = [];
       warnings.push(...validateCoords(cleaned, projKey));
       warnings.push(...topology.warnings);
