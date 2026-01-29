@@ -1,3 +1,9 @@
+// UI: log messages (duplicado por isolamento de ferramenta)
+function displayLogMessage(msg) {
+  const el = document.getElementById("log-messages");
+  if (el) el.innerText = msg;
+  console.log("[LogUI]", msg);
+}
 // Selects either selectable text or OCR per page
 async function getBestPageText(pdfPage, pageNum, pdfjsLib, ocrCanvasFn) {
   // 1. Extract selectable text
@@ -14,7 +20,9 @@ async function getBestPageText(pdfPage, pageNum, pdfjsLib, ocrCanvasFn) {
   const isTextSufficient = (selectableText && selectableText.replace(/\s+/g, "").length > 30 && hasCoords);
 
   if (isTextSufficient) {
+    // Mensagem em PT-BR (padrão do app)
     displayLogMessage(`[LogUI] Página ${pageNum}: Usando texto selecionável (PDF.js)`);
+    // Para i18n: displayLogMessage(`[LogUI] ${translations?.msg_usa_texto_selecionavel?.replace('{page}', pageNum) || `Página ${pageNum}: Usando texto selecionável (PDF.js)`}`);
     return { text: selectableText, method: "selectable" };
   }
 
@@ -36,13 +44,17 @@ async function getBestPageText(pdfPage, pageNum, pdfjsLib, ocrCanvasFn) {
   const isOcrSufficient = (ocrText && ocrText.replace(/\s+/g, "").length > 30 && hasOcrCoords);
 
   if (isOcrSufficient) {
+    // Mensagem em PT-BR (padrão do app)
     displayLogMessage(`[LogUI] Página ${pageNum}: Usando OCR (${window.Android ? "Android" : "Tesseract.js"})`);
+    // Para i18n: displayLogMessage(`[LogUI] ${translations?.msg_usa_ocr?.replace('{page}', pageNum).replace('{engine}', window.Android ? 'Android' : 'Tesseract.js') || `Página ${pageNum}: Usando OCR (${window.Android ? "Android" : "Tesseract.js"})`}`);
     return { text: ocrText, method: "ocr" };
   }
 
   // 4. If both fail, return the longest available text
   const bestText = (ocrText.length > selectableText.length) ? ocrText : selectableText;
+  // Mensagem em PT-BR (padrão do app)
   displayLogMessage(`[LogUI] Página ${pageNum}: Texto insuficiente, usando o mais longo disponível.`);
+  // Para i18n: displayLogMessage(`[LogUI] ${translations?.msg_texto_insuficiente?.replace('{page}', pageNum) || `Página ${pageNum}: Texto insuficiente, usando o mais longo disponível.`}`);
   return { text: bestText, method: (ocrText.length > selectableText.length ? "ocr_fallback" : "selectable_fallback") };
 }
 
