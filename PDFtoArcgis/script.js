@@ -7,9 +7,7 @@
       (window.navigator.standalone === true)
     );
   }
-  if (installBtn && isAppInstalled()) {
-    installBtn.style.display = 'none';
-  }
+  
 // UI: Navegação lateral e rolagem para resultados
 function openNav() {
   document.getElementById("mySidenav").style.width = "250px";
