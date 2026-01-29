@@ -1628,6 +1628,40 @@ function parseVertices(text, crsKeyInput) {
     }
   }
 
+  // Converter lat/lon para UTM usando proj4js, se disponível
+  if (typeof proj4 !== 'undefined' && classified && classified.length) {
+    for (const c of classified) {
+      if (c.type === 'latlon' && typeof c.lat === 'number' && typeof c.lon === 'number') {
+        // Determinar zona UTM a partir do longitude
+        let zone = 22; // fallback para Brasil
+        if (!isNaN(c.lon)) {
+          zone = Math.floor((c.lon + 180) / 6) + 1;
+        }
+        // Montar string proj4 para zona SIRGAS2000
+        const projStr = `+proj=utm +zone=${zone} +south +ellps=GRS80 +units=m +no_defs`;
+        try {
+          const [east, north] = proj4('WGS84', projStr, [c.lon, c.lat]);
+          const id = c.id || `LL${out.length + 1}`;
+          // Evitar duplicatas próximas
+          const isDuplicate = out.some(v => Math.abs(v.east - east) < 1 && Math.abs(v.north - north) < 1);
+          if (!isDuplicate) {
+            out.push({ id, north, east, origem: 'latlon2utm' });
+          }
+        } catch (e) {
+          console.warn('[PDFtoArcgis] Falha ao converter lat/lon para UTM:', c, e);
+        }
+      }
+    }
+  }
+  // Fechar polígono se não estiver fechado
+  if (out.length > 2) {
+    const first = out[0];
+    const last = out[out.length - 1];
+    if (first && last && (first.north !== last.north || first.east !== last.east)) {
+      out.push({ ...first, id: first.id + '_close', origem: 'fechamento' });
+      console.log('[PDFtoArcgis] Polígono fechado automaticamente.');
+    }
+  }
   // Exporta ambos: lista de vértices UTM (out) e classificados (classified)
   return { utm: out, classified };
 }
