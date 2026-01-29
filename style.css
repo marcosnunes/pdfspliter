@@ -1,5 +1,5 @@
-/* Show install button only on mobile */
-/* Install App button - highlighted, responsive */
+/* Exibir botão de instalação apenas em telas de celular */
+/* Botão Instalar App - visual destacado e responsivo */
 #installPwaBtn {
     display: none;
     background: linear-gradient(90deg, #ff9800 60%, #fb8c00 100%);
@@ -20,17 +20,14 @@
     background: #fb8c00;
     box-shadow: 0 1px 4px rgba(0,0,0,0.12);
 }
-/* Success state for install button */
 #installPwaBtn.success {
     background: #43a047;
     color: #fff;
 }
-/* Error state for install button */
 #installPwaBtn.error {
     background: #e53935;
     color: #fff;
 }
-/* Mobile: install button full width and larger */
 @media (max-width: 600px) {
     #installPwaBtn {
         display: block !important;
@@ -40,8 +37,7 @@
         width: 80%;
     }
 }
-
-/* App footer styles */
+/* Footer */
 .app-footer {
     width: 100%;
     background: linear-gradient(90deg, #ff9800 60%, #fb8c00 100%);
@@ -58,19 +54,16 @@
     gap: 2px;
     margin-top: 40px;
 }
-/* Main footer text */
 .footer-main {
     font-size: 1em;
     font-weight: 500;
     display: block;
 }
-/* Footer copyright text */
 .footer-copy {
     font-size: 0.95em;
     opacity: 0.85;
     display: block;
 }
-/* Mobile: smaller footer and text */
 @media (max-width: 600px) {
     .app-footer {
         font-size: 13px;
@@ -80,6 +73,7 @@
         font-size: 0.95em;
     }
 }
+/* Footer */
 
 @media (max-width: 600px) {
     .app-footer {
@@ -99,20 +93,22 @@ body {
     z-index: 1000;
 }
 
-/* Top navigation bar */
 .nav-wrapper {
     background-color: #ffc107;
     padding: 10px;
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
     text-align: right;
-    height: 60px; /* Fixed height */
-    box-sizing: border-box; /* Padding doesn't add height */
+    /* Alinha o conteúdo (span) à direita */
+    height: 60px;
+    /* Define uma altura fixa para a barra */
+    box-sizing: border-box;
+    /* Garante que padding não adicione altura */
     display: flex;
     align-items: center;
     justify-content: flex-end;
 }
 
-/* Menu icon (open sidenav) */
+/* Estilos para o ícone de abrir o menu */
 .open-nav {
     font-size: 28px;
     cursor: pointer;
@@ -120,21 +116,27 @@ body {
     padding-right: 20px;
 }
 
-/* Sidenav (slide-out menu) */
+/* Estilos para o menu lateral (Sidenav) */
 .sidenav {
     height: 100%;
-    width: 0; /* Closed by default */
+    width: 0;
+    /* Começa fechado */
     position: fixed;
-    z-index: 1001; /* Above other content */
+    z-index: 1001;
+    /* Fica acima de outros conteúdos */
     top: 0;
     right: 0;
-    background-color: #ff9800; /* Background color */
-    overflow-x: hidden; /* No horizontal scroll */
-    transition: 0.5s; /* Slide effect */
-    padding-top: 60px; /* Top space */
+    background-color: #ff9800;
+    /* Cor de fundo */
+    overflow-x: hidden;
+    /* Desabilita scroll horizontal */
+    transition: 0.5s;
+    /* Efeito de transição */
+    padding-top: 60px;
+    /* Espaço no topo */
 }
 
-/* Sidenav links */
+/* Estilos para os links do menu lateral */
 .sidenav a {
     padding: 8px 8px 8px 32px;
     text-decoration: none;
@@ -144,7 +146,7 @@ body {
     transition: 0.3s;
 }
 
-/* Sidenav link hover effect */
+/* Efeito hover nos links */
 .sidenav a:hover {
     color: #f1f1f1;
     background-color: #fb8c00;
@@ -159,24 +161,20 @@ body {
     margin-left: 50px;
 }
 
-/* Navigation links */
 .nav-wrapper span a {
     color: white;
 }
 
-/* Flex row layout */
 .row {
     display: flex;
     flex-wrap: wrap;
     margin: 0px;
 }
 
-/* Section block spacing */
 .sectionBlockLayout {
     padding: 8px;
 }
 
-/* Main content container */
 .container {
     width: 100%;
     max-width: 1140px;
@@ -185,12 +183,10 @@ body {
     box-sizing: border-box;
 }
 
-/* Full-width column */
 .col-md-12 {
     width: 100%;
 }
 
-/* Flexible column block */
 .columnBlockLayout {
     min-width: 250px;
     flex-grow: 1;
@@ -199,7 +195,6 @@ body {
     box-sizing: border-box;
 }
 
-/* Headings and text color */
 h1,
 h2,
 h4,
@@ -208,7 +203,6 @@ span {
     color: #333;
 }
 
-/* Hero section with background image and overlay */
 .hero-section {
     padding: 50px 20px;
     margin: 0px;
@@ -225,14 +219,12 @@ span {
     color: white;
 }
 
-/* Hero section headings and selected file name */
 .hero-section h1,
 .hero-section h4,
 .hero-section span#file-selected-name {
     color: white;
 }
 
-/* Highlight selected file name in hero section */
 .hero-section span#file-selected-name {
     color: #ffc107;
     margin-bottom: 10px;
@@ -240,13 +232,11 @@ span {
     text-align: center;
 }
 
-/* Centered column in hero section */
 .hero-section .columnBlockLayout {
     margin: 40px 0px;
     align-items: center;
 }
 
-/* Main action button style */
 .button1 {
     background-color: #ff9800;
     border: none;
@@ -262,18 +252,15 @@ span {
     transition: background-color 0.3s ease;
 }
 
-/* Disabled state for main button */
 .button1:disabled {
     background-color: #cccccc;
     cursor: not-allowed;
 }
 
-/* Hover effect for main button */
 .button1:hover:not(:disabled) {
     background-color: #fb8c00;
 }
 
-/* Thumbnails container for images */
 #thumbnails-container {
     display: flex;
     flex-wrap: wrap;
@@ -281,7 +268,6 @@ span {
     margin-top: 10px;
 }
 
-/* Thumbnail image style */
 #thumbnails-container img {
     max-width: 100px;
     max-height: 100px;
@@ -290,7 +276,6 @@ span {
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
-/* Custom file upload button */
 .custom-file-upload {
     border: none;
     display: inline-block;
@@ -305,12 +290,10 @@ span {
     transition: background-color 0.3s ease;
 }
 
-/* Hover effect for file upload */
 .custom-file-upload:hover {
     background-color: #ffd54f;
 }
 
-/* Log message display area */
 #log-messages {
     font-style: italic;
     color: white;
@@ -320,7 +303,6 @@ span {
     min-height: 20px;
 }
 
-/* Info section block */
 .info-section {
     padding: 8px;
     margin: 0px;
@@ -330,7 +312,6 @@ span {
     background-color: #f8f9fa;
 }
 
-/* Info section column block */
 .info-section .columnBlockLayout {
     margin: 30px 0px;
     padding: 30px;
@@ -339,18 +320,16 @@ span {
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
-/* Info section heading */
 .info-section h2 {
     color: #ff9800;
     margin-bottom: 15px;
 }
 
-/* Info section paragraph spacing */
 .info-section p {
     line-height: 1.6;
 }
 
-/* Custom download link style */
+/* Estilo para o link de download personalizado */
 .custom-download-link {
     display: inline-block;
     padding: 10px 20px;
@@ -363,7 +342,6 @@ span {
     margin-top: 10px;
 }
 
-/* Hover effect for download link */
 .custom-download-link:hover {
     background-color: #fb8c00;
 }
