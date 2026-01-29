@@ -138,33 +138,37 @@ body {
  2. HERO SECTION
 ========================================= */
 .hero-section {
-  padding: 8px;
-  margin: 0px;
-  display: flex;
-  flex-wrap: wrap;
-  min-height: 50vh;
-  background-image: linear-gradient(0deg, rgba(0, 0, 0, 0.7), rgba(0, 0, 0, 0.7)),
-    url("https://cdn.hubblecontent.osi.office.net/m365content/publish/26f1035c-f169-4e0c-948a-0d5c861becc9/thumbnails/xxlarge.jpg");
-  background-position: center center;
-  background-repeat: no-repeat;
-  background-size: cover;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-  color: white;
-}
-
-.hero-section .columnBlockLayout {
-  margin: 40px 0px;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
+    padding: 50px 20px;
+    margin: 0px;
+    display: flex;
+    flex-wrap: wrap;
+    min-height: 400px;
+    background-image: linear-gradient(0deg, rgba(0, 0, 0, 0.7), rgba(0, 0, 0, 0.7)),
+        url("https://cdn.hubblecontent.osi.office.net/m365content/publish/26f1035c-f169-4e0c-948a-0d5c861becc9/thumbnails/xxlarge.jpg");
+    background-position: center center;
+    background-repeat: no-repeat;
+    background-size: cover;
+    align-items: center;
+    justify-content: center;
+    color: white;
 }
 
 .hero-section h1,
-.hero-section p,
-.hero-section span {
-  color: white;
+.hero-section h4,
+.hero-section span#file-selected-name {
+    color: white;
+}
+
+.hero-section span#file-selected-name {
+    color: #ffc107;
+    margin-bottom: 10px;
+    display: block;
+    text-align: center;
+}
+
+.hero-section .columnBlockLayout {
+    margin: 40px 0px;
+    align-items: center;
 }
 
 .hero-section p {
@@ -306,8 +310,6 @@ body {
 .btn-gold i {
   margin-right: 6px;
 }
-
-/* ajuste novo */
 
 /* =========================================
  5. STATUS, PROGRESSO E TABELA
