@@ -1,3 +1,78 @@
+// === [WebLLM: LLM no navegador via CDN] ===
+let webllmEngine = null;
+async function ensureWebLLM(model = "phi-2") {
+  if (window.webllm && webllmEngine) return webllmEngine;
+  // Carrega o script WebLLM se necessário
+  if (!window.webllm) {
+    await new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = "https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm/dist/webllm.min.js";
+      script.onload = resolve;
+      script.onerror = reject;
+      document.head.appendChild(script);
+    });
+  }
+  // Inicializa o modelo (ex: phi-2, tinyllama, mistral)
+  webllmEngine = new window.webllm.MLCChatModule();
+  await webllmEngine.reload({ model });
+  return webllmEngine;
+}
+
+// Função IA para deduzir os vértices corretos a partir do texto extraído
+async function deducePolygonVerticesWithAI(fullText) {
+  // WebLLM: roda LLM no navegador, sem backend
+  displayLogMessage('[JS][IA] Deduções automáticas de vértices via WebLLM (navegador)...');
+  try {
+    const engine = await ensureWebLLM("phi-2"); // ou "tinyllama", "mistral", etc
+    const prompt = `A partir do texto abaixo, extraia os vértices do polígono em formato JSON [{\"x\":..., \"y\":...}, ...]. Apenas retorne o JSON, sem explicações.\nTexto:\n${fullText}`;
+    const reply = await engine.chat.completions.create({
+      messages: [
+        { role: 'system', content: 'Você é um assistente de geoprocessamento.' },
+        { role: 'user', content: prompt }
+      ],
+      stream: false
+    });
+    let jsonText = reply.choices?.[0]?.message?.content || '';
+    const jsonMatch = jsonText.match(/\[\s*{[\s\S]*?}\s*\]/);
+    if (jsonMatch) {
+      const vertices = JSON.parse(jsonMatch[0]);
+      if (Array.isArray(vertices) && vertices.length >= 3) {
+        const first = vertices[0], last = vertices[vertices.length - 1];
+        if (first.x !== last.x || first.y !== last.y) vertices.push({ ...first });
+        return vertices;
+      }
+    }
+    displayLogMessage('[JS][IA] A resposta da IA não continha um array de vértices válido.');
+    return null;
+  } catch (err) {
+    displayLogMessage('[JS][IA] Erro ao rodar WebLLM: ' + err.message);
+    return null;
+  }
+}
+
+// === Integração no fluxo principal ===
+async function processPDFWithAI(pdfBuffer) {
+  displayLogMessage('[JS][IA] Iniciando extração IA...');
+  const fullText = await extractFullTextWithAI(pdfBuffer);
+  if (!fullText || fullText.trim().length < 30) {
+    displayLogMessage('[JS][IA] Texto insuficiente extraído.');
+    return null;
+  }
+  const vertices = await deducePolygonVerticesWithAI(fullText);
+  if (!vertices) {
+    displayLogMessage('[JS][IA] Não foi possível deduzir os vértices automaticamente.');
+    return null;
+  }
+  displayLogMessage(`[JS][IA] Vértices deduzidos: ${vertices.length}`);
+  return vertices;
+}
+
+// Exemplo de uso: fallback IA se métodos tradicionais falharem
+// Chame processPDFWithAI(pdfBuffer) quando necessário
+// Exemplo:
+// let vertices = await parseVertices(buffer);
+// if (!vertices) vertices = await processPDFWithAI(buffer);
+// if (!vertices) displayLogMessage('Falha geral na extração de vértices.');
 // Esconde o botão de instalar app se já estiver instalado (PWA/standalone)
 function isAppInstalled() {
   return (
