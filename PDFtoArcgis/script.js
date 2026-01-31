@@ -71,45 +71,46 @@ Texto para Processar:
 \nTexto:\n${fullText}`;
       const reply = await callOpenAIGPT4Turbo(prompt);
       if (!reply || !reply.choices?.[0]?.message?.content) {
+        console.error('[PDFtoArcgis][LOG IA][RAW] (resposta ausente)', reply);
         displayLogMessage('[PDFtoArcgis] Falha na resposta da OpenAI.');
         return null;
       }
       let jsonText = reply.choices[0].message.content || '';
-      // Log detalhado do retorno bruto da IA
+      // Log sempre a resposta bruta da IA
       console.log('[PDFtoArcgis][LOG IA][RAW]', jsonText);
-      displayLogMessage('[PDFtoArcgis][LOG IA] Conteúdo bruto da IA disponível no console.');
-    // Tenta extrair o objeto JSON completo
-    let obj = null;
-    try {
-      // Busca o primeiro bloco JSON válido
-      const objMatch = jsonText.match(/\{[\s\S]*\}/);
-      if (objMatch) {
-        obj = JSON.parse(objMatch[0]);
-      } else {
-        obj = JSON.parse(jsonText);
-      }
-    } catch (e) {
-      displayLogMessage('[JS][IA] Erro ao interpretar JSON da IA: ' + e.message);
-      return null;
-    }
-    if (obj && Array.isArray(obj.vertices) && obj.vertices.length >= 3) {
-      // Aceita tanto 'este/norte' quanto 'x/y' para compatibilidade
-      let vertices = obj.vertices.map(v => {
-        if (typeof v.este !== 'undefined' && typeof v.norte !== 'undefined') {
-          return { x: v.este, y: v.norte, id: v.id };
-        } else if (typeof v.x !== 'undefined' && typeof v.y !== 'undefined') {
-          return { x: v.x, y: v.y, id: v.id };
+      // Tenta extrair o objeto JSON completo
+      let obj = null;
+      try {
+        // Busca o primeiro bloco JSON válido
+        const objMatch = jsonText.match(/\{[\s\S]*\}/);
+        if (objMatch) {
+          obj = JSON.parse(objMatch[0]);
+        } else {
+          obj = JSON.parse(jsonText);
         }
+      } catch (e) {
+        console.error('[PDFtoArcgis][LOG IA][PARSE ERROR]', e, jsonText);
+        displayLogMessage('[JS][IA] Erro ao interpretar JSON da IA: ' + e.message);
         return null;
-      }).filter(Boolean);
-      if (vertices.length >= 3) {
-        const first = vertices[0], last = vertices[vertices.length - 1];
-        if (first.x !== last.x || first.y !== last.y) vertices.push({ ...first });
-        return vertices;
       }
-    }
-    displayLogMessage('[JS][IA] A resposta da IA não continha um array de vértices válido.');
-    return null;
+      if (obj && Array.isArray(obj.vertices) && obj.vertices.length >= 3) {
+        let vertices = obj.vertices.map(v => {
+          if (typeof v.este !== 'undefined' && typeof v.norte !== 'undefined') {
+            return { x: v.este, y: v.norte, id: v.id };
+          } else if (typeof v.x !== 'undefined' && typeof v.y !== 'undefined') {
+            return { x: v.x, y: v.y, id: v.id };
+          }
+          return null;
+        }).filter(Boolean);
+        if (vertices.length >= 3) {
+          const first = vertices[0], last = vertices[vertices.length - 1];
+          if (first.x !== last.x || first.y !== last.y) vertices.push({ ...first });
+          return vertices;
+        }
+      }
+      console.warn('[PDFtoArcgis][LOG IA][NO VERTICES]', obj, jsonText);
+      displayLogMessage('[JS][IA] A resposta da IA não continha um array de vértices válido.');
+      return null;
   } catch (err) {
     displayLogMessage('[JS][IA] Erro ao rodar WebLLM: ' + err.message);
     return null;
