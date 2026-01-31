@@ -2310,17 +2310,7 @@ fileInput.addEventListener("change", async (event) => {
       const textContent = await page.getTextContent({ disableCombineTextItems: false });
       let pageText = buildPageTextWithLines(textContent);
 
-      // OCR se a página estiver vazia/escaneada
-      if ((pageText || "").replace(/\s+/g, "").length < 80) {
-        updateStatus(`🔎 OCR na página ${i}...`, "info");
-        const viewport = page.getViewport({ scale: 2.5 });
-        const canvas = document.createElement("canvas");
-        const ctx = canvas.getContext("2d");
-        canvas.width = viewport.width;
-        canvas.height = viewport.height;
-        await page.render({ canvasContext: ctx, viewport }).promise;
-        pageText = await getOcrTextFromCanvas(canvas);
-      }
+      // Se a página estiver vazia/escaneada, apenas mantém o texto vazio (não faz OCR)
       pagesText.push(pageText || "");
     }
 
