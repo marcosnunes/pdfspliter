@@ -281,7 +281,7 @@ function normalizeNumber(raw) {
   v = v.replace(/[Oo]/g, "0");  // Corrige O por 0
   v = v.replace(/[lI]/g, "1");  // Corrige l/I por 1
 
-  // Normaliza separadores decimais (lógica tolerante a OCR)
+  // Normaliza separadores decimais
   if (v.includes(",") && !v.includes(".")) {
     v = v.replace(",", ".");  // "1234,56" -> "1234.56"
   } else if (v.includes(",") && v.includes(".")) {
@@ -298,7 +298,7 @@ function normalizeNumber(raw) {
   return v;
 }
 
-// Corrige valores de coordenadas fora do intervalo esperado (tolerância a erros de OCR)
+// Corrige valores de coordenadas fora do intervalo esperado
 function autoScaleCoordinate(value, expectedMin, expectedMax) {
   if (Number.isNaN(value)) return NaN;
   if (value >= expectedMin && value <= expectedMax) return value;
@@ -319,7 +319,7 @@ function autoScaleCoordinate(value, expectedMin, expectedMax) {
     // Número muito grande - tentar dividir
     let scaled = value;
 
-    // PRIMEIRO: Testar divisão por 1000 (mais comum para OCR concatenado)
+    // PRIMEIRO: Testar divisão por 1000 (mais comum para números concatenados)
     for (let power = 1; power <= 7; power++) {
       scaled = value / Math.pow(10, power);
       if (scaled >= expectedMin && scaled <= expectedMax) {
@@ -857,38 +857,6 @@ function showDetectedCrsUI(key, info) {
   }
 }
 
-/* =========================
-   OCR (Tesseract.js)
-========================= */
-let ocrWorker = null;
-const TESS_OPTS = {
-  logger: (m) => {
-    if (m && m.status) updateStatus(`OCR: ${m.status} ${(m.progress * 100).toFixed(0)}%`, "info");
-  },
-  cacheMethod: "none"
-};
-
-async function ensureOcrWorker() {
-  if (ocrWorker) return;
-  if (!window.Tesseract || typeof window.Tesseract.createWorker !== "function") {
-    throw new Error("Tesseract.createWorker não disponível. Verifique o carregamento do tesseract.min.js.");
-  }
-  updateStatus("🧠 Preparando OCR (Tesseract)...", "info");
-  ocrWorker = await window.Tesseract.createWorker(TESS_OPTS);
-  await ocrWorker.loadLanguage("por");
-  await ocrWorker.initialize("por");
-  const PSM = (window.Tesseract.PSM && window.Tesseract.PSM.SINGLE_BLOCK) ? window.Tesseract.PSM.SINGLE_BLOCK : 6;
-  await ocrWorker.setParameters({
-    tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç0123456789.,-:=()/°'\"; ",
-    tessedit_pageseg_mode: PSM
-  });
-}
-
-async function getOcrTextFromCanvas(canvas) {
-  await ensureOcrWorker();
-  const { data } = await ocrWorker.recognize(canvas);
-  return (data && data.text) ? data.text : "";
-}
 
 /* =========================
    PDF text reconstruction
@@ -1233,80 +1201,6 @@ function parseVertices(text, crsKeyInput) {
     }
   }
 
-  // ESTRATÉGIA 0B: OCR Resiliente - tolerar separadores corrompidos (: em vez de ., / em vez de ,, etc)
-  // Agora roda SEMPRE, complementando as demais estratégias
-  {
-    const ocrResilientRx = /E\s+([0-9:.,/\-\s]+?)(?:\s*m)?\s+e\s+N\s+(?:["'\\]*\s*)?([0-9:.,/\-\s]+?)(?:\s*m)/gim;
-    let ocrMatch;
-    const ocrCoords = [];
-    // Nova limpeza: extrai TODOS os números grandes de cada campo, mesmo "sujos"
-    function extractAllNumbers(raw) {
-      // Remove espaços
-      let s = raw.replace(/\s+/g, '');
-      // Substitui separadores incomuns por ponto
-      s = s.replace(/[:/\-]/g, '.');
-      // Extrai todos os números "grandes" (5+ dígitos para E, 6+ para N), mesmo fragmentados
-      const nums = [];
-      // 1. Extrair números normais (com ou sem decimal)
-      const numRegex = /([0-9]{5,}(?:[.,][0-9]{1,3})?)/g;
-      let m;
-      while ((m = numRegex.exec(s)) !== null) {
-        let num = m[1].replace(',', '.');
-        nums.push(num);
-      }
-      // 2. Se não encontrou nada, tentar reconstruir números "colando" todos os dígitos
-      if (nums.length === 0) {
-        // Remove tudo que não for dígito
-        let digits = s.replace(/[^0-9]/g, '');
-        // Tenta todos os cortes possíveis para números grandes
-        // Para E: 5+ dígitos, para N: 6+ dígitos
-        if (digits.length >= 6) {
-          // Tenta todos os cortes de 6 a 10 dígitos
-          for (let len = 6; len <= Math.min(10, digits.length); len++) {
-            for (let i = 0; i <= digits.length - len; i++) {
-              let num = digits.substr(i, len);
-              nums.push(num);
-            }
-          }
-        }
-      }
-      // Remove duplicatas
-      return [...new Set(nums)];
-    }
-    while ((ocrMatch = ocrResilientRx.exec(clean)) !== null) {
-      let eRaw = ocrMatch[1];
-      let nRaw = ocrMatch[2];
-      // Extrai todos os números possíveis de cada campo
-      const eNums = extractAllNumbers(eRaw);
-      const nNums = extractAllNumbers(nRaw);
-      // Tenta todas as combinações possíveis E/N
-      for (const eStr of eNums) {
-        for (const nStr of nNums) {
-          const east = parseFloat(eStr);
-          const north = parseFloat(nStr);
-          if (Number.isFinite(north) && Number.isFinite(east)) {
-            ocrCoords.push({ east, north });
-          }
-        }
-      }
-    }
-    // Adicionar apenas as que não são duplicadas (por valor)
-    for (const coord of ocrCoords) {
-      const isDuplicate = out.some(c => Math.abs(c.east - coord.east) < 1 && Math.abs(c.north - coord.north) < 1);
-      if (!isDuplicate) {
-        const idNum = out.length + 1;
-        const id = `V${String(idNum).padStart(3, '0')}`;
-        const v = validarVertice(id, coord.north, coord.east, 'ocrResilient', crsKey);
-        if (v && !processedIds.has(id)) {
-          out.push(v);
-          processedIds.add(id);
-        }
-      }
-    }
-    if (ocrCoords.length > 0) {
-      console.log(`[PDFtoArcgis] Estratégia 0B (OCR Resiliente): encontrados ${ocrCoords.length} candidatos, ${out.length} únicos`);
-    }
-  }
 
   // ESTRATÉGIA 1: Procurar coordenadas soltas (E=... m e N=...) e associar com marcadores
   const coordsOnly = [];
