@@ -18,16 +18,16 @@ async function ensureWebLLM(model = "phi-2") {
   return webllmEngine;
 }
 
-// Função IA para deduzir os vértices corretos a partir do texto extraído
+
+// Função IA para deduzir os vértices corretos a partir do texto extraído (selecionável + OCR)
 async function deducePolygonVerticesWithAI(fullText) {
-  // WebLLM: roda LLM no navegador, sem backend
   displayLogMessage('[JS][IA] Deduções automáticas de vértices via WebLLM (navegador)...');
   try {
-    const engine = await ensureWebLLM("phi-2"); // ou "tinyllama", "mistral", etc
-    const prompt = `A partir do texto abaixo, extraia os vértices do polígono em formato JSON [{\"x\":..., \"y\":...}, ...]. Apenas retorne o JSON, sem explicações.\nTexto:\n${fullText}`;
+    const engine = await ensureWebLLM("phi-2");
+    const prompt = `Você é um assistente de geoprocessamento cadastral. A partir do texto abaixo, extraia SOMENTE as coordenadas dos vértices do polígono do terreno descrito, ignorando outros dados. Retorne o resultado em formato JSON [{"x":..., "y":...}, ...], onde x=Easting, y=Northing, na ordem correta do polígono. Não explique, apenas retorne o JSON.\nTexto:\n${fullText}`;
     const reply = await engine.chat.completions.create({
       messages: [
-        { role: 'system', content: 'Você é um assistente de geoprocessamento.' },
+        { role: 'system', content: 'Você é um assistente de geoprocessamento cadastral.' },
         { role: 'user', content: prompt }
       ],
       stream: false
@@ -48,6 +48,48 @@ async function deducePolygonVerticesWithAI(fullText) {
     displayLogMessage('[JS][IA] Erro ao rodar WebLLM: ' + err.message);
     return null;
   }
+}
+
+// Função para extrair texto selecionável + OCR de todas as páginas
+async function extractFullTextWithAI(pdfBuffer) {
+  const pdf = await pdfjsLib.getDocument({ data: pdfBuffer }).promise;
+  let fullText = "";
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    let pageText = "";
+    try {
+      const textContent = await page.getTextContent({ disableCombineTextItems: false });
+      pageText = buildPageTextWithLines(textContent);
+    } catch (e) {
+      pageText = "";
+    }
+    // Se não extraiu texto, tenta OCR
+    if (!pageText || pageText.trim().length < 10) {
+      if (window.Android && window.Android.performOCR) {
+        // Android bridge OCR
+        try {
+          const ocrText = await window.Android.performOCR(i);
+          if (ocrText && ocrText.length > 10) pageText = ocrText;
+        } catch (e) {}
+      } else if (window.Tesseract) {
+        // Tesseract.js OCR fallback
+        try {
+          const canvas = document.createElement('canvas');
+          const viewport = page.getViewport({ scale: 2.0 });
+          canvas.width = viewport.width;
+          canvas.height = viewport.height;
+          const ctx = canvas.getContext('2d');
+          await page.render({ canvasContext: ctx, viewport }).promise;
+          const result = await window.Tesseract.recognize(canvas, 'por');
+          if (result && result.data && result.data.text && result.data.text.length > 10) {
+            pageText = result.data.text;
+          }
+        } catch (e) {}
+      }
+    }
+    fullText += pageText + "\n";
+  }
+  return fullText;
 }
 
 // === Integração no fluxo principal ===
