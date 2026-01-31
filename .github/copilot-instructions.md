@@ -39,16 +39,14 @@ PDFSpliter is a modular suite for advanced PDF processing, focused on Brazilian 
 - **Browser fallback**: Use browser APIs if `window.Android` is not present.
 - **External libraries**: PDF.js, PDFLib, jsPDF, Tesseract.js (see each tool's `script.js`).
 
+
 ## PDFtoArcgis: Strategies & Validation
-- Multi-strategy parsing (`parseVertices()`): tolerates OCR, tables, registry patterns, regional variations.
-- Automatic CRS detection (UTM, SAD69, SIRGAS2000, WGS84).
-- Topological validation: closure, self-intersection, orientation (CCW), area (Shoelace formula).
-- Memorial comparison: azimuth/distance extraction, ±2°/±2m tolerance.
-- Outputs: CSV, Shapefile, PRJ, TXT, JSON.
+- Extração de vértices feita exclusivamente por IA local (WebLLM rodando no navegador via CDN). Não há fallback OCR/Tesseract/Android.
+- CRS detection, topological validation, memorial comparison e outputs permanecem, mas toda dedução de vértices depende da IA local.
 
 ## Troubleshooting & Tips
 - **PDF not supported**: Validate in another reader or re-export.
-- **Text not extracted**: For scanned PDFs, Dividir uses Android OCR, PDFtoArcgis tries Tesseract.js + fallback.
+- **Text not extracted**: For scanned PDFs, Dividir uses Android OCR. PDFtoArcgis não faz mais OCR: se não houver texto extraível, a IA local tentará deduzir apenas do texto disponível.
 - **Coordinates not found**: Unknown format/poor OCR—check browser console for debug info.
 - **Download fails**: Try smaller files or a modern browser.
 

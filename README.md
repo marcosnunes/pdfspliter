@@ -17,13 +17,13 @@ PDFSpliter é uma suíte de ferramentas independentes para manipulação de PDFs
 - **Dividir Apenas**: Split simples, renomeação sequencial, ideal para processamento em lote.
 - **PDF para JPG**: Conversão rápida, preview, processamento em paralelo.
 - **JPG para PDF**: Consolidação de imagens, ajuste de ordem, múltiplas resoluções.
-- **PDF para ArcGIS**: Extração robusta de coordenadas (multi-estratégia, UTM/WGS84), validação topológica, geração de Shapefile/CSV/PRJ, comparação com memorial, detecção automática de matrícula.
+- **PDF para ArcGIS**: Extração de coordenadas 100% via IA local (WebLLM rodando no navegador, via CDN), validação topológica, geração de Shapefile/CSV/PRJ, comparação com memorial, detecção automática de matrícula. Não há mais fallback OCR/Tesseract/Android: toda dedução de vértices é feita exclusivamente pela IA local.
 
 ## Arquitetura & Padrões
 
 - **Isolamento total**: Cada ferramenta (Dividir, UnirPDF, etc.) tem seu próprio `index.html`, `script.js`, `style.css` e arquivo de verificação Google. Não há utilitários compartilhados — duplicação é intencional.
-- **Additivo, nunca destrutivo**: Não refatore/remova lógica funcional. Novas estratégias devem ser adicionadas como fallback (ex: `parseVertices()` em PDFtoArcgis/script.js).
-- **Android-first**: Sempre verifique `window.Android` antes de usar fallback browser para OCR, download e traduções.
+- **Additivo, nunca destrutivo**: Não refatore/remova lógica funcional. Novas estratégias devem ser adicionadas como fallback (exceto PDFtoArcgis, que agora depende exclusivamente de IA local WebLLM para dedução de vértices).
+- **Android-first**: Sempre verifique `window.Android` antes de usar fallback browser para download e traduções. (PDFtoArcgis não usa mais OCR Android nem fallback OCR.)
 - **i18n**: Use `data-i18n` no HTML e `updateUI(translations)` para atualizar textos.
 - **Feedback ao usuário**: Use `displayLogMessage()` para logs e progresso, prefixando com `[LogUI]`, `[JS]`, `[PDFtoArcgis]`.
 
@@ -107,7 +107,7 @@ pdfspliter/
 ## Dicas e Solução de Problemas
 
 - **PDF não suportado**: Valide em outro leitor, reexporte se necessário.
-- **Texto não extraído**: PDF escaneado — Dividir usa OCR Android, PDFtoArcgis tenta Tesseract.js + fallback.
+- **Texto não extraído**: PDF escaneado — Dividir usa OCR Android. PDFtoArcgis não faz mais OCR: se não houver texto extraível, a IA local tentará deduzir apenas do texto disponível.
 - **Coordenadas não encontradas**: Formato desconhecido/OCR ruim — veja console (F12) para debug.
 - **Download falha**: Tente arquivos menores, use navegador moderno.
 
