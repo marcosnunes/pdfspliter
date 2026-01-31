@@ -24,7 +24,7 @@ async function deducePolygonVerticesWithAI(fullText) {
   displayLogMessage('[JS][IA] Deduções automáticas de vértices via WebLLM (navegador)...');
   try {
     const engine = await ensureWebLLM("phi-2");
-    const prompt = `Você é um assistente de geoprocessamento cadastral. A partir do texto abaixo, extraia SOMENTE as coordenadas dos vértices do polígono do terreno descrito, ignorando outros dados. Retorne o resultado em formato JSON [{"x":..., "y":...}, ...], onde x=Easting, y=Northing, na ordem correta do polígono. Não explique, apenas retorne o JSON.\nTexto:\n${fullText}`;
+    const prompt = `Você é um assistente de geoprocessamento cadastral. A partir do texto abaixo, extraia SOMENTE as coordenadas dos vértices do polígono do terreno descrito, ignorando outros dados. Retorne o resultado em formato JSON [{"x":..., "y":...}, ...], onde x=Easting (UTM/SIRGAS2000), y=Northing (UTM/SIRGAS2000), na ordem correta do polígono, já fechado (primeiro e último ponto iguais). Não explique, apenas retorne o JSON. O resultado deve ser compatível para exportação em CSV e shapefile para uso no ArcGIS.\nTexto:\n${fullText}`;
     const reply = await engine.chat.completions.create({
       messages: [
         { role: 'system', content: 'Você é um assistente de geoprocessamento cadastral.' },
