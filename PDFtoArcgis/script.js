@@ -70,14 +70,14 @@ Exemplo de Saída Esperada:
 Texto para Processar:
 \nTexto:\n${fullText}`;
       const reply = await callOpenAIGPT4Turbo(prompt);
+      let jsonText = (reply && reply.choices && reply.choices[0] && reply.choices[0].message && reply.choices[0].message.content) ? reply.choices[0].message.content : '';
+      // Sempre logar a resposta bruta da IA antes de qualquer processamento
+      console.log('[PDFtoArcgis][LOG IA][RAW]', jsonText);
       if (!reply || !reply.choices?.[0]?.message?.content) {
         console.error('[PDFtoArcgis][LOG IA][RAW] (resposta ausente)', reply);
         displayLogMessage('[PDFtoArcgis] Falha na resposta da OpenAI.');
         return null;
       }
-      let jsonText = reply.choices[0].message.content || '';
-      // Log sempre a resposta bruta da IA
-      console.log('[PDFtoArcgis][LOG IA][RAW]', jsonText);
       // Tenta extrair o objeto JSON completo
       let obj = null;
       try {
