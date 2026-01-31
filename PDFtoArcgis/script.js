@@ -1,3 +1,46 @@
+// =============================
+// Suporte à API OpenAI GPT-4 Turbo
+// =============================
+let openaiApiKey = '';
+
+function setOpenAIApiKey(key) {
+  openaiApiKey = key;
+}
+
+async function callOpenAIGPT4Turbo(prompt) {
+  if (!openaiApiKey) {
+    displayLogMessage('[PDFtoArcgis] ⚠️ Chave da API OpenAI não configurada.');
+    return null;
+  }
+  try {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + openaiApiKey
+      },
+      body: JSON.stringify({
+        model: 'gpt-4-turbo',
+        messages: [
+          { role: 'system', content: 'Você é um assistente especialista em georreferenciamento de imóveis rurais brasileiros. Extraia apenas os vértices do polígono em UTM/SIRGAS2000, ordem correta, polígono fechado.' },
+          { role: 'user', content: prompt }
+        ],
+        temperature: 0.1,
+        max_tokens: 2048
+      })
+    });
+    if (!response.ok) {
+      displayLogMessage('[PDFtoArcgis] Erro na API OpenAI: ' + response.status);
+      return null;
+    }
+    const data = await response.json();
+    return data;
+  } catch (e) {
+    displayLogMessage('[PDFtoArcgis] Erro ao chamar OpenAI: ' + e.message);
+    return null;
+  }
+}
+
 // === [WebLLM: LLM no navegador via CDN] ===
 let webllmEngine = null;
 async function ensureWebLLM(model = "phi-2") {
@@ -53,6 +96,23 @@ Texto para Processar:
       ],
       stream: false
     });
+    // Tenta primeiro com OpenAI GPT-4 Turbo se chave configurada
+    let reply = null;
+    if (openaiApiKey) {
+      displayLogMessage('[PDFtoArcgis] Chamando OpenAI GPT-4 Turbo...');
+      reply = await callOpenAIGPT4Turbo(fullText);
+      if (reply && reply.choices?.[0]?.message?.content) {
+        displayLogMessage('[PDFtoArcgis] Resposta recebida da OpenAI.');
+      } else {
+        displayLogMessage('[PDFtoArcgis] Falha na resposta da OpenAI, tentando WebLLM local.');
+        reply = null;
+      }
+    }
+    // Fallback: WebLLM local
+    if (!reply) {
+      displayLogMessage('[PDFtoArcgis] Usando WebLLM local...');
+      reply = await runWebLLM(fullText); // Função já existente
+    }
     let jsonText = reply.choices?.[0]?.message?.content || '';
     // Tenta extrair o objeto JSON completo
     let obj = null;
