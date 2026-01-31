@@ -89,7 +89,7 @@ Exemplo de Saída Esperada:
 
 Texto para Processar:
 \nTexto:\n${fullText}`;
-    const reply = await engine.chat.completions.create({
+    let reply = await engine.chat.completions.create({
       messages: [
         { role: 'system', content: 'Atue como um especialista em geoprocessamento.' },
         { role: 'user', content: prompt }
@@ -97,7 +97,6 @@ Texto para Processar:
       stream: false
     });
     // Tenta primeiro com OpenAI GPT-4 Turbo se chave configurada
-    let reply = null;
     if (openaiApiKey) {
       displayLogMessage('[PDFtoArcgis] Chamando OpenAI GPT-4 Turbo...');
       reply = await callOpenAIGPT4Turbo(fullText);
