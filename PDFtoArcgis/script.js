@@ -75,6 +75,9 @@ Texto para Processar:
         return null;
       }
       let jsonText = reply.choices[0].message.content || '';
+      // Log detalhado do retorno bruto da IA
+      console.log('[PDFtoArcgis][LOG IA][RAW]', jsonText);
+      displayLogMessage('[PDFtoArcgis][LOG IA] Conteúdo bruto da IA disponível no console.');
     // Tenta extrair o objeto JSON completo
     let obj = null;
     try {
