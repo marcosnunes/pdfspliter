@@ -3337,42 +3337,37 @@ saveToFolderBtn.onclick = async () => {
     const writeFile = async (name, data) => {
       try {
         logWrite(`[PDFtoArcgis] 📝 Gravando ${name}...`);
-        // Tenta remover o arquivo se já existir
-        try {
-          const existing = await handle.getFileHandle(name);
-          await handle.removeEntry(name);
-          // Re-validar handle após remover arquivo
-          handle = await window.showDirectoryPicker({ mode: "readwrite" });
-        } catch (e) {
-          // Se não existe ou erro temporário, ignora
-          if (e && e.name !== "NotFoundError" && e.name !== "InvalidStateError") {
-            throw e;
-          }
-        }
+        
+        // Usar keepExistingData: false para sobrescrever se o arquivo já existe
         const fh = await handle.getFileHandle(name, { create: true });
-        const w = await fh.createWritable();
+        const w = await fh.createWritable({ keepExistingData: false });
         await w.write(data);
         await w.close();
         logWrite(`[PDFtoArcgis] ✓ ${name} gravado`);
       } catch (err) {
         // Se o usuário cancelar, não mostrar erro
         if (err && err.name === "AbortError") return;
-        // Se falhar por estado inválido, re-selecionar diretório
+        
+        // Se falhar por estado inválido, indicar problema
         if (err && (err.name === "InvalidStateError" || err.message.includes("state cached"))) {
-          logWrite("[PDFtoArcgis] ⚠️ Diretório desincronizado. Tentando novamente...");
-          throw new Error("Diretório desincronizado. Selecione a pasta novamente.");
+          logWrite("[PDFtoArcgis] ⚠️ Diretório desincronizado. Re-selecionando...");
+          // Tentar re-selecionar e fazer retry uma única vez
+          try {
+            handle = await window.showDirectoryPicker({ mode: "readwrite" });
+            const fhRetry = await handle.getFileHandle(name, { create: true });
+            const wRetry = await fhRetry.createWritable({ keepExistingData: false });
+            await wRetry.write(data);
+            await wRetry.close();
+            logWrite(`[PDFtoArcgis] ✓ ${name} gravado (após re-sincronizar)`);
+            return;
+          } catch (retryErr) {
+            logWrite(`[PDFtoArcgis] ❌ Falha após re-sincronizar: ${retryErr.message}`);
+            throw new Error("Diretório permanentemente desincronizado. Selecione a pasta novamente.");
+          }
         }
-        // Se falhar, tenta com truncate
-        try {
-          const fh = await handle.getFileHandle(name, { create: true });
-          const w = await fh.createWritable({ keepExistingData: false });
-          await w.write(data);
-          await w.close();
-          logWrite(`[PDFtoArcgis] ✓ ${name} gravado (com retry)`);
-        } catch (retryErr) {
-          logWrite(`[PDFtoArcgis] ❌ Erro ao salvar ${name}: ${retryErr.message}`);
-          throw retryErr;
-        }
+        
+        logWrite(`[PDFtoArcgis] ❌ Erro ao salvar ${name}: ${err.message}`);
+        throw err;
       }
     };
 
