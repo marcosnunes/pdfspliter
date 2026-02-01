@@ -153,6 +153,7 @@ async function processPDFWithAI(pdfBuffer) {
 // let vertices = await parseVertices(buffer);
 // if (!vertices) vertices = await processPDFWithAI(buffer);
 // if (!vertices) displayLogMessage('Falha geral na extração de vértices.');
+
 // Esconde o botão de instalar app se já estiver instalado (PWA/standalone)
 function isAppInstalled() {
   return (
@@ -2523,7 +2524,7 @@ if (saveToFolderBtn && window.shpwrite) {
     // Montar GeoJSON simples
     const coords = iaObj.vertices.map(v => [Number(v.este ?? v.east), Number(v.norte ?? v.north)]);
     // Fechar polígono se necessário
-    if (coords.length && (coords[0][0] !== coords[coords.length-1][0] || coords[0][1] !== coords[coords.length-1][1])) {
+    if (coords.length && (coords[0][0] !== coords[coords.length - 1][0] || coords[0][1] !== coords[coords.length - 1][1])) {
       coords.push([coords[0][0], coords[0][1]]);
     }
     const geojson = {
@@ -2544,10 +2545,10 @@ if (saveToFolderBtn && window.shpwrite) {
     window.shpwrite.download(geojson, { file: `vertices_IA_${Date.now()}` });
   };
 }
-}
+
 
 /* ===== LEGACY: Mantém função antiga para compatibilidade ===== */
-function processExtractUnified_legacy(pagesText) {
+async function processExtractUnified_legacy(pagesText) {
   const docs = splitPagesIntoDocuments(pagesText);
 
   let det = detectProjectionFromText(pagesText.join("\n"));
