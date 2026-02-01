@@ -12,13 +12,28 @@ if (typeof displayLogMessage !== 'function' && window.displayLogMessage) {
   var displayLogMessage = window.displayLogMessage;
 }
 
-async function callOpenAIGPT4Turbo(prompt) {
+async function callOpenAIGPT4Turbo(prompt, retryCount = 0) {
+  const MAX_RETRIES = 5;
+  const INITIAL_DELAY_MS = 1000;
+  
   const response = await fetch('/api/llama-3.1-8b-instant', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ prompt })
   });
+  
   if (!response.ok) {
+    // Retry em 429 (Too Many Requests) com backoff exponencial
+    if (response.status === 429 && retryCount < MAX_RETRIES) {
+      const delay = INITIAL_DELAY_MS * Math.pow(2, retryCount);
+      console.warn(`[PDFtoArcgis] 429 Too Many Requests. Retry ${retryCount + 1}/${MAX_RETRIES} em ${delay}ms (backoff exp)...`);
+      if (typeof displayLogMessage === 'function') {
+        displayLogMessage(`[PDFtoArcgis][LogUI] Taxa limite atingida. Aguardando ${(delay/1000).toFixed(1)}s antes de tentar novamente...`);
+      }
+      await new Promise(resolve => setTimeout(resolve, delay));
+      return callOpenAIGPT4Turbo(prompt, retryCount + 1);
+    }
+    
     if (typeof displayLogMessage === 'function') {
       displayLogMessage('[PDFtoArcgis] Erro na API OpenAI: ' + response.status);
     } else {
@@ -32,18 +47,22 @@ async function callOpenAIGPT4Turbo(prompt) {
 
 function extractRelevantLinesForAI(fullText) {
   const lines = String(fullText || "").split(/\r?\n/);
-  const keywords = /(v[ée]rtice|coordenad|azimute|dist[âa]ncia|utm|sirgas|sad\s*69|wgs\s*84|matr[ií]cula|im[óo]vel|fuso|zona)/i;
-  const coordPattern = /(\b[EN]\s*\d{3}[\d\.,]*\s*m?\b)|(\b\d{3}[\d\.,]*\s*m\b\s*e\s*\b\d{3}[\d\.,]*\s*m\b)/i;
+  // Ultra-agressivo: apenas linhas que contenham vértice ID + coordenadas E/N
+  const vertexPattern = /vértice\s+[a-z]?\d+|^[a-z]?\d+[\s\.,]*$/i;
+  const coordPattern = /\b[EN]\b[\s\.,0-9]*m?\b|^\d{4,}\.\d{2,}|^\d+[\s\.,]\d{2,}m?$/;
   const keep = [];
   for (const ln of lines) {
     const line = ln.trim();
-    if (!line) continue;
-    if (keywords.test(line) || coordPattern.test(line)) keep.push(line);
+    if (!line || line.length < 3) continue;
+    // Manter linha se tem "vértice" + ID, ou if é puramente coordenada numérica
+    if ((vertexPattern.test(line) || coordPattern.test(line)) && /\d/.test(line)) {
+      keep.push(line);
+    }
   }
   return keep.join("\n");
 }
 
-function splitTextForAI(text, maxChars = 12000) {
+function splitTextForAI(text, maxChars = 6000) {
   const chunks = [];
   let current = "";
   const lines = String(text || "").split(/\r?\n/);
@@ -155,22 +174,34 @@ async function deducePolygonVerticesWithAI(fullText) {
     if (!reply || !reply.choices?.[0]?.message?.content) {
       // Fallback 2: dividir em chunks e juntar vértices
       const reduced = extractRelevantLinesForAI(fullText);
-      const chunks = splitTextForAI(reduced, 9000);
+      const chunks = splitTextForAI(reduced, 6000);
       const results = [];
       if (typeof displayLogMessage === 'function') {
-        displayLogMessage(`[PDFtoArcgis][LogUI] Processando ${chunks.length} chunk(s) da IA...`);
+        displayLogMessage(`[PDFtoArcgis][LogUI] 📊 Dividindo PDF em ${chunks.length} parte(s) para análise...`);
       }
       for (let i = 0; i < chunks.length; i++) {
+        if (typeof displayLogMessage === 'function') {
+          displayLogMessage(`[PDFtoArcgis][LogUI] ⏳ Analisando parte ${i + 1} de ${chunks.length}...`);
+        }
         const p = smallPrompt(chunks[i]);
         console.log(`[PDFtoArcgis][LOG IA][PROMPT][CHUNK ${i + 1}/${chunks.length}]`, p);
         const r = await callOpenAIGPT4Turbo(p);
         let content = r?.choices?.[0]?.message?.content || "";
         console.log(`[PDFtoArcgis][LOG IA][RAW][CHUNK ${i + 1}/${chunks.length}]`, content);
-        if (!content) continue;
+        if (!content) {
+          console.warn(`[PDFtoArcgis] Chunk ${i + 1} sem resposta`);
+          continue;
+        }
         // Reparar JSON malformado
         content = repairJsonCoordinates(content);
         try {
-          results.push(JSON.parse(content));
+          const parsed = JSON.parse(content);
+          results.push(parsed);
+          const vcount = Array.isArray(parsed?.vertices) ? parsed.vertices.length : 0;
+          console.log(`[PDFtoArcgis] Chunk ${i + 1}: ${vcount} vértices extraídos`);
+          if (typeof displayLogMessage === 'function') {
+            displayLogMessage(`[PDFtoArcgis][LogUI] ✅ Parte ${i + 1}: ${vcount} vértice(s) encontrado(s)`);
+          }
         } catch (e) {
           console.error('[PDFtoArcgis][LOG IA][PARSE ERROR][CHUNK]', e, content);
           // Tentar extrair array JSON mesmo com erro
@@ -178,15 +209,26 @@ async function deducePolygonVerticesWithAI(fullText) {
           if (arrMatch) {
             const repaired = repairJsonCoordinates('{"vertices":' + arrMatch[0] + '}');
             try {
-              results.push(JSON.parse(repaired));
+              const parsed = JSON.parse(repaired);
+              results.push(parsed);
+              const vcount = Array.isArray(parsed?.vertices) ? parsed.vertices.length : 0;
+              console.log(`[PDFtoArcgis] Chunk ${i + 1} (recover): ${vcount} vértices extraídos`);
             } catch (e2) {
               console.error('[PDFtoArcgis][LOG IA][PARSE ERROR][CHUNK RETRY]', e2);
             }
           }
         }
+        // Delay entre chunks para evitar rate limit (500ms entre requisições)
+        if (i < chunks.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
       }
 
       const mergedVertices = mergeVerticesFromChunks(results);
+      console.log(`[PDFtoArcgis] Total de vértices únicos: ${mergedVertices.length}`);
+      if (typeof displayLogMessage === 'function') {
+        displayLogMessage(`[PDFtoArcgis][LogUI] 📍 Total: ${mergedVertices.length} vértice(s) único(s) encontrado(s)`);
+      }
       if (mergedVertices.length >= 3) {
         return {
           imovel: null,
