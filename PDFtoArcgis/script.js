@@ -30,6 +30,55 @@ async function callOpenAIGPT4Turbo(prompt) {
   return data;
 }
 
+function extractRelevantLinesForAI(fullText) {
+  const lines = String(fullText || "").split(/\r?\n/);
+  const keywords = /(v[ée]rtice|coordenad|azimute|dist[âa]ncia|utm|sirgas|sad\s*69|wgs\s*84|matr[ií]cula|im[óo]vel|fuso|zona)/i;
+  const coordPattern = /(\b[EN]\s*\d{3}[\d\.,]*\s*m?\b)|(\b\d{3}[\d\.,]*\s*m\b\s*e\s*\b\d{3}[\d\.,]*\s*m\b)/i;
+  const keep = [];
+  for (const ln of lines) {
+    const line = ln.trim();
+    if (!line) continue;
+    if (keywords.test(line) || coordPattern.test(line)) keep.push(line);
+  }
+  return keep.join("\n");
+}
+
+function splitTextForAI(text, maxChars = 12000) {
+  const chunks = [];
+  let current = "";
+  const lines = String(text || "").split(/\r?\n/);
+  for (const ln of lines) {
+    if ((current + "\n" + ln).length > maxChars && current.length) {
+      chunks.push(current);
+      current = ln;
+    } else {
+      current += (current ? "\n" : "") + ln;
+    }
+  }
+  if (current) chunks.push(current);
+  return chunks;
+}
+
+function mergeVerticesFromChunks(chunksResults) {
+  const merged = [];
+  const seen = new Set();
+  for (const obj of chunksResults) {
+    const verts = Array.isArray(obj?.vertices) ? obj.vertices : [];
+    for (const v of verts) {
+      const id = String(v.id || "").trim();
+      const east = Number(v.este ?? v.east);
+      const north = Number(v.norte ?? v.north);
+      const key = `${id}|${east}|${north}`;
+      if (!Number.isFinite(east) || !Number.isFinite(north)) continue;
+      if (!seen.has(key)) {
+        seen.add(key);
+        merged.push({ id: v.id || id, este: east, norte: north });
+      }
+    }
+  }
+  return merged;
+}
+
 // === [WebLLM: LLM no navegador via CDN] ===
 let webllmEngine = null;
 async function ensureWebLLM(model = "phi-2") {
@@ -54,21 +103,70 @@ async function ensureWebLLM(model = "phi-2") {
 // Função IA para deduzir os vértices corretos a partir do texto extraído (selecionável + OCR)
 async function deducePolygonVerticesWithAI(fullText) {
   // NOVO FLUXO: Apenas IA, sem heurística, sem pós-processamento
-  const prompt = `Instrução: Atue como um especialista em geoprocessamento. Extraia os dados topográficos do texto abaixo e retorne APENAS um objeto JSON válido. Não inclua explicações ou texto adicional.\n\nRegras de Extração:\n1. Identifique o nome do imóvel ou gleba.\n2. Identifique o número da Matrícula (se disponível).\n3. Extraia todos os vértices com seu ID, Coordenada Este (E/X) e Coordenada Norte (N/Y).\n4. Remova símbolos de unidade como 'm' ou '.' de milhar, mantendo apenas o ponto decimal.\n5. Identifique o DATUM (ex: SIRGAS 2000).\n\nExemplo de Saída Esperada:\n{\n  "imovel": "Chácara 26 - Fazenda Limeira",\n  "matricula": "31.644",\n  "datum": "SIRGAS 2000",\n  "vertices": [\n    {"id": "0=PP", "este": 535842.302, "norte": 7312819.308},\n    {"id": "1", "este": 536070.136, "norte": 7312593.145}\n  ]\n}\n\nTexto para Processar:\n${fullText}`;
+  const basePrompt = (text) => `Instrução: Atue como um especialista em geoprocessamento. Extraia os dados topográficos do texto abaixo e retorne APENAS um objeto JSON válido. Não inclua explicações ou texto adicional.\n\nRegras de Extração:\n1. Identifique o nome do imóvel ou gleba.\n2. Identifique o número da Matrícula (se disponível).\n3. Extraia todos os vértices com seu ID, Coordenada Este (E/X) e Coordenada Norte (N/Y).\n4. Remova símbolos de unidade como 'm' ou '.' de milhar, mantendo apenas o ponto decimal.\n5. Identifique o DATUM (ex: SIRGAS 2000).\n\nExemplo de Saída Esperada:\n{\n  "imovel": "Chácara 26 - Fazenda Limeira",\n  "matricula": "31.644",\n  "datum": "SIRGAS 2000",\n  "vertices": [\n    {"id": "0=PP", "este": 535842.302, "norte": 7312819.308},\n    {"id": "1", "este": 536070.136, "norte": 7312593.145}\n  ]\n}\n\nTexto para Processar:\n${text}`;
+
+  const smallPrompt = (text) => `Instrução: Extraia APENAS os vértices (ID, Este, Norte) do texto abaixo e retorne um JSON válido. Sem explicações.\n\nFormato:\n{\n  "vertices": [\n    {"id": "P1", "este": 123456.789, "norte": 7123456.789}\n  ]\n}\n\nTexto:\n${text}`;
+
+  let workingText = fullText || "";
+  const MAX_PROMPT = 18000;
+  if (workingText.length > MAX_PROMPT) {
+    workingText = extractRelevantLinesForAI(workingText);
+  }
+
+  let prompt = basePrompt(workingText);
   // Logar prompt enviado
   console.log('[PDFtoArcgis][LOG IA][PROMPT]', prompt);
-  const reply = await callOpenAIGPT4Turbo(prompt);
+  let reply = await callOpenAIGPT4Turbo(prompt);
   let jsonText = (reply && reply.choices && reply.choices[0] && reply.choices[0].message && reply.choices[0].message.content) ? reply.choices[0].message.content : '';
   // Logar resposta bruta da IA
   console.log('[PDFtoArcgis][LOG IA][RAW]', jsonText);
   if (!reply || !reply.choices?.[0]?.message?.content) {
     console.error('[PDFtoArcgis][LOG IA][RAW] (resposta ausente)', reply);
-    if (typeof displayLogMessage === 'function') {
-      displayLogMessage('[PDFtoArcgis] Falha na resposta da OpenAI.');
-    } else {
-      console.error('[PDFtoArcgis] Falha na resposta da OpenAI.');
+    // Fallback 1: texto filtrado (se ainda não tentou)
+    if (workingText !== fullText) {
+      prompt = basePrompt(workingText);
+      console.log('[PDFtoArcgis][LOG IA][PROMPT][FALLBACK-REDUCED]', prompt);
+      reply = await callOpenAIGPT4Turbo(prompt);
+      jsonText = (reply && reply.choices?.[0]?.message?.content) ? reply.choices[0].message.content : '';
+      console.log('[PDFtoArcgis][LOG IA][RAW][FALLBACK-REDUCED]', jsonText);
     }
-    return null;
+
+    if (!reply || !reply.choices?.[0]?.message?.content) {
+      // Fallback 2: dividir em chunks e juntar vértices
+      const reduced = extractRelevantLinesForAI(fullText);
+      const chunks = splitTextForAI(reduced, 12000);
+      const results = [];
+      for (let i = 0; i < chunks.length; i++) {
+        const p = smallPrompt(chunks[i]);
+        console.log(`[PDFtoArcgis][LOG IA][PROMPT][CHUNK ${i + 1}/${chunks.length}]`, p);
+        const r = await callOpenAIGPT4Turbo(p);
+        const content = r?.choices?.[0]?.message?.content || "";
+        console.log(`[PDFtoArcgis][LOG IA][RAW][CHUNK ${i + 1}/${chunks.length}]`, content);
+        if (!content) continue;
+        try {
+          results.push(JSON.parse(content));
+        } catch (e) {
+          console.error('[PDFtoArcgis][LOG IA][PARSE ERROR][CHUNK]', e, content);
+        }
+      }
+
+      const mergedVertices = mergeVerticesFromChunks(results);
+      if (mergedVertices.length >= 3) {
+        return {
+          imovel: null,
+          matricula: null,
+          datum: null,
+          vertices: mergedVertices
+        };
+      }
+
+      if (typeof displayLogMessage === 'function') {
+        displayLogMessage('[PDFtoArcgis] Falha na resposta da OpenAI.');
+      } else {
+        console.error('[PDFtoArcgis] Falha na resposta da OpenAI.');
+      }
+      return null;
+    }
   }
   // Apenas parse JSON, sem heurística
   let obj = null;
