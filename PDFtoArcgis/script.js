@@ -142,7 +142,24 @@ async function ensureWebLLM(model = "phi-2") {
 
 // Função IA para processar página por página
 async function deducePolygonVerticesPerPage(pagesText) {
-  const smallPrompt = (text) => `Instrução: Extraia APENAS os vértices (ID, Este, Norte) do texto abaixo e retorne um JSON válido. Sem explicações.\n\nFormato:\n{\n  "vertices": [\n    {"id": "P1", "este": 123456.789, "norte": 7123456.789}\n  ]\n}\n\nTexto:\n${text}`;
+  const smallPrompt = (text) => `Instrução crítica: Extraia APENAS os vértices (ID, Este, Norte) do texto abaixo e retorne JSON válido.
+
+⚠️ IMPORTANTE:
+- Este (E): deve ter 6 dígitos inteiros (160000 a 840000) + decimais. Exemplo: 519413.153
+- Norte (N): deve ter 7 dígitos (7000000 a 10000000) + decimais. Exemplo: 7332319.460
+- NÃO use valores de exemplo (123456.789, 111111.111, etc)
+- Se coordenadas parecem truncadas (ex: 519.579), adicionar zeros para formato correto (519579.xxx)
+- Se não encontrar coordenadas válidas, retorne {"vertices": []}
+
+Formato resposta:
+{
+  "vertices": [
+    {"id": "P1", "este": 519413.153, "norte": 7332319.460}
+  ]
+}
+
+Texto do documento:
+${text}`;
 
   const results = [];
   const totalPages = pagesText.length;
@@ -204,11 +221,33 @@ async function deducePolygonVerticesPerPage(pagesText) {
       // Validar coordenadas UTM (evitar dados fake/teste)
       if (parsed?.vertices && Array.isArray(parsed.vertices)) {
         const validVertices = parsed.vertices.filter(v => {
-          const e = parseFloat(v.este || v.east || 0);
-          const n = parseFloat(v.norte || v.north || 0);
-          // Coordenadas UTM válidas para Brasil: E: 160000-840000, N: 7000000-10000000
+          let e = parseFloat(v.este || v.east || 0);
+          let n = parseFloat(v.norte || v.north || 0);
+          
+          // Reparar coordenadas truncadas (ex: 519.579 → 519579)
+          if (e > 0 && e < 1000 && e % 1 !== 0) {
+            // Parece truncada, tentar reconstruir
+            const eTruncated = Math.round(e * 1000); // 519.579 * 1000 = 519579
+            if (eTruncated >= 160000 && eTruncated <= 840000) {
+              console.log(`[PDFtoArcgis] 🔧 Reparado E truncado: ${e} → ${eTruncated}`);
+              e = eTruncated;
+              v.este = eTruncated;
+            }
+          }
+          
+          // Verificar se é valor de teste/exemplo (123456, 111111, etc)
+          const isTestValue = (e === 123456.789 || e === 123456.89 || e === 123456 || 
+                              (e > 0 && e < 160000) ||
+                              n < 7000000);
+          
           const isValidE = e >= 160000 && e <= 840000;
           const isValidN = n >= 7000000 && n <= 10000000;
+          
+          if (isTestValue) {
+            console.warn(`[PDFtoArcgis] ⚠️ Valor de teste/exemplo detectado: ${v.id || '?'} E=${e} N=${n}`);
+            return false;
+          }
+          
           if (!isValidE || !isValidN) {
             console.warn(`[PDFtoArcgis] ⚠️ Coordenada inválida detectada: ${v.id || '?'} E=${e} N=${n}`);
           }
