@@ -44,77 +44,30 @@ async function ensureWebLLM(model = "phi-2") {
 
 // Função IA para deduzir os vértices corretos a partir do texto extraído (selecionável + OCR)
 async function deducePolygonVerticesWithAI(fullText) {
-  displayLogMessage('[JS][IA] Deduções automáticas de vértices via WebLLM (navegador)...');
-  try {
-    const engine = await ensureWebLLM("phi-2");
-    const prompt = `Instrução: Atue como um especialista em geoprocessamento. Extraia os dados topográficos do texto abaixo e retorne APENAS um objeto JSON válido. Não inclua explicações ou texto adicional.
-
-Regras de Extração:
-1. Identifique o nome do imóvel ou gleba.
-2. Identifique o número da Matrícula (se disponível).
-3. Extraia todos os vértices com seu ID, Coordenada Este (E/X) e Coordenada Norte (N/Y).
-4. Remova símbolos de unidade como 'm' ou '.' de milhar, mantendo apenas o ponto decimal.
-5. Identifique o DATUM (ex: SIRGAS 2000).
-
-Exemplo de Saída Esperada:
-{
-  "imovel": "Chácara 26 - Fazenda Limeira",
-  "matricula": "31.644",
-  "datum": "SIRGAS 2000",
-  "vertices": [
-    {"id": "0=PP", "este": 535842.302, "norte": 7312819.308},
-    {"id": "1", "este": 536070.136, "norte": 7312593.145}
-  ]
-}
-
-Texto para Processar:
-\nTexto:\n${fullText}`;
-      const reply = await callOpenAIGPT4Turbo(prompt);
-      let jsonText = (reply && reply.choices && reply.choices[0] && reply.choices[0].message && reply.choices[0].message.content) ? reply.choices[0].message.content : '';
-      // Sempre logar a resposta bruta da IA antes de qualquer processamento
-      console.log('[PDFtoArcgis][LOG IA][RAW]', jsonText);
-      if (!reply || !reply.choices?.[0]?.message?.content) {
-        console.error('[PDFtoArcgis][LOG IA][RAW] (resposta ausente)', reply);
-        displayLogMessage('[PDFtoArcgis] Falha na resposta da OpenAI.');
-        return null;
-      }
-      // Tenta extrair o objeto JSON completo
-      let obj = null;
-      try {
-        // Busca o primeiro bloco JSON válido
-        const objMatch = jsonText.match(/\{[\s\S]*\}/);
-        if (objMatch) {
-          obj = JSON.parse(objMatch[0]);
-        } else {
-          obj = JSON.parse(jsonText);
-        }
-      } catch (e) {
-        console.error('[PDFtoArcgis][LOG IA][PARSE ERROR]', e, jsonText);
-        displayLogMessage('[JS][IA] Erro ao interpretar JSON da IA: ' + e.message);
-        return null;
-      }
-      if (obj && Array.isArray(obj.vertices) && obj.vertices.length >= 3) {
-        let vertices = obj.vertices.map(v => {
-          if (typeof v.este !== 'undefined' && typeof v.norte !== 'undefined') {
-            return { x: v.este, y: v.norte, id: v.id };
-          } else if (typeof v.x !== 'undefined' && typeof v.y !== 'undefined') {
-            return { x: v.x, y: v.y, id: v.id };
-          }
-          return null;
-        }).filter(Boolean);
-        if (vertices.length >= 3) {
-          const first = vertices[0], last = vertices[vertices.length - 1];
-          if (first.x !== last.x || first.y !== last.y) vertices.push({ ...first });
-          return vertices;
-        }
-      }
-      console.warn('[PDFtoArcgis][LOG IA][NO VERTICES]', obj, jsonText);
-      displayLogMessage('[JS][IA] A resposta da IA não continha um array de vértices válido.');
-      return null;
-  } catch (err) {
-    displayLogMessage('[JS][IA] Erro ao rodar WebLLM: ' + err.message);
+  // NOVO FLUXO: Apenas IA, sem heurística, sem pós-processamento
+  const prompt = `Instrução: Atue como um especialista em geoprocessamento. Extraia os dados topográficos do texto abaixo e retorne APENAS um objeto JSON válido. Não inclua explicações ou texto adicional.\n\nRegras de Extração:\n1. Identifique o nome do imóvel ou gleba.\n2. Identifique o número da Matrícula (se disponível).\n3. Extraia todos os vértices com seu ID, Coordenada Este (E/X) e Coordenada Norte (N/Y).\n4. Remova símbolos de unidade como 'm' ou '.' de milhar, mantendo apenas o ponto decimal.\n5. Identifique o DATUM (ex: SIRGAS 2000).\n\nExemplo de Saída Esperada:\n{\n  "imovel": "Chácara 26 - Fazenda Limeira",\n  "matricula": "31.644",\n  "datum": "SIRGAS 2000",\n  "vertices": [\n    {"id": "0=PP", "este": 535842.302, "norte": 7312819.308},\n    {"id": "1", "este": 536070.136, "norte": 7312593.145}\n  ]\n}\n\nTexto para Processar:\n${fullText}`;
+  // Logar prompt enviado
+  console.log('[PDFtoArcgis][LOG IA][PROMPT]', prompt);
+  const reply = await callOpenAIGPT4Turbo(prompt);
+  let jsonText = (reply && reply.choices && reply.choices[0] && reply.choices[0].message && reply.choices[0].message.content) ? reply.choices[0].message.content : '';
+  // Logar resposta bruta da IA
+  console.log('[PDFtoArcgis][LOG IA][RAW]', jsonText);
+  if (!reply || !reply.choices?.[0]?.message?.content) {
+    console.error('[PDFtoArcgis][LOG IA][RAW] (resposta ausente)', reply);
+    displayLogMessage('[PDFtoArcgis] Falha na resposta da OpenAI.');
     return null;
   }
+  // Apenas parse JSON, sem heurística
+  let obj = null;
+  try {
+    obj = JSON.parse(jsonText);
+  } catch (e) {
+    console.error('[PDFtoArcgis][LOG IA][PARSE ERROR]', e, jsonText);
+    displayLogMessage('[JS][IA] Erro ao interpretar JSON da IA: ' + e.message);
+    return null;
+  }
+  // Retornar objeto cru da IA (sem pós-processamento)
+  return obj;
 }
 
 // Função para extrair texto selecionável + OCR de todas as páginas
@@ -167,13 +120,14 @@ async function processPDFWithAI(pdfBuffer) {
     displayLogMessage('[JS][IA] Texto insuficiente extraído.');
     return null;
   }
-  const vertices = await deducePolygonVerticesWithAI(fullText);
-  if (!vertices) {
-    displayLogMessage('[JS][IA] Não foi possível deduzir os vértices automaticamente.');
+  const iaObj = await deducePolygonVerticesWithAI(fullText);
+  if (!iaObj || !Array.isArray(iaObj.vertices) || iaObj.vertices.length < 3) {
+    displayLogMessage('[JS][IA] Não foi possível obter vértices válidos da IA.');
     return null;
   }
-  displayLogMessage(`[JS][IA] Vértices deduzidos: ${vertices.length}`);
-  return vertices;
+  displayLogMessage(`[JS][IA] Vértices recebidos da IA: ${iaObj.vertices.length}`);
+  // Retornar objeto cru da IA para uso direto
+  return iaObj;
 }
 
 // Exemplo de uso: fallback IA se métodos tradicionais falharem
