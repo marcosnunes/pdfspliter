@@ -59,6 +59,22 @@ function splitTextForAI(text, maxChars = 12000) {
   return chunks;
 }
 
+function repairJsonCoordinates(jsonStr) {
+  if (!jsonStr) return jsonStr;
+  jsonStr = String(jsonStr).trim();
+  // Remover truncamento (JSON cortado)
+  if (jsonStr.endsWith(',')) jsonStr = jsonStr.slice(0, -1);
+  if (!jsonStr.endsWith(']') && !jsonStr.endsWith('}')) {
+    if (jsonStr.includes('"vertices"')) jsonStr += ']}';
+  }
+  // Normalizar números com pontos como separadores de milhares (7.330.34207 -> 7330.34207)
+  jsonStr = jsonStr.replace(/(\"(?:norte|north|este|east)\"\s*:\s*)(\d{1,3}\.\d{3}\.\d+)/g, (match, prefix, num) => {
+    const clean = num.replace(/\./g, '');
+    return prefix + clean;
+  });
+  return jsonStr;
+}
+
 function mergeVerticesFromChunks(chunksResults) {
   const merged = [];
   const seen = new Set();
@@ -66,8 +82,13 @@ function mergeVerticesFromChunks(chunksResults) {
     const verts = Array.isArray(obj?.vertices) ? obj.vertices : [];
     for (const v of verts) {
       const id = String(v.id || "").trim();
-      const east = Number(v.este ?? v.east);
-      const north = Number(v.norte ?? v.north);
+      let east = v.este ?? v.east;
+      let north = v.norte ?? v.north;
+      // Normalizar números com pontos
+      if (typeof east === 'string') east = east.replace(/\./g, '');
+      if (typeof north === 'string') north = north.replace(/\./g, '');
+      east = Number(east);
+      north = Number(north);
       const key = `${id}|${east}|${north}`;
       if (!Number.isFinite(east) || !Number.isFinite(north)) continue;
       if (!seen.has(key)) {
@@ -108,7 +129,7 @@ async function deducePolygonVerticesWithAI(fullText) {
   const smallPrompt = (text) => `Instrução: Extraia APENAS os vértices (ID, Este, Norte) do texto abaixo e retorne um JSON válido. Sem explicações.\n\nFormato:\n{\n  "vertices": [\n    {"id": "P1", "este": 123456.789, "norte": 7123456.789}\n  ]\n}\n\nTexto:\n${text}`;
 
   let workingText = fullText || "";
-  const MAX_PROMPT = 18000;
+  const MAX_PROMPT = 15000;
   if (workingText.length > MAX_PROMPT) {
     workingText = extractRelevantLinesForAI(workingText);
   }
@@ -134,19 +155,34 @@ async function deducePolygonVerticesWithAI(fullText) {
     if (!reply || !reply.choices?.[0]?.message?.content) {
       // Fallback 2: dividir em chunks e juntar vértices
       const reduced = extractRelevantLinesForAI(fullText);
-      const chunks = splitTextForAI(reduced, 12000);
+      const chunks = splitTextForAI(reduced, 9000);
       const results = [];
+      if (typeof displayLogMessage === 'function') {
+        displayLogMessage(`[PDFtoArcgis][LogUI] Processando ${chunks.length} chunk(s) da IA...`);
+      }
       for (let i = 0; i < chunks.length; i++) {
         const p = smallPrompt(chunks[i]);
         console.log(`[PDFtoArcgis][LOG IA][PROMPT][CHUNK ${i + 1}/${chunks.length}]`, p);
         const r = await callOpenAIGPT4Turbo(p);
-        const content = r?.choices?.[0]?.message?.content || "";
+        let content = r?.choices?.[0]?.message?.content || "";
         console.log(`[PDFtoArcgis][LOG IA][RAW][CHUNK ${i + 1}/${chunks.length}]`, content);
         if (!content) continue;
+        // Reparar JSON malformado
+        content = repairJsonCoordinates(content);
         try {
           results.push(JSON.parse(content));
         } catch (e) {
           console.error('[PDFtoArcgis][LOG IA][PARSE ERROR][CHUNK]', e, content);
+          // Tentar extrair array JSON mesmo com erro
+          const arrMatch = content.match(/\[\{[^\}]*\}.*?\]/s);
+          if (arrMatch) {
+            const repaired = repairJsonCoordinates('{"vertices":' + arrMatch[0] + '}');
+            try {
+              results.push(JSON.parse(repaired));
+            } catch (e2) {
+              console.error('[PDFtoArcgis][LOG IA][PARSE ERROR][CHUNK RETRY]', e2);
+            }
+          }
         }
       }
 
