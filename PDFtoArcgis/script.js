@@ -142,23 +142,48 @@ async function ensureWebLLM(model = "phi-2") {
 
 // Função IA para processar página por página
 async function deducePolygonVerticesPerPage(pagesText) {
-  const smallPrompt = (text) => `Instrução crítica: Extraia APENAS os vértices (ID, Este, Norte) do texto abaixo e retorne JSON válido.
+  const smallPrompt = (text) => `MISSÃO CRÍTICA: Extrair TODAS as coordenadas do documento em qualquer formato.
 
-⚠️ IMPORTANTE:
-- Este (E): deve ter 6 dígitos inteiros (160000 a 840000) + decimais. Exemplo: 519413.153
-- Norte (N): deve ter 7 dígitos (7000000 a 10000000) + decimais. Exemplo: 7332319.460
-- NÃO use valores de exemplo (123456.789, 111111.111, etc)
-- Se coordenadas parecem truncadas (ex: 519.579), adicionar zeros para formato correto (519579.xxx)
-- Se não encontrar coordenadas válidas, retorne {"vertices": []}
+📍 FORMATOS POSSÍVEIS (detectar e extrair):
 
-Formato resposta:
+1️⃣ UTM (PRIMÁRIO - retornar assim):
+   Formato: {"id": "P1", "este": 519413.153, "norte": 7332319.460}
+   Faixa Este (E): 160000-840000 + decimais
+   Faixa Norte (N): 7000000-10000000 + decimais
+
+2️⃣ AZIMUTE + DISTÂNCIA (converter para UTM se possível):
+   Buscar: "azimute" ou "Az" com ângulos (000° até 360°)
+   Buscar: "distância" ou "Dist" em metros
+   Se encontrar: retornar como {"id": "P1", "azimuth": 45.5, "distance": 123.45, "formato": "azimuth_distance"}
+   Incluir ponto inicial se disponível (ex: coordenadas de P0, ponto de partida)
+
+3️⃣ LAT/LONG (converter para UTM se possível):
+   Buscar: graus/minutos/segundos ou decimais (ex: -23.123456, -51.123456)
+   Buscar: S/N (latitude), E/W (longitude)
+   Se encontrar: retornar como {"id": "P1", "latitude": -23.123456, "longitude": -51.123456, "formato": "lat_long"}
+
+⚠️ REGRAS CRÍTICAS:
+- NÃO retorne valores de teste/exemplo (123456.789, 111111.111)
+- Se coordenadas truncadas (519.579): adicionar zeros → 519579
+- Se ver ponto de ORIGEM/SAÍDA/PARTIDA: incluir como P0 ou origem
+- Se ver múltiplos formatos na mesma página: retornar tudo em formato padrão
+- Se N/S/E/W confusos: manter latitude como -X (Sul=negativo)
+- Se encontrar APENAS um tipo de formato por página: extrair tudo daquele tipo
+
+📤 RETORNAR JSON com TODOS os vértices encontrados:
 {
   "vertices": [
-    {"id": "P1", "este": 519413.153, "norte": 7332319.460}
-  ]
+    {"id": "P1", "este": 519413.153, "norte": 7332319.460},
+    {"id": "P2", "azimuth": 45.5, "distance": 123.45, "formato": "azimuth_distance"},
+    {"id": "P3", "latitude": -23.123456, "longitude": -51.123456, "formato": "lat_long"}
+  ],
+  "origem": {"id": "P0", "este": 519000.0, "norte": 7330000.0},
+  "formatos_detectados": ["utm", "azimuth_distance", "lat_long"]
 }
 
-Texto do documento:
+Se NÃO encontrar coordenadas: {"vertices": [], "formatos_detectados": []}
+
+📄 DOCUMENTO:
 ${text}`;
 
   const results = [];
@@ -218,44 +243,104 @@ ${text}`;
     try {
       const parsed = JSON.parse(content);
       
-      // Validar coordenadas UTM (evitar dados fake/teste)
+      // Validar e processar coordenadas em DIFERENTES FORMATOS
       if (parsed?.vertices && Array.isArray(parsed.vertices)) {
-        const validVertices = parsed.vertices.filter(v => {
+        const validVertices = [];
+        
+        for (const v of parsed.vertices) {
           let e = parseFloat(v.este || v.east || 0);
           let n = parseFloat(v.norte || v.north || 0);
+          const formato = v.formato || 'utm';
           
-          // Reparar coordenadas truncadas (ex: 519.579 → 519579)
-          if (e > 0 && e < 1000 && e % 1 !== 0) {
-            // Parece truncada, tentar reconstruir
-            const eTruncated = Math.round(e * 1000); // 519.579 * 1000 = 519579
-            if (eTruncated >= 160000 && eTruncated <= 840000) {
-              console.log(`[PDFtoArcgis] 🔧 Reparado E truncado: ${e} → ${eTruncated}`);
-              e = eTruncated;
-              v.este = eTruncated;
+          // ===== FORMATO 1: UTM (direto) =====
+          if (formato === 'utm' || (!v.formato && e > 0 && n > 0)) {
+            // Reparar coordenadas truncadas
+            if (e > 0 && e < 1000 && e % 1 !== 0) {
+              const eTruncated = Math.round(e * 1000);
+              if (eTruncated >= 160000 && eTruncated <= 840000) {
+                console.log(`[PDFtoArcgis] 🔧 Reparado E truncado: ${e} → ${eTruncated}`);
+                e = eTruncated;
+                v.este = eTruncated;
+              }
+            }
+            
+            const isTestValue = (e === 123456.789 || e === 123456.89 || e === 123456 || 
+                                (e > 0 && e < 160000) || n < 7000000);
+            const isValidE = e >= 160000 && e <= 840000;
+            const isValidN = n >= 7000000 && n <= 10000000;
+            
+            if (isTestValue) {
+              console.warn(`[PDFtoArcgis] ⚠️ Valor de teste/exemplo: ${v.id || '?'} E=${e} N=${n}`);
+              continue;
+            }
+            
+            if (isValidE && isValidN) {
+              validVertices.push({
+                id: v.id || `V${validVertices.length + 1}`,
+                este: e,
+                norte: n,
+                formato: 'utm'
+              });
             }
           }
           
-          // Verificar se é valor de teste/exemplo (123456, 111111, etc)
-          const isTestValue = (e === 123456.789 || e === 123456.89 || e === 123456 || 
-                              (e > 0 && e < 160000) ||
-                              n < 7000000);
-          
-          const isValidE = e >= 160000 && e <= 840000;
-          const isValidN = n >= 7000000 && n <= 10000000;
-          
-          if (isTestValue) {
-            console.warn(`[PDFtoArcgis] ⚠️ Valor de teste/exemplo detectado: ${v.id || '?'} E=${e} N=${n}`);
-            return false;
+          // ===== FORMATO 2: LAT/LONG (converter para UTM) =====
+          else if (formato === 'lat_long' && v.latitude && v.longitude) {
+            const lat = parseFloat(v.latitude);
+            const lon = parseFloat(v.longitude);
+            
+            if (Math.abs(lat) > 90 || Math.abs(lon) > 180) {
+              console.warn(`[PDFtoArcgis] ⚠️ Lat/Long inválido: ${v.id || '?'} lat=${lat} lon=${lon}`);
+              continue;
+            }
+            
+            // Converter lat/long para UTM (aproximado para teste)
+            // Em produção, usar biblioteca proj4 ou similar
+            console.log(`[PDFtoArcgis] 📍 Lat/Long detectado para ${v.id || '?'}: ${lat}, ${lon}`);
+            
+            // Manter como lat/long por enquanto, será convertido depois
+            validVertices.push({
+              id: v.id || `V${validVertices.length + 1}`,
+              latitude: lat,
+              longitude: lon,
+              formato: 'lat_long'
+            });
           }
           
-          if (!isValidE || !isValidN) {
-            console.warn(`[PDFtoArcgis] ⚠️ Coordenada inválida detectada: ${v.id || '?'} E=${e} N=${n}`);
+          // ===== FORMATO 3: AZIMUTE + DISTÂNCIA =====
+          else if (formato === 'azimuth_distance' && v.azimuth !== undefined && v.distance !== undefined) {
+            const azimuth = parseFloat(v.azimuth);
+            const distance = parseFloat(v.distance);
+            
+            if (azimuth < 0 || azimuth > 360 || distance < 0) {
+              console.warn(`[PDFtoArcgis] ⚠️ Azimute/Distância inválido: ${v.id || '?'} az=${azimuth}° dist=${distance}m`);
+              continue;
+            }
+            
+            console.log(`[PDFtoArcgis] 🧭 Azimute+Distância detectado para ${v.id || '?'}: ${azimuth}° / ${distance}m`);
+            
+            // Armazenar para processamento posterior com ponto de origem
+            validVertices.push({
+              id: v.id || `V${validVertices.length + 1}`,
+              azimuth: azimuth,
+              distance: distance,
+              formato: 'azimuth_distance'
+            });
           }
-          return isValidE && isValidN;
-        });
+        }
+        
+        // Log sobre formatos detectados
+        const formatos = parsed.formatos_detectados || [];
+        if (formatos.length > 0) {
+          console.log(`[PDFtoArcgis] 📊 Formatos detectados na página ${i + 1}: ${formatos.join(', ')}`);
+          if (typeof displayLogMessage === 'function') {
+            displayLogMessage(`[PDFtoArcgis][LogUI] 📊 Página ${i + 1}: formatos ${formatos.join('|')}`);
+          }
+        }
         
         if (validVertices.length !== parsed.vertices.length) {
-          console.log(`[PDFtoArcgis] 🔧 Filtrados ${parsed.vertices.length - validVertices.length} vértice(s) com coordenadas inválidas`);
+          const filtered = parsed.vertices.length - validVertices.length;
+          console.log(`[PDFtoArcgis] 🔧 Filtrados ${filtered} vértice(s) inválidos`);
           if (typeof displayLogMessage === 'function') {
             displayLogMessage(`[PDFtoArcgis][LogUI] 🔧 Página ${i + 1}: ${validVertices.length} válido(s) de ${parsed.vertices.length}`);
           }
@@ -319,8 +404,11 @@ ${text}`;
   const mergedVertices = mergeVerticesFromChunks(results);
   console.log(`[PDFtoArcgis] Total de vértices únicos (por página): ${mergedVertices.length}`);
   
+  // Normalizar vértices para formato UTM padrão
+  const normalizedVertices = normalizeVerticesToUTM(mergedVertices);
+  
   // Ordenar vértices por proximidade (nearest neighbor) para formar polígono correto
-  const orderedVertices = orderVerticesByProximity(mergedVertices);
+  const orderedVertices = orderVerticesByProximity(normalizedVertices);
   console.log(`[PDFtoArcgis] Vértices reordenados por proximidade para formar polígono`);
   
   if (typeof displayLogMessage === 'function') {
@@ -337,6 +425,94 @@ ${text}`;
   }
   
   return null;
+}
+
+// Função para normalizar vértices em diferentes formatos para UTM padrão
+function normalizeVerticesToUTM(vertices) {
+  return vertices.map((v, idx) => {
+    // Se já está em UTM, retornar como está
+    if (v.formato === 'utm' || (!v.formato && v.este && v.norte)) {
+      return {
+        id: v.id || `V${String(idx + 1).padStart(3, '0')}`,
+        east: v.este || v.east || 0,
+        north: v.norte || v.north || 0,
+        ordem: idx + 1,
+        originalFormat: 'utm'
+      };
+    }
+    
+    // Se é Lat/Long, tentarconverter para UTM usando proj4 se disponível
+    if (v.formato === 'lat_long' && v.latitude && v.longitude) {
+      // Usar proj4 se disponível (precisa estar carregado no HTML)
+      if (typeof window.proj4 !== 'undefined') {
+        try {
+          const proj4 = window.proj4;
+          const wgs84 = proj4.defs('EPSG:4326');
+          const utm = proj4.defs('EPSG:32722'); // Zona 22S (ajustar conforme necessário)
+          const converted = proj4([wgs84, utm], [v.longitude, v.latitude]);
+          
+          console.log(`[PDFtoArcgis] 🔄 Lat/Long convertido para UTM: ${v.id} → E=${converted[0].toFixed(3)} N=${converted[1].toFixed(3)}`);
+          
+          return {
+            id: v.id || `V${String(idx + 1).padStart(3, '0')}`,
+            east: converted[0],
+            north: converted[1],
+            ordem: idx + 1,
+            originalFormat: 'lat_long',
+            originalCoords: { latitude: v.latitude, longitude: v.longitude }
+          };
+        } catch (e) {
+          console.warn(`[PDFtoArcgis] ⚠️ Erro ao converter Lat/Long para UTM: ${e.message}`);
+        }
+      } else {
+        console.warn(`[PDFtoArcgis] ⚠️ proj4 não disponível - mantendo Lat/Long como é`);
+      }
+      
+      return {
+        id: v.id || `V${String(idx + 1).padStart(3, '0')}`,
+        east: v.longitude * 1000, // Aproximação grosseira
+        north: (v.latitude + 24) * 1000,
+        ordem: idx + 1,
+        originalFormat: 'lat_long',
+        warn: 'Conversão aproximada - proj4 não disponível'
+      };
+    }
+    
+    // Se é Azimuth/Distance, tentar calcular usando ponto de origem
+    if (v.formato === 'azimuth_distance' && v.azimuth !== undefined && v.distance !== undefined) {
+      // Procurar ponto de origem (P0, origem, ou usar primeiro vértice válido)
+      const origem = vertices.find(vv => vv.id === 'P0' || vv.id === 'origem' || (vv.este && vv.norte));
+      
+      if (origem && origem.este && origem.norte) {
+        // Calcular novo ponto a partir de azimuth e distância
+        const azRad = (v.azimuth * Math.PI) / 180;
+        const newEast = origem.este + v.distance * Math.sin(azRad);
+        const newNorth = origem.norte + v.distance * Math.cos(azRad);
+        
+        console.log(`[PDFtoArcgis] 🧭 Azimuth/Distance convertido: ${v.id} → E=${newEast.toFixed(3)} N=${newNorth.toFixed(3)}`);
+        
+        return {
+          id: v.id || `V${String(idx + 1).padStart(3, '0')}`,
+          east: newEast,
+          north: newNorth,
+          ordem: idx + 1,
+          originalFormat: 'azimuth_distance',
+          originalCoords: { azimuth: v.azimuth, distance: v.distance }
+        };
+      } else {
+        console.warn(`[PDFtoArcgis] ⚠️ Azimuth/Distance encontrado mas sem ponto de origem`);
+      }
+    }
+    
+    // Fallback: retornar como está
+    return {
+      id: v.id || `V${String(idx + 1).padStart(3, '0')}`,
+      east: v.este || v.east || v.longitude || 0,
+      north: v.norte || v.north || v.latitude || 0,
+      ordem: idx + 1,
+      originalFormat: v.formato || 'unknown'
+    };
+  });
 }
 
 // Função para ordenar vértices por proximidade (nearest neighbor algorithm)
@@ -356,9 +532,14 @@ function orderVerticesByProximity(vertices) {
     let minDistance = Infinity;
     
     for (let i = 0; i < remaining.length; i++) {
+      const currEast = current.east || current.este || 0;
+      const currNorth = current.north || current.norte || 0;
+      const nextEast = remaining[i].east || remaining[i].este || 0;
+      const nextNorth = remaining[i].north || remaining[i].norte || 0;
+      
       const dist = Math.sqrt(
-        Math.pow(remaining[i].east - current.east, 2) +
-        Math.pow(remaining[i].north - current.north, 2)
+        Math.pow(nextEast - currEast, 2) +
+        Math.pow(nextNorth - currNorth, 2)
       );
       
       if (dist < minDistance) {
