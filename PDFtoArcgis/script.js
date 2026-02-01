@@ -87,19 +87,49 @@ async function deducePolygonVerticesWithAI(fullText) {
   return obj;
 }
 
+// Extração robusta de texto por página (sem OCR): garante leitura de todas as páginas
+async function extractPageTextSafely(page, pageIndex) {
+  const tryExtract = async (options) => {
+    const textContent = await page.getTextContent(options);
+    let text = buildPageTextWithLines(textContent);
+    if (!text || text.trim().length < 5) {
+      const raw = (textContent.items || []).map(it => it.str).filter(Boolean).join(" ");
+      if (raw && raw.trim().length > (text || "").trim().length) text = raw;
+    }
+    return text || "";
+  };
+
+  let pageText = "";
+  try {
+    pageText = await tryExtract({ disableCombineTextItems: false });
+  } catch (e) { }
+
+  if (!pageText || pageText.trim().length < 5) {
+    try {
+      pageText = await tryExtract({ disableCombineTextItems: true });
+    } catch (e) { }
+  }
+
+  if (!pageText || pageText.trim().length < 5) {
+    try {
+      pageText = await tryExtract({ normalizeWhitespace: true, disableCombineTextItems: true });
+    } catch (e) { }
+  }
+
+  if (typeof displayLogMessage === 'function') {
+    displayLogMessage(`[PDFtoArcgis][LogUI] Página ${pageIndex}: ${pageText ? pageText.trim().length : 0} caracteres extraídos.`);
+  }
+
+  return pageText || "";
+}
+
 // Função para extrair texto selecionável + OCR de todas as páginas
 async function extractFullTextWithAI(pdfBuffer) {
   const pdf = await pdfjsLib.getDocument({ data: pdfBuffer }).promise;
   let fullText = "";
   for (let i = 1; i <= pdf.numPages; i++) {
     const page = await pdf.getPage(i);
-    let pageText = "";
-    try {
-      const textContent = await page.getTextContent({ disableCombineTextItems: false });
-      pageText = buildPageTextWithLines(textContent);
-    } catch (e) {
-      pageText = "";
-    }
+    let pageText = await extractPageTextSafely(page, i);
     // Se não extraiu texto, tenta OCR
     if (!pageText || pageText.trim().length < 10) {
       if (window.Android && window.Android.performOCR) {
@@ -1081,6 +1111,127 @@ function detectProjectionFromText(fullText, vertices = []) {
     confidence: conf,
     reason: (hasSIRGAS ? "Encontrado 'SIRGAS 2000'. " : "Datum assumido SIRGAS 2000. ") + reasonParts.join(" ")
   };
+}
+
+function detectProjectionFromAI(iaObj, inferredByCoords = null, projInfo = null) {
+  if (!iaObj || typeof iaObj !== "object") return null;
+
+  const rawParts = [
+    iaObj.datum,
+    iaObj.crs,
+    iaObj.epsg,
+    iaObj.srid,
+    iaObj.projecao,
+    iaObj.projection,
+    iaObj.sistema,
+    iaObj.spatial_reference,
+    iaObj.spatialReference,
+    iaObj.utm_zone,
+    iaObj.utmZone,
+    iaObj.zone,
+    iaObj.zona,
+    iaObj.fuso,
+    iaObj.fuso_utm
+  ].filter(Boolean);
+
+  const raw = rawParts.join(" ");
+  const lower = String(raw || "").toLowerCase();
+
+  let epsgCode = null;
+  if (typeof iaObj.epsg === "number" || typeof iaObj.epsg === "string") {
+    epsgCode = String(iaObj.epsg).match(/\d{4,6}/)?.[0] || null;
+  }
+  if (!epsgCode) {
+    epsgCode = raw.match(/epsg\s*[:=]?\s*(\d{4,6})/i)?.[1] || null;
+  }
+
+  if (epsgCode) {
+    const key = Object.keys(PROJECTIONS).find(k => {
+      const epsg = PROJECTIONS[k]?.epsg || "";
+      return epsg.includes(epsgCode);
+    });
+    if (key) {
+      return { key, confidence: "alta", reason: `EPSG ${epsgCode} informado pela IA.` };
+    }
+  }
+
+  if (/(wgs\s*84|wgs84|wgs)/i.test(lower)) {
+    return { key: "WGS84", confidence: "média", reason: "IA informou WGS84." };
+  }
+
+  const hasSad = /sad[\s\-]?69/.test(lower);
+  const hasSirgas = /sirgas/.test(lower);
+  let base = null;
+  if (hasSad) base = "SAD69";
+  if (hasSirgas) base = "SIRGAS2000";
+  if (!base) return null;
+
+  let zone = null;
+  const zoneFields = [iaObj.zone, iaObj.zona, iaObj.fuso, iaObj.utm_zone, iaObj.utmZone, iaObj.fuso_utm].filter(Boolean);
+  if (zoneFields.length) {
+    const z = parseInt(String(zoneFields[0]).match(/\d{1,2}/)?.[0], 10);
+    if (!Number.isNaN(z)) zone = z;
+  }
+  if (!zone) {
+    const rawZone = raw.match(/(?:zona|zone|fuso|utm)\s*[:=]?\s*(\d{1,2})/i);
+    if (rawZone?.[1]) zone = parseInt(rawZone[1], 10);
+  }
+  if (!zone && projInfo?.key) {
+    const match = projInfo.key.match(/_(\d{2})S/);
+    if (match?.[1]) zone = parseInt(match[1], 10);
+  }
+  if (!zone && inferredByCoords?.zone) zone = inferredByCoords.zone;
+  if (!zone) zone = 22;
+
+  const key = base === "SAD69"
+    ? (zone === 23 ? "SAD69_23S" : "SAD69_22S")
+    : `SIRGAS2000_${zone}S`;
+
+  return {
+    key,
+    confidence: zone ? "média" : "baixa",
+    reason: `IA informou datum ${base}${zone ? " e zona " + zone : ""}.`
+  };
+}
+
+function resolveProjectionKeyForOutput(iaObj, projInfo, inferredByCoords) {
+  const reasons = [];
+  let key = null;
+  let confidence = "baixa";
+
+  const aiDetected = detectProjectionFromAI(iaObj, inferredByCoords, projInfo);
+  if (aiDetected?.key) {
+    key = aiDetected.key;
+    confidence = aiDetected.confidence || confidence;
+    if (aiDetected.reason) reasons.push(aiDetected.reason);
+  }
+
+  if (projInfo?.key) {
+    if (!key) {
+      key = projInfo.key;
+      confidence = projInfo.confidence || confidence;
+      if (projInfo.reason) reasons.push(`Texto: ${projInfo.reason}`);
+    } else if (projInfo.key !== key && projInfo.confidence === "alta") {
+      reasons.push(`Conflito IA vs texto; prevaleceu o CRS do texto (${projInfo.key}).`);
+      key = projInfo.key;
+      confidence = "alta";
+    } else if (projInfo.key === key && projInfo.reason) {
+      reasons.push(`Texto confirmou CRS: ${projInfo.reason}`);
+    }
+  }
+
+  if (!key && inferredByCoords?.zone) {
+    key = `SIRGAS2000_${inferredByCoords.zone}S`;
+    confidence = "média";
+    reasons.push(inferredByCoords.reason);
+  }
+
+  if (!key) {
+    key = getActiveProjectionKey() || "SIRGAS2000_22S";
+    reasons.push("CRS não identificado; usando seleção atual/padrão.");
+  }
+
+  return { key, info: { confidence, reason: reasons.join(" ") } };
 }
 
 /* =========================
@@ -2383,15 +2534,14 @@ fileInput.addEventListener("change", async (event) => {
     const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer), ignoreEncryption: true }).promise;
     const pagesText = [];
 
-    // Loop de leitura de páginas
+    // Loop de leitura de páginas (garante leitura de TODAS as páginas)
     for (let i = 1; i <= pdf.numPages; i++) {
       progressBar.value = Math.round((i / pdf.numPages) * 100);
       document.getElementById("progressLabel").innerText = `Lendo página ${i}/${pdf.numPages}...`;
 
       try {
         const page = await pdf.getPage(i);
-        const textContent = await page.getTextContent({ disableCombineTextItems: false });
-        let pageText = buildPageTextWithLines(textContent);
+        const pageText = await extractPageTextSafely(page, i);
 
         // Se a página estiver vazia/escaneada, apenas mantém o texto vazio (não faz OCR)
         pagesText.push(pageText || "");
@@ -2469,7 +2619,7 @@ function detectPolygonCycles(vertices) {
   return cycles;
 }
 
-async function processExtractUnified(pagesText) {
+async function processExtractUnified(pagesText, projInfo = null) {
   // NOVO FLUXO: Apenas IA, sem heurística, sem pós-processamento
   const fullText = pagesText.join("\n");
   const iaObj = await deducePolygonVerticesWithAI(fullText);
@@ -2500,11 +2650,11 @@ async function processExtractUnified(pagesText) {
   // === RECALCULAR DISTÂNCIAS E AZIMUTES ===
   vertices = prepararVerticesComMedidas(vertices);
 
-  // === CRS baseado nas coordenadas extraídas ===
+  // === CRS baseado em IA + texto + coordenadas ===
   const inferredByCoords = inferCrsByCoordinates(vertices);
-  const projKey = inferredByCoords?.zone
-    ? `SIRGAS2000_${inferredByCoords.zone}S`
-    : (getActiveProjectionKey() || "SIRGAS2000_22S");
+  const resolvedProjection = resolveProjectionKeyForOutput(iaObj, projInfo, inferredByCoords);
+  const projKey = resolvedProjection.key || (getActiveProjectionKey() || "SIRGAS2000_22S");
+  window._arcgis_crs_key = projKey;
   const topologyValidation = validatePolygonTopology(vertices, projKey);
   const memorialData = extractAzimuthDistanceFromText(fullText);
   const memorialValidation = memorialData.azimutes.length > 0
@@ -2517,9 +2667,9 @@ async function processExtractUnified(pagesText) {
     pages: "1-" + pagesText.length,
     projectionKey: projKey,
     manualProjectionKey: null,
-    projectionInfo: inferredByCoords
+    projectionInfo: resolvedProjection.info || (inferredByCoords
       ? { confidence: "média", reason: inferredByCoords.reason }
-      : { confidence: "baixa", reason: "CRS não inferido pelas coordenadas; usando seleção atual/padrão" },
+      : { confidence: "baixa", reason: "CRS não inferido pelas coordenadas; usando seleção atual/padrão" }),
     vertices: vertices,
     warnings: [],
     topology: topologyValidation,
