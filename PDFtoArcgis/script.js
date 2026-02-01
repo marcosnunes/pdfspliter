@@ -140,6 +140,95 @@ async function ensureWebLLM(model = "phi-2") {
 }
 
 
+// Função IA para processar página por página
+async function deducePolygonVerticesPerPage(pagesText) {
+  const smallPrompt = (text) => `Instrução: Extraia APENAS os vértices (ID, Este, Norte) do texto abaixo e retorne um JSON válido. Sem explicações.\n\nFormato:\n{\n  "vertices": [\n    {"id": "P1", "este": 123456.789, "norte": 7123456.789}\n  ]\n}\n\nTexto:\n${text}`;
+
+  const results = [];
+  const totalPages = pagesText.length;
+  
+  if (typeof displayLogMessage === 'function') {
+    displayLogMessage(`[PDFtoArcgis][LogUI] 📄 Processando ${totalPages} página(s) individualmente...`);
+  }
+  
+  for (let i = 0; i < totalPages; i++) {
+    const pageText = pagesText[i];
+    if (!pageText || pageText.trim().length < 10) {
+      console.log(`[PDFtoArcgis] Página ${i + 1}: vazia, pulando`);
+      continue;
+    }
+    
+    if (typeof displayLogMessage === 'function') {
+      displayLogMessage(`[PDFtoArcgis][LogUI] ⏳ Processando página ${i + 1} de ${totalPages}...`);
+    }
+    
+    const filtered = extractRelevantLinesForAI(pageText);
+    if (filtered.length < 10) {
+      console.log(`[PDFtoArcgis] Página ${i + 1}: sem coordenadas detectadas`);
+      continue;
+    }
+    
+    const prompt = smallPrompt(filtered);
+    console.log(`[PDFtoArcgis][LOG IA][PROMPT][PAGE ${i + 1}/${totalPages}]`, prompt.substring(0, 200) + '...');
+    
+    const r = await callOpenAIGPT4Turbo(prompt);
+    let content = r?.choices?.[0]?.message?.content || "";
+    console.log(`[PDFtoArcgis][LOG IA][RAW][PAGE ${i + 1}/${totalPages}]`, content);
+    
+    if (!content) {
+      console.warn(`[PDFtoArcgis] Página ${i + 1} sem resposta`);
+      continue;
+    }
+    
+    content = repairJsonCoordinates(content);
+    try {
+      const parsed = JSON.parse(content);
+      results.push(parsed);
+      const vcount = Array.isArray(parsed?.vertices) ? parsed.vertices.length : 0;
+      console.log(`[PDFtoArcgis] Página ${i + 1}: ${vcount} vértices extraídos`);
+      if (typeof displayLogMessage === 'function') {
+        displayLogMessage(`[PDFtoArcgis][LogUI] ✅ Página ${i + 1}: ${vcount} vértice(s)`);
+      }
+    } catch (e) {
+      console.error('[PDFtoArcgis][PARSE ERROR][PAGE]', e, content);
+      const arrMatch = content.match(/\[\{[^\}]*\}.*?\]/s);
+      if (arrMatch) {
+        const repaired = repairJsonCoordinates('{"vertices":' + arrMatch[0] + '}');
+        try {
+          const parsed = JSON.parse(repaired);
+          results.push(parsed);
+          const vcount = Array.isArray(parsed?.vertices) ? parsed.vertices.length : 0;
+          console.log(`[PDFtoArcgis] Página ${i + 1} (recovery): ${vcount} vértices`);
+        } catch (e2) {
+          console.error('[PDFtoArcgis][PARSE ERROR][PAGE RETRY]', e2);
+        }
+      }
+    }
+    
+    // Delay entre páginas para evitar rate limit (1s entre requisições)
+    if (i < totalPages - 1) {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+  }
+  
+  const mergedVertices = mergeVerticesFromChunks(results);
+  console.log(`[PDFtoArcgis] Total de vértices únicos (por página): ${mergedVertices.length}`);
+  if (typeof displayLogMessage === 'function') {
+    displayLogMessage(`[PDFtoArcgis][LogUI] 📍 Total: ${mergedVertices.length} vértice(s) único(s)`);
+  }
+  
+  if (mergedVertices.length >= 3) {
+    return {
+      imovel: null,
+      matricula: null,
+      datum: null,
+      vertices: mergedVertices
+    };
+  }
+  
+  return null;
+}
+
 // Função IA para deduzir os vértices corretos a partir do texto extraído (selecionável + OCR)
 async function deducePolygonVerticesWithAI(fullText) {
   // NOVO FLUXO: Apenas IA, sem heurística, sem pós-processamento
@@ -2856,9 +2945,28 @@ function detectPolygonCycles(vertices) {
 }
 
 async function processExtractUnified(pagesText, projInfo = null) {
-  // NOVO FLUXO: Apenas IA, sem heurística, sem pós-processamento
+  // NOVO FLUXO: Tentar processar página por página primeiro (mais robusto)
   const fullText = pagesText.join("\n");
-  const iaObj = await deducePolygonVerticesWithAI(fullText);
+  
+  let iaObj = null;
+  
+  // Estratégia 1: Processar página por página (recomendado para PDFs grandes)
+  if (pagesText.length > 1) {
+    console.log(`[PDFtoArcgis] Estratégia 1: Processando ${pagesText.length} página(s) individualmente...`);
+    if (typeof displayLogMessage === 'function') {
+      displayLogMessage(`[PDFtoArcgis][LogUI] 📄 Tentando extrair página por página...`);
+    }
+    iaObj = await deducePolygonVerticesPerPage(pagesText);
+  }
+  
+  // Estratégia 2: Fallback para texto completo (se página por página falhar ou PDF de 1 página)
+  if (!iaObj) {
+    console.log(`[PDFtoArcgis] Estratégia 2: Fallback para texto completo...`);
+    if (typeof displayLogMessage === 'function') {
+      displayLogMessage(`[PDFtoArcgis][LogUI] 📖 Tentando extração por texto completo...`);
+    }
+    iaObj = await deducePolygonVerticesWithAI(fullText);
+  }
   
   if (!iaObj) {
     updateStatus('❌ Falha na extração por IA.', 'error');
