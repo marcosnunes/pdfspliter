@@ -10,8 +10,8 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'Chave da API Groq não configurada no ambiente.' });
   }
   const { prompt } = req.body;
-  if (!prompt) {
-    return res.status(400).json({ error: 'Prompt não fornecido.' });
+  if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
+    return res.status(400).json({ error: 'Prompt não fornecido ou inválido.' });
   }
   try {
     const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
@@ -32,10 +32,13 @@ export default async function handler(req, res) {
     });
     const data = await groqRes.json();
     if (!groqRes.ok) {
-      return res.status(groqRes.status).json({ error: data.error || 'Erro na API Groq' });
+      // Log detalhado do erro Groq
+      console.error('[Groq API Error]', data);
+      return res.status(groqRes.status).json({ error: data.error || 'Erro na API Groq', details: data });
     }
     return res.status(200).json(data);
   } catch (e) {
+    console.error('[Groq Proxy Exception]', e);
     return res.status(500).json({ error: e.message });
   }
 }
