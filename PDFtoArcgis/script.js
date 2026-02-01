@@ -116,11 +116,51 @@ async function extractPageTextSafely(page, pageIndex) {
     } catch (e) { }
   }
 
+  if (!pageText || pageText.trim().length < 5) {
+    try {
+      pageText = await tryExtract({
+        normalizeWhitespace: true,
+        disableCombineTextItems: true,
+        includeMarkedContent: true
+      });
+    } catch (e) { }
+  }
+
   if (typeof displayLogMessage === 'function') {
     displayLogMessage(`[PDFtoArcgis][LogUI] Página ${pageIndex}: ${pageText ? pageText.trim().length : 0} caracteres extraídos.`);
   }
 
   return pageText || "";
+}
+
+// OCR por página (Android primeiro, fallback Tesseract.js)
+async function performOcrOnPage(page, pageIndex) {
+  if (window.Android && window.Android.performOCR) {
+    try {
+      const ocrText = await window.Android.performOCR(pageIndex);
+      return (ocrText && ocrText.length > 10) ? ocrText : "";
+    } catch (e) {
+      return "";
+    }
+  }
+
+  if (window.Tesseract) {
+    try {
+      const canvas = document.createElement('canvas');
+      const viewport = page.getViewport({ scale: 2.0 });
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      const ctx = canvas.getContext('2d');
+      await page.render({ canvasContext: ctx, viewport }).promise;
+      const result = await window.Tesseract.recognize(canvas, 'por');
+      const text = result?.data?.text || "";
+      return (text && text.length > 10) ? text : "";
+    } catch (e) {
+      return "";
+    }
+  }
+
+  return "";
 }
 
 // Função para extrair texto selecionável + OCR de todas as páginas
@@ -2535,6 +2575,8 @@ fileInput.addEventListener("change", async (event) => {
     const pagesText = [];
 
     // Loop de leitura de páginas (garante leitura de TODAS as páginas)
+    let emptyPages = 0;
+    let ocrPages = 0;
     for (let i = 1; i <= pdf.numPages; i++) {
       progressBar.value = Math.round((i / pdf.numPages) * 100);
       document.getElementById("progressLabel").innerText = `Lendo página ${i}/${pdf.numPages}...`;
@@ -2544,7 +2586,17 @@ fileInput.addEventListener("change", async (event) => {
         const pageText = await extractPageTextSafely(page, i);
 
         // Se a página estiver vazia/escaneada, apenas mantém o texto vazio (não faz OCR)
-        pagesText.push(pageText || "");
+        let safeText = pageText || "";
+        if (!safeText.trim()) {
+          document.getElementById("progressLabel").innerText = `OCR da página ${i}/${pdf.numPages}...`;
+          const ocrText = await performOcrOnPage(page, i);
+          if (ocrText && ocrText.trim().length > 10) {
+            safeText = ocrText;
+            ocrPages++;
+          }
+        }
+        if (!safeText.trim()) emptyPages++;
+        pagesText.push(safeText);
       } catch (e) {
         const msg = `[PDFtoArcgis] Erro ao ler página ${i}: ${e?.message || e}`;
         if (typeof displayLogMessage === 'function') {
@@ -2552,9 +2604,17 @@ fileInput.addEventListener("change", async (event) => {
         } else {
           console.error(msg);
         }
+        emptyPages++;
         pagesText.push("");
         continue;
       }
+    }
+
+    if (ocrPages > 0) {
+      updateStatus(`ℹ️ OCR aplicado em ${ocrPages} página(s).`, "info");
+    }
+    if (emptyPages > 0) {
+      updateStatus(`⚠️ ${emptyPages} página(s) sem texto detectável mesmo após OCR. Reexporte o PDF com camada de texto para melhorar a extração.`, "warning");
     }
 
     // --- LÓGICA DE INFERÊNCIA REVERSA ---
