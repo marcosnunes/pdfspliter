@@ -8,7 +8,7 @@ function setOpenAIApiKey(key) {
 }
 
 async function callOpenAIGPT4Turbo(prompt) {
-  const response = await fetch('/api/openai-gpt4-turbo', {
+  const response = await fetch('/PDFtoArcgis/api/openai-gpt4-turbo', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ prompt })
