@@ -2945,28 +2945,14 @@ function detectPolygonCycles(vertices) {
 }
 
 async function processExtractUnified(pagesText, projInfo = null) {
-  // NOVO FLUXO: Tentar processar página por página primeiro (mais robusto)
-  const fullText = pagesText.join("\n");
-  
+  // Estratégia única: Processar página por página
   let iaObj = null;
   
-  // Estratégia 1: Processar página por página (recomendado para PDFs grandes)
-  if (pagesText.length > 1) {
-    console.log(`[PDFtoArcgis] Estratégia 1: Processando ${pagesText.length} página(s) individualmente...`);
-    if (typeof displayLogMessage === 'function') {
-      displayLogMessage(`[PDFtoArcgis][LogUI] 📄 Tentando extrair página por página...`);
-    }
-    iaObj = await deducePolygonVerticesPerPage(pagesText);
+  console.log(`[PDFtoArcgis] Processando ${pagesText.length} página(s) individualmente...`);
+  if (typeof displayLogMessage === 'function') {
+    displayLogMessage(`[PDFtoArcgis][LogUI] 📄 Extraindo vértices página por página...`);
   }
-  
-  // Estratégia 2: Fallback para texto completo (se página por página falhar ou PDF de 1 página)
-  if (!iaObj) {
-    console.log(`[PDFtoArcgis] Estratégia 2: Fallback para texto completo...`);
-    if (typeof displayLogMessage === 'function') {
-      displayLogMessage(`[PDFtoArcgis][LogUI] 📖 Tentando extração por texto completo...`);
-    }
-    iaObj = await deducePolygonVerticesWithAI(fullText);
-  }
+  iaObj = await deducePolygonVerticesPerPage(pagesText);
   
   if (!iaObj) {
     updateStatus('❌ Falha na extração por IA.', 'error');
@@ -2995,6 +2981,7 @@ async function processExtractUnified(pagesText, projInfo = null) {
   vertices = prepararVerticesComMedidas(vertices);
 
   // === CRS baseado em IA + texto + coordenadas ===
+  const fullText = pagesText.join("\n");
   const inferredByCoords = inferCrsByCoordinates(vertices);
   const resolvedProjection = resolveProjectionKeyForOutput(iaObj, projInfo, inferredByCoords);
   const projKey = resolvedProjection.key || (getActiveProjectionKey() || "SIRGAS2000_22S");
