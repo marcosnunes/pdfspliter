@@ -2500,8 +2500,11 @@ async function processExtractUnified(pagesText) {
   // === RECALCULAR DISTÂNCIAS E AZIMUTES ===
   vertices = prepararVerticesComMedidas(vertices);
 
-  // === VALIDAÇÃO TOPOLÓGICA ===
-  const projKey = getActiveProjectionKey() || "SIRGAS2000_22S";
+  // === CRS baseado nas coordenadas extraídas ===
+  const inferredByCoords = inferCrsByCoordinates(vertices);
+  const projKey = inferredByCoords?.zone
+    ? `SIRGAS2000_${inferredByCoords.zone}S`
+    : (getActiveProjectionKey() || "SIRGAS2000_22S");
   const topologyValidation = validatePolygonTopology(vertices, projKey);
   const memorialData = extractAzimuthDistanceFromText(fullText);
   const memorialValidation = memorialData.azimutes.length > 0
@@ -2514,7 +2517,9 @@ async function processExtractUnified(pagesText) {
     pages: "1-" + pagesText.length,
     projectionKey: projKey,
     manualProjectionKey: null,
-    projectionInfo: { confidence: "alta", reason: "Extraído por IA local" },
+    projectionInfo: inferredByCoords
+      ? { confidence: "média", reason: inferredByCoords.reason }
+      : { confidence: "baixa", reason: "CRS não inferido pelas coordenadas; usando seleção atual/padrão" },
     vertices: vertices,
     warnings: [],
     topology: topologyValidation,
@@ -2524,6 +2529,9 @@ async function processExtractUnified(pagesText) {
   }];
 
   activeDocIndex = 0;
+
+  // === ATUALIZAR UI DO CRS DETECTADO ===
+  showDetectedCrsUI(projKey, documentsResults[0].projectionInfo);
 
   // === EXIBIR RESULTADOS ===
   extractedCoordinates = vertices;
