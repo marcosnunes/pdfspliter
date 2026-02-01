@@ -3323,29 +3323,47 @@ saveToFolderBtn.onclick = async () => {
   }
 
   try {
-    const handle = await window.showDirectoryPicker({ mode: "readwrite" });
+    let handle = await window.showDirectoryPicker({ mode: "readwrite" });
 
     const writeFile = async (name, data) => {
       try {
+        displayLogMessage(`[PDFtoArcgis] 📝 Gravando ${name}...`);
         // Tenta remover o arquivo se já existir
         try {
           const existing = await handle.getFileHandle(name);
           await handle.removeEntry(name);
+          // Re-validar handle após remover arquivo
+          handle = await window.showDirectoryPicker({ mode: "readwrite" });
         } catch (e) {
-          // Se não existe, ignora
+          // Se não existe ou erro temporário, ignora
+          if (e && e.name !== "NotFoundError" && e.name !== "InvalidStateError") {
+            throw e;
+          }
         }
         const fh = await handle.getFileHandle(name, { create: true });
         const w = await fh.createWritable();
         await w.write(data);
         await w.close();
+        displayLogMessage(`[PDFtoArcgis] ✓ ${name} gravado`);
       } catch (err) {
         // Se o usuário cancelar, não mostrar erro
         if (err && err.name === "AbortError") return;
+        // Se falhar por estado inválido, re-selecionar diretório
+        if (err && (err.name === "InvalidStateError" || err.message.includes("state cached"))) {
+          displayLogMessage("[PDFtoArcgis] ⚠️ Diretório desincronizado. Tentando novamente...");
+          throw new Error("Diretório desincronizado. Selecione a pasta novamente.");
+        }
         // Se falhar, tenta com truncate
-        const fh = await handle.getFileHandle(name, { create: true });
-        const w = await fh.createWritable({ keepExistingData: false });
-        await w.write(data);
-        await w.close();
+        try {
+          const fh = await handle.getFileHandle(name, { create: true });
+          const w = await fh.createWritable({ keepExistingData: false });
+          await w.write(data);
+          await w.close();
+          displayLogMessage(`[PDFtoArcgis] ✓ ${name} gravado (com retry)`);
+        } catch (retryErr) {
+          displayLogMessage(`[PDFtoArcgis] ❌ Erro ao salvar ${name}: ${retryErr.message}`);
+          throw retryErr;
+        }
       }
     };
 
@@ -3383,11 +3401,11 @@ saveToFolderBtn.onclick = async () => {
             try {
               // Apenas gravando a versão limpa
               await writeFile(`${base}_${crsName}_limite.shp`, toArrayBufferFS(files.shp));
-              await new Promise(r => setTimeout(r, 50));
+              await new Promise(r => setTimeout(r, 100));
               await writeFile(`${base}_${crsName}_limite.shx`, toArrayBufferFS(files.shx));
-              await new Promise(r => setTimeout(r, 50));
+              await new Promise(r => setTimeout(r, 100));
               await writeFile(`${base}_${crsName}_limite.dbf`, toArrayBufferFS(files.dbf));
-              await new Promise(r => setTimeout(r, 50));
+              await new Promise(r => setTimeout(r, 100));
               await writeFile(`${base}_${crsName}_limite.prj`, projection.wkt);
               resolve();
             } catch (e) { reject(e); }
@@ -3405,11 +3423,11 @@ saveToFolderBtn.onclick = async () => {
             try {
               // Apenas gravando a versão limpa
               await writeFile(`${base}_${crsName}_vertices.shp`, toArrayBufferFS(files.shp));
-              await new Promise(r => setTimeout(r, 50));
+              await new Promise(r => setTimeout(r, 100));
               await writeFile(`${base}_${crsName}_vertices.shx`, toArrayBufferFS(files.shx));
-              await new Promise(r => setTimeout(r, 50));
+              await new Promise(r => setTimeout(r, 100));
               await writeFile(`${base}_${crsName}_vertices.dbf`, toArrayBufferFS(files.dbf));
-              await new Promise(r => setTimeout(r, 50));
+              await new Promise(r => setTimeout(r, 100));
               await writeFile(`${base}_${crsName}_vertices.prj`, projection.wkt);
               resolve();
             } catch (e) { reject(e); }
@@ -3463,11 +3481,11 @@ saveToFolderBtn.onclick = async () => {
             try {
               // Apenas gravando a versão limpa
               await writeFile(`${base}_${crsName}_limite.shp`, toArrayBufferFS(files.shp));
-              await new Promise(r => setTimeout(r, 50));
+              await new Promise(r => setTimeout(r, 100));
               await writeFile(`${base}_${crsName}_limite.shx`, toArrayBufferFS(files.shx));
-              await new Promise(r => setTimeout(r, 50));
+              await new Promise(r => setTimeout(r, 100));
               await writeFile(`${base}_${crsName}_limite.dbf`, toArrayBufferFS(files.dbf));
-              await new Promise(r => setTimeout(r, 50));
+              await new Promise(r => setTimeout(r, 100));
               await writeFile(`${base}_${crsName}_limite.prj`, projection.wkt);
               resolve();
             } catch (e) { reject(e); }
@@ -3495,11 +3513,11 @@ saveToFolderBtn.onclick = async () => {
             try {
               // Apenas gravando a versão limpa
               await writeFile(`${base}_${crsName}_vertices.shp`, toArrayBufferFS(files.shp));
-              await new Promise(r => setTimeout(r, 50));
+              await new Promise(r => setTimeout(r, 100));
               await writeFile(`${base}_${crsName}_vertices.shx`, toArrayBufferFS(files.shx));
-              await new Promise(r => setTimeout(r, 50));
+              await new Promise(r => setTimeout(r, 100));
               await writeFile(`${base}_${crsName}_vertices.dbf`, toArrayBufferFS(files.dbf));
-              await new Promise(r => setTimeout(r, 50));
+              await new Promise(r => setTimeout(r, 100));
               await writeFile(`${base}_${crsName}_vertices.prj`, projection.wkt);
               resolve();
             } catch (e) { reject(e); }
@@ -3528,7 +3546,13 @@ saveToFolderBtn.onclick = async () => {
     }
 
   } catch (e) {
-    updateStatus("Erro ao salvar na pasta: " + e.message, "error");
+    if (e && (e.name === "InvalidStateError" || e.message.includes("state cached"))) {
+      updateStatus("❌ Erro ao salvar na pasta: Diretório foi modificado. Selecione a pasta novamente.", "error");
+    } else if (e && e.name === "NotAllowedError") {
+      updateStatus("❌ Erro: Permissão negada ao acessar a pasta. Verifique as permissões do navegador.", "error");
+    } else {
+      updateStatus("❌ Erro ao salvar na pasta: " + (e.message || String(e)), "error");
+    }
   }
 };
 
