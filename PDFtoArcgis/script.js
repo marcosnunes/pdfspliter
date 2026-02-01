@@ -55,15 +55,24 @@ async function deducePolygonVerticesWithAI(fullText) {
   if (!reply || !reply.choices?.[0]?.message?.content) {
     console.error('[PDFtoArcgis][LOG IA][RAW] (resposta ausente)', reply);
     displayLogMessage('[PDFtoArcgis] Falha na resposta da OpenAI.');
-    return null;
+        if (typeof displayLogMessage === 'function') {
+          displayLogMessage('[PDFtoArcgis] Falha na resposta da OpenAI.');
+        } else {
+          console.error('[PDFtoArcgis] Falha na resposta da OpenAI.');
+        }
+        return null;
   }
   // Apenas parse JSON, sem heurística
   let obj = null;
   try {
-    obj = JSON.parse(jsonText);
+        obj = JSON.parse(jsonText);
   } catch (e) {
     console.error('[PDFtoArcgis][LOG IA][PARSE ERROR]', e, jsonText);
-    displayLogMessage('[JS][IA] Erro ao interpretar JSON da IA: ' + e.message);
+        if (typeof displayLogMessage === 'function') {
+          displayLogMessage('[JS][IA] Erro ao interpretar JSON da IA: ' + e.message);
+        } else {
+          console.error('[JS][IA] Erro ao interpretar JSON da IA: ' + e.message);
+        }
     return null;
   }
   // Retornar objeto cru da IA (sem pós-processamento)
@@ -420,7 +429,8 @@ const ELLIPSOID_PARAMS = {
   "WGS84": { a: 6378137.0, f: 1 / 298.257223563, name: "WGS84" }
 };
 
-/**
+  // ATENÇÃO: Verifique se o endpoint abaixo está correto e publicado!
+  // Se estiver em desenvolvimento/local, ajuste a URL conforme necessário.
  * Calcular área de polígono via Shoelace (Gauss Area Formula)
  * Retorna área em m² e direção (positivo=CCW, negativo=CW)
  */
