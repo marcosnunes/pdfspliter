@@ -2440,253 +2440,27 @@ function detectPolygonCycles(vertices) {
 }
 
 async function processExtractUnified(pagesText) {
-  // NOVO APPROACH: Ignorar ID, extrair TODAS as coordenadas
-  // Combinar texto de todas as páginas
+  // NOVO FLUXO: Apenas IA, sem heurística, sem pós-processamento
   const fullText = pagesText.join("\n");
-
-  // Detectar projeção (CRS)
-  let det = detectProjectionFromText(fullText);
-  let projKey = det.key || null;
-
-  // CORREÇÃO: Se encontrar MC-39W ou CE no texto, priorizar zona 24S
-  if (/MC-?39W/i.test(fullText) || /\bCE\b/i.test(fullText)) {
-    projKey = "SIRGAS2000_24S";
-    det = { ...det, key: projKey };
-    console.log('[PDFtoArcgis] CRS ajustado para SIRGAS2000_24S devido a MC-39W ou CE no texto.');
-  }
-
-  console.log(`[PDFtoArcgis] 📄 Processando PDF completo (sem separação por ID)`);
-  console.log(`[PDFtoArcgis] CRS detectado: ${projKey || "não identificado"}`);
-
-  // Extrair e classificar TODAS as coordenadas e dados
-  let parseResult = parseVertices(fullText, projKey);
-  let allVertices = parseResult.utm;
-  let classified = parseResult.classified;
-  const projInfo = detectProjectionFromText(fullText, allVertices);
-  console.log(`[PDFtoArcgis] Total de coordenadas UTM extraídas: ${allVertices.length}`);
-  if (classified && classified.length) {
-    const latlonCount = classified.filter(c => c.type === 'latlon').length;
-    const azdistCount = classified.filter(c => c.type === 'azimute_dist').length;
-    console.log(`[PDFtoArcgis] Classificação extraída: ${latlonCount} lat/lon, ${azdistCount} azimute/distância`);
-    // Exibir na interface (previewTable) se possível
-    if (previewTableBody) {
-      // Limpar preview
-      previewTableBody.innerHTML = '';
-      // Adicionar UTM
-      for (const v of allVertices) {
-        const row = document.createElement('tr');
-        row.innerHTML = `<td>${v.id}</td><td>UTM</td><td>${v.north}</td><td>${v.east}</td><td></td><td></td><td></td>`;
-        previewTableBody.appendChild(row);
-      }
-      // Adicionar lat/lon
-      for (const c of classified.filter(c => c.type === 'latlon')) {
-        const row = document.createElement('tr');
-        row.innerHTML = `<td>${c.id}</td><td>Lat/Lon</td><td>${c.lat}</td><td>${c.lon}</td><td></td><td></td><td></td>`;
-        previewTableBody.appendChild(row);
-      }
-      // Adicionar azimute/distância
-      for (const c of classified.filter(c => c.type === 'azimute_dist')) {
-        const row = document.createElement('tr');
-        row.innerHTML = `<td>${c.id}</td><td>Azimute/Dist</td><td></td><td></td><td>${c.azimuth}</td><td>${c.distance}</td><td></td>`;
-        previewTableBody.appendChild(row);
-      }
-    }
-  }
-
-
-  // --- UTM ZONE AUTO-DETECTION ---
-  // If no CRS detected, try to infer UTM zone from coordinates
-  if (!projKey || projKey === "WGS84") {
-    // Only consider valid UTM eastings (E) and northings (N)
-    const easts = allVertices.map(v => v.east).filter(e => e > 200000 && e < 900000);
-    const norths = allVertices.map(v => v.north).filter(n => n > 6000000 && n < 8000000);
-    let inferredZone = null;
-    let inferredDatum = "SIRGAS2000";
-    // Try to infer by median easting and northing
-    if (easts.length && norths.length) {
-      // UTM central meridian for Brazil: 21S (-57), 22S (-51), 23S (-45), 24S (-39)
-      // Easting is always around 500,000 (central), but can go up to 850,000
-      // Northing: 6,450,000 (RS) to 7,450,000 (PR)
-      // We'll use northing to guess the state/zone
-      const median = arr => arr.slice().sort((a, b) => a - b)[Math.floor(arr.length / 2)];
-      const medN = median(norths);
-      // Heuristic: PR (22S): 7.15M-7.45M, SC (23S): 6.8M-7.15M, RS (21S): 6.45M-6.75M
-      if (medN >= 7.15e6 && medN <= 7.45e6) inferredZone = "22S";
-      else if (medN >= 6.8e6 && medN < 7.15e6) inferredZone = "23S";
-      else if (medN >= 6.45e6 && medN < 6.8e6) inferredZone = "21S";
-      else if (medN > 7.45e6 && medN < 8.0e6) inferredZone = "22S"; // fallback for north of PR
-      // Optionally, could use easting to check for outliers
-      if (inferredZone) {
-        projKey = `${inferredDatum}_${inferredZone}`;
-        console.log(`[PDFtoArcgis] 🛰️ Zona UTM inferida automaticamente: ${projKey}`);
-        // Show to user
-        if (crsDetectedBox && crsDetectedTitle && crsDetectedReason) {
-          crsDetectedBox.style.display = "block";
-          crsDetectedTitle.innerText = `Zona UTM inferida: ${projKey}`;
-          crsDetectedReason.innerText = `Detectada a partir dos valores das coordenadas extraídas (Norte mediana: ${medN.toFixed(0)})`;
-        }
-      }
-    }
-  }
-
-
-  // NOVO: Validar e corrigir coordenadas fora do intervalo, agora usando projKey (possibly inferred)
-  let validation = validateAndFixCoordinates(allVertices, projKey);
-  let validatedVertices = validation.valid;
-
-  // Se todas as coordenadas foram rejeitadas, tentar auto-detectar zona UTM mesmo que um CRS tenha sido detectado
-  if (validatedVertices.length < 3) {
-    console.warn('[PDFtoArcgis] Nenhuma coordenada válida para o CRS detectado. Tentando auto-detectar zona UTM a partir dos valores.');
-    // Auto-detectar zona UTM para todo o Brasil (northings até 10.500.000)
-    const easts = allVertices.map(v => v.east).filter(e => e > 200000 && e < 900000);
-    const norths = allVertices.map(v => v.north).filter(n => n > 6000000 && n < 10500000);
-    let inferredZone = null;
-    let inferredDatum = "SIRGAS2000";
-    if (easts.length && norths.length) {
-      const median = arr => arr.slice().sort((a, b) => a - b)[Math.floor(arr.length / 2)];
-      const medN = median(norths);
-      // Faixas aproximadas para zonas UTM SIRGAS2000 (Brasil)
-      if (medN >= 6.45e6 && medN < 6.8e6) inferredZone = "21S"; // RS
-      else if (medN >= 7.15e6 && medN < 7.45e6) inferredZone = "22S"; // PR
-      else if (medN >= 8.0e6 && medN < 9.0e6) inferredZone = "23S"; // SP/MS/MT
-      else if (medN >= 9.0e6 && medN < 10.0e6) inferredZone = "24S"; // CE/MA/PA
-      else if (medN >= 10.0e6 && medN < 10.5e6) inferredZone = "25S"; // extremo norte
-      // fallback genérico
-      else if (medN >= 6.45e6 && medN < 10.5e6) inferredZone = "22S";
-      if (inferredZone) {
-        projKey = `${inferredDatum}_${inferredZone}`;
-        console.log(`[PDFtoArcgis] 🛰️ Zona UTM inferida automaticamente (fallback): ${projKey}`);
-        if (crsDetectedBox && crsDetectedTitle && crsDetectedReason) {
-          crsDetectedBox.style.display = "block";
-          crsDetectedTitle.innerText = `Zona UTM inferida: ${projKey}`;
-          crsDetectedReason.innerText = `Detectada a partir dos valores das coordenadas extraídas (Norte mediana: ${medN.toFixed(0)})`;
-        }
-        // Revalidar com a zona inferida
-        validation = validateAndFixCoordinates(allVertices, projKey);
-        validatedVertices = validation.valid;
-      }
-    }
-  }
-
-  if (validation.recovered.length > 0) {
-    console.log(`[PDFtoArcgis] 🔄 ${validation.recovered.length} coordenadas recuperadas`);
-  }
-
-  if (validation.invalid.length > 0) {
-    console.warn(`[PDFtoArcgis] ⚠️ ${validation.invalid.length} coordenadas rejeitadas (fora do intervalo válido)`);
-    for (const inv of validation.invalid) {
-      console.warn(`   ${inv.id}: N=${inv.north}, E=${inv.east}`);
-    }
-  }
-
-  if (validatedVertices.length < 3) {
-    progressContainer.style.display = "none";
-    updateStatus(`❌ Insuficientes coordenadas válidas (${validatedVertices.length}/3 mínimo).`, "error");
+  const iaObj = await deducePolygonVerticesWithAI(fullText);
+  if (!iaObj) {
+    updateStatus('❌ Falha na extração por IA.', 'error');
     return;
   }
-
-  // Usar coordenadas validadas
-  allVertices = validatedVertices;
-
-  // Aplicar auto-fix se necessário
-  const fixes = (projKey && projKey !== "WGS84") ? autoFixUtmDecimals(allVertices) : [];
-  if (fixes.length > 0) {
-    console.log(`[PDFtoArcgis] ✓ Auto-fix aplicado: ${fixes.join("; ")}`);
-  }
-
-  // NOVO: Detectar ciclos de polígonos automaticamente
-  const cycles = detectPolygonCycles(allVertices);
-
-  if (!cycles.length) {
-    progressContainer.style.display = "none";
-    updateStatus("❌ Não foi possível detectar ciclos de polígonos válidos.", "error");
-    return;
-  }
-
-  documentsResults = [];
-
-  // Salvar apenas o primeiro ciclo detectado como o único polígono do documento
-  const cycleVertices = cycles[0];
-  const polygonId = `Polígono_1`;
-
-  console.log(`[PDFtoArcgis] 🔍 Processando ${polygonId}...`);
-
-  // Calcular distâncias e azimutes
-  const vertices = cycleVertices.map((pt, i) => {
-    pt.ordem = i + 1;
-    if (i < cycleVertices.length - 1) {
-      pt.distCalc = calcularDistancia(pt, cycleVertices[i + 1]).toFixed(2);
-      pt.azCalc = calcularAzimute(pt, cycleVertices[i + 1]).toFixed(4);
-    } else {
-      pt.distCalc = "---";
-      pt.azCalc = "---";
+  // Exibir preview direto do objeto da IA
+  if (previewTableBody) {
+    previewTableBody.innerHTML = '';
+    if (iaObj.vertices && Array.isArray(iaObj.vertices)) {
+      for (const v of iaObj.vertices) {
+        const row = document.createElement('tr');
+        row.innerHTML = `<td>${v.id || ''}</td><td>UTM</td><td>${v.norte || v.north || ''}</td><td>${v.este || v.east || ''}</td><td></td><td></td><td></td>`;
+        previewTableBody.appendChild(row);
+      }
     }
-    return pt;
-  });
-
-  // Remover duplicados consecutivos
-  const cleaned = [];
-  for (const p of vertices) {
-    const last = cleaned[cleaned.length - 1];
-    if (!last || last.east !== p.east || last.north !== p.north) cleaned.push(p);
   }
-
-  // Validação topológica
-  const topologyValidation = validatePolygonTopology(cleaned, projKey);
-
-  // Extração de dados do memorial
-  const memorialData = extractAzimuthDistanceFromText(fullText);
-  const memorialValidation = memorialData.azimutes.length > 0
-    ? validateMemorialCoherence(cleaned, memorialData, projKey)
-    : null;
-
-  // Construir warnings
-  const warnings = [];
-  if (!projKey) warnings.push("⚠️ CRS não identificado; use o modo avançado.");
-  if (fixes.length) warnings.push(`✓ ${fixes.length} correção(ões) automática(s) aplicada(s)`);
-  warnings.push(...validateCoords(cleaned, projKey));
-
-  if (!topologyValidation.isValid) {
-    warnings.push(...topologyValidation.errors.map(e => `❌ ${e}`));
-  }
-  warnings.push(...topologyValidation.warnings);
-
-  if (memorialValidation && memorialValidation.issues.length > 0) {
-    warnings.push(...memorialValidation.issues.map(i => `⚠️ ${i}`));
-  }
-
-  const finalVertices = topologyValidation.corrected || cleaned;
-
-  documentsResults.push({
-    docId: polygonId,
-    polygonIndex: 1,
-    pages: "Todas",
-    projectionKey: projKey,
-    manualProjectionKey: null,
-    projectionInfo: det,
-    vertices: finalVertices,
-    warnings,
-    topology: topologyValidation,
-    memorialValidation,
-    memorialData
-  });
-
-  progressContainer.style.display = "none";
-
-  // Estatísticas
-  const totalPolygons = documentsResults.length;
-  const validPolygons = documentsResults.filter(d => (d.vertices || []).length >= 3 && d.topology?.isValid).length;
-  const warningPolygons = documentsResults.filter(d => (d.vertices || []).length >= 3 && !d.topology?.isValid).length;
-
-  updateStatus(
-    `✅ PDF processado. Polígonos encontrados: ${totalPolygons} | Válidos: ${validPolygons} | Com avisos: ${warningPolygons}`,
-    validPolygons === totalPolygons ? "success" : (warningPolygons > 0 ? "warning" : "info")
-  );
-
-  const firstIdx = documentsResults.findIndex(d => (d.vertices || []).length > 0);
-  activeDocIndex = firstIdx >= 0 ? firstIdx : 0;
-
-  renderDocSelector();
+  // Salvar resultado cru da IA para exportação
+  window.lastIAResult = iaObj;
+  updateStatus('✅ PDF processado pela IA.', 'success');
 }
 
 /* ===== LEGACY: Mantém função antiga para compatibilidade ===== */
