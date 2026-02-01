@@ -63,7 +63,6 @@ async function deducePolygonVerticesWithAI(fullText) {
   console.log('[PDFtoArcgis][LOG IA][RAW]', jsonText);
   if (!reply || !reply.choices?.[0]?.message?.content) {
     console.error('[PDFtoArcgis][LOG IA][RAW] (resposta ausente)', reply);
-    displayLogMessage('[PDFtoArcgis] Falha na resposta da OpenAI.');
     if (typeof displayLogMessage === 'function') {
       displayLogMessage('[PDFtoArcgis] Falha na resposta da OpenAI.');
     } else {
