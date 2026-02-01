@@ -2465,20 +2465,85 @@ async function processExtractUnified(pagesText) {
     updateStatus('❌ Falha na extração por IA.', 'error');
     return;
   }
-  // Exibir preview direto do objeto da IA
+  // Exibir tabela e botões
+  document.getElementById('resultBox').style.display = '';
+  if (typeof countDisplay !== 'undefined' && countDisplay) {
+    countDisplay.textContent = iaObj.vertices?.length || 0;
+  }
   if (previewTableBody) {
     previewTableBody.innerHTML = '';
     if (iaObj.vertices && Array.isArray(iaObj.vertices)) {
-      for (const v of iaObj.vertices) {
+      iaObj.vertices.forEach((v, idx) => {
         const row = document.createElement('tr');
-        row.innerHTML = `<td>${v.id || ''}</td><td>UTM</td><td>${v.norte || v.north || ''}</td><td>${v.este || v.east || ''}</td><td></td><td></td><td></td>`;
+        row.innerHTML = `
+          <td>${idx + 1}</td>
+          <td>${v.id || ''}</td>
+          <td>${v.norte ?? v.north ?? ''}</td>
+          <td>${v.este ?? v.east ?? ''}</td>
+          <td></td>
+          <td></td>
+        `;
         previewTableBody.appendChild(row);
-      }
+      });
     }
   }
   // Salvar resultado cru da IA para exportação
   window.lastIAResult = iaObj;
+  // Reabilitar botões de download
+  if (downloadBtn) downloadBtn.disabled = false;
+  if (saveToFolderBtn) saveToFolderBtn.disabled = false;
   updateStatus('✅ PDF processado pela IA.', 'success');
+}
+
+// Exportação CSV apenas com dados da IA
+if (downloadBtn) {
+  downloadBtn.onclick = () => {
+    const iaObj = window.lastIAResult;
+    if (!iaObj || !Array.isArray(iaObj.vertices) || iaObj.vertices.length === 0) return;
+    let csv = 'Ordem,ID,Norte (Y),Este (X)\n';
+    iaObj.vertices.forEach((v, idx) => {
+      csv += `${idx + 1},${v.id || ''},${v.norte ?? v.north ?? ''},${v.este ?? v.east ?? ''}\n`;
+    });
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `vertices_IA_${Date.now()}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+  };
+}
+
+// Exportação SHP (apenas polígono simples com os vértices da IA)
+if (saveToFolderBtn && window.shpwrite) {
+  saveToFolderBtn.onclick = () => {
+    const iaObj = window.lastIAResult;
+    if (!iaObj || !Array.isArray(iaObj.vertices) || iaObj.vertices.length < 3) return;
+    // Montar GeoJSON simples
+    const coords = iaObj.vertices.map(v => [Number(v.este ?? v.east), Number(v.norte ?? v.north)]);
+    // Fechar polígono se necessário
+    if (coords.length && (coords[0][0] !== coords[coords.length-1][0] || coords[0][1] !== coords[coords.length-1][1])) {
+      coords.push([coords[0][0], coords[0][1]]);
+    }
+    const geojson = {
+      type: 'FeatureCollection',
+      features: [{
+        type: 'Feature',
+        properties: {
+          imovel: iaObj.imovel || '',
+          matricula: iaObj.matricula || '',
+          datum: iaObj.datum || ''
+        },
+        geometry: {
+          type: 'Polygon',
+          coordinates: [coords]
+        }
+      }]
+    };
+    window.shpwrite.download(geojson, { file: `vertices_IA_${Date.now()}` });
+  };
+}
 }
 
 /* ===== LEGACY: Mantém função antiga para compatibilidade ===== */
