@@ -1,4 +1,4 @@
-// Vercel Serverless Function: /api/openai-gpt4-turbo.js
+// Vercel Serverless Function: /api/openai-gpt5-2.js
 // Proxy seguro para chamada à OpenAI usando variável de ambiente
 
 export default async function handler(req, res) {
