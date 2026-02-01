@@ -146,7 +146,7 @@ async function deducePolygonVerticesPerPage(pagesText) {
 
   const results = [];
   const totalPages = pagesText.length;
-  let baseDelay = 1500; // Delay padrão entre páginas (1.5 segundos)
+  let baseDelay = 3000; // Delay padrão entre páginas (3 segundos - evita 429)
   
   if (typeof displayLogMessage === 'function') {
     displayLogMessage(`[PDFtoArcgis][LogUI] 📄 Processando ${totalPages} página(s) individualmente...`);
@@ -200,11 +200,43 @@ async function deducePolygonVerticesPerPage(pagesText) {
     content = repairJsonCoordinates(content);
     try {
       const parsed = JSON.parse(content);
-      results.push(parsed);
-      const vcount = Array.isArray(parsed?.vertices) ? parsed.vertices.length : 0;
-      console.log(`[PDFtoArcgis] Página ${i + 1}: ${vcount} vértices extraídos`);
-      if (typeof displayLogMessage === 'function') {
-        displayLogMessage(`[PDFtoArcgis][LogUI] ✅ Página ${i + 1}: ${vcount} coordenada(s) obtida(s) pela IA`);
+      
+      // Validar coordenadas UTM (evitar dados fake/teste)
+      if (parsed?.vertices && Array.isArray(parsed.vertices)) {
+        const validVertices = parsed.vertices.filter(v => {
+          const e = parseFloat(v.este || v.east || 0);
+          const n = parseFloat(v.norte || v.north || 0);
+          // Coordenadas UTM válidas para Brasil: E: 160000-840000, N: 7000000-10000000
+          const isValidE = e >= 160000 && e <= 840000;
+          const isValidN = n >= 7000000 && n <= 10000000;
+          if (!isValidE || !isValidN) {
+            console.warn(`[PDFtoArcgis] ⚠️ Coordenada inválida detectada: ${v.id || '?'} E=${e} N=${n}`);
+          }
+          return isValidE && isValidN;
+        });
+        
+        if (validVertices.length !== parsed.vertices.length) {
+          console.log(`[PDFtoArcgis] 🔧 Filtrados ${parsed.vertices.length - validVertices.length} vértice(s) com coordenadas inválidas`);
+          if (typeof displayLogMessage === 'function') {
+            displayLogMessage(`[PDFtoArcgis][LogUI] 🔧 Página ${i + 1}: ${validVertices.length} válido(s) de ${parsed.vertices.length}`);
+          }
+        }
+        
+        parsed.vertices = validVertices;
+      }
+      
+      if (parsed?.vertices?.length > 0) {
+        results.push(parsed);
+        const vcount = parsed.vertices.length;
+        console.log(`[PDFtoArcgis] Página ${i + 1}: ${vcount} vértices extraídos`);
+        if (typeof displayLogMessage === 'function') {
+          displayLogMessage(`[PDFtoArcgis][LogUI] ✅ Página ${i + 1}: ${vcount} coordenada(s) obtida(s) pela IA`);
+        }
+      } else {
+        console.log(`[PDFtoArcgis] Página ${i + 1}: nenhum vértice válido após filtros`);
+        if (typeof displayLogMessage === 'function') {
+          displayLogMessage(`[PDFtoArcgis][LogUI] ℹ️ Página ${i + 1}: sem coordenadas válidas`);
+        }
       }
     } catch (e) {
       console.error('[PDFtoArcgis][PARSE ERROR][PAGE]', e, content);
@@ -214,7 +246,7 @@ async function deducePolygonVerticesPerPage(pagesText) {
         if (typeof displayLogMessage === 'function') {
           displayLogMessage(`[PDFtoArcgis][LogUI] ℹ️ Página ${i + 1}: sem coordenadas detectadas pela IA`);
         }
-        baseDelay = Math.min(baseDelay + 500, 3000); // Aumentar delay progressivamente até 3s
+        baseDelay = Math.min(baseDelay + 500, 5000); // Aumentar delay progressivamente até 5s
       } else {
         // Tentar recuperar JSON do conteúdo
         const arrMatch = content.match(/\[\{[^\}]*\}.*?\]/s);
@@ -233,13 +265,13 @@ async function deducePolygonVerticesPerPage(pagesText) {
             if (typeof displayLogMessage === 'function') {
               displayLogMessage(`[PDFtoArcgis][LogUI] ❌ Página ${i + 1}: erro ao processar resposta da IA`);
             }
-            baseDelay = Math.min(baseDelay + 500, 3000); // Aumentar delay em caso de erro
+            baseDelay = Math.min(baseDelay + 500, 5000); // Aumentar delay em caso de erro
           }
         } else {
           if (typeof displayLogMessage === 'function') {
             displayLogMessage(`[PDFtoArcgis][LogUI] ❌ Página ${i + 1}: IA retornou formato inválido`);
           }
-          baseDelay = Math.min(baseDelay + 500, 3000); // Aumentar delay em caso de erro
+          baseDelay = Math.min(baseDelay + 500, 5000); // Aumentar delay em caso de erro
         }
       }
     }
@@ -247,20 +279,64 @@ async function deducePolygonVerticesPerPage(pagesText) {
   
   const mergedVertices = mergeVerticesFromChunks(results);
   console.log(`[PDFtoArcgis] Total de vértices únicos (por página): ${mergedVertices.length}`);
+  
+  // Ordenar vértices por proximidade (nearest neighbor) para formar polígono correto
+  const orderedVertices = orderVerticesByProximity(mergedVertices);
+  console.log(`[PDFtoArcgis] Vértices reordenados por proximidade para formar polígono`);
+  
   if (typeof displayLogMessage === 'function') {
-    displayLogMessage(`[PDFtoArcgis][LogUI] 🎉 Processamento concluído! ${mergedVertices.length} coordenada(s) extraída(s) pela IA`);
+    displayLogMessage(`[PDFtoArcgis][LogUI] 🎉 Processamento concluído! ${orderedVertices.length} coordenada(s) extraída(s) e ordenadas pela IA`);
   }
   
-  if (mergedVertices.length >= 3) {
+  if (orderedVertices.length >= 3) {
     return {
       imovel: null,
       matricula: null,
       datum: null,
-      vertices: mergedVertices
+      vertices: orderedVertices
     };
   }
   
   return null;
+}
+
+// Função para ordenar vértices por proximidade (nearest neighbor algorithm)
+function orderVerticesByProximity(vertices) {
+  if (vertices.length < 3) return vertices;
+  
+  const ordered = [];
+  const remaining = [...vertices];
+  
+  // Começar pelo primeiro vértice
+  let current = remaining.shift();
+  ordered.push(current);
+  
+  // Para cada vértice, encontrar o mais próximo
+  while (remaining.length > 0) {
+    let nearestIndex = 0;
+    let minDistance = Infinity;
+    
+    for (let i = 0; i < remaining.length; i++) {
+      const dist = Math.sqrt(
+        Math.pow(remaining[i].east - current.east, 2) +
+        Math.pow(remaining[i].north - current.north, 2)
+      );
+      
+      if (dist < minDistance) {
+        minDistance = dist;
+        nearestIndex = i;
+      }
+    }
+    
+    current = remaining.splice(nearestIndex, 1)[0];
+    ordered.push(current);
+  }
+  
+  // Reindexar ordem
+  return ordered.map((v, idx) => ({
+    ...v,
+    ordem: idx + 1
+  }));
 }
 
 // Função IA para deduzir os vértices corretos a partir do texto extraído (selecionável + OCR)
