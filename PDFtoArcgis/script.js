@@ -2380,7 +2380,7 @@ fileInput.addEventListener("change", async (event) => {
   try {
     updateStatus("📄 Carregando PDF...", "info");
     const arrayBuffer = await file.arrayBuffer();
-    const pdf = await pdfjsLib.getDocument(arrayBuffer).promise;
+    const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer), ignoreEncryption: true }).promise;
     const pagesText = [];
 
     // Loop de leitura de páginas
@@ -2388,12 +2388,23 @@ fileInput.addEventListener("change", async (event) => {
       progressBar.value = Math.round((i / pdf.numPages) * 100);
       document.getElementById("progressLabel").innerText = `Lendo página ${i}/${pdf.numPages}...`;
 
-      const page = await pdf.getPage(i);
-      const textContent = await page.getTextContent({ disableCombineTextItems: false });
-      let pageText = buildPageTextWithLines(textContent);
+      try {
+        const page = await pdf.getPage(i);
+        const textContent = await page.getTextContent({ disableCombineTextItems: false });
+        let pageText = buildPageTextWithLines(textContent);
 
-      // Se a página estiver vazia/escaneada, apenas mantém o texto vazio (não faz OCR)
-      pagesText.push(pageText || "");
+        // Se a página estiver vazia/escaneada, apenas mantém o texto vazio (não faz OCR)
+        pagesText.push(pageText || "");
+      } catch (e) {
+        const msg = `[PDFtoArcgis] Erro ao ler página ${i}: ${e?.message || e}`;
+        if (typeof displayLogMessage === 'function') {
+          displayLogMessage(msg);
+        } else {
+          console.error(msg);
+        }
+        pagesText.push("");
+        continue;
+      }
     }
 
     // --- LÓGICA DE INFERÊNCIA REVERSA ---
