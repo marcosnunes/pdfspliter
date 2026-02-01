@@ -47,15 +47,26 @@ async function callOpenAIGPT4Turbo(prompt, retryCount = 0) {
 
 function extractRelevantLinesForAI(fullText) {
   const lines = String(fullText || "").split(/\r?\n/);
-  // Ultra-agressivo: apenas linhas que contenham vértice ID + coordenadas E/N
-  const vertexPattern = /vértice\s+[a-z]?\d+|^[a-z]?\d+[\s\.,]*$/i;
-  const coordPattern = /\b[EN]\b[\s\.,0-9]*m?\b|^\d{4,}\.\d{2,}|^\d+[\s\.,]\d{2,}m?$/;
+  // Padrões aprimorados para múltiplos formatos de documentos cartoriais brasileiros
+  const vertexPattern = /vértice|pt\s|ponto\s|\bv\d|\bp\d/i; // Variações de identificação de vértice
+  
+  // Padrões de coordenadas em diferentes formatos:
+  // 1. "E=" ou "N=" ou "Este=" ou "Norte="
+  // 2. Números grandes com ponto (milhar) + vírgula (decimal)
+  // 3. Azimutes em formato DDD°MM'SS"
+  const coordPattern = /\b[EN]\b[\s=:]*[\d.,]+|este[\s=:]*[\d.,]+|norte[\s=:]*[\d.,]+|east[\s=:]*[\d.,]+|north[\s=:]*[\d.,]+|°|segue|azimute/i;
+  
   const keep = [];
   for (const ln of lines) {
     const line = ln.trim();
     if (!line || line.length < 3) continue;
-    // Manter linha se tem "vértice" + ID, ou if é puramente coordenada numérica
-    if ((vertexPattern.test(line) || coordPattern.test(line)) && /\d/.test(line)) {
+    
+    // Manter linha se:
+    // 1. Contém identificação de vértice (V1, P1, Vértice, etc)
+    // 2. Contém padrão de coordenada (E=, N=, Este, Norte, etc)
+    // 3. Contém azimute ou "segue"
+    // 4. Contém números grandes (possíveis coordenadas)
+    if ((vertexPattern.test(line) || coordPattern.test(line) || /segue|azimute|distância/i.test(line)) && /\d/.test(line)) {
       keep.push(line);
     }
   }
@@ -86,11 +97,28 @@ function repairJsonCoordinates(jsonStr) {
   if (!jsonStr.endsWith(']') && !jsonStr.endsWith('}')) {
     if (jsonStr.includes('"vertices"')) jsonStr += ']}';
   }
-  // Normalizar números com pontos como separadores de milhares (7.330.34207 -> 7330.34207)
-  jsonStr = jsonStr.replace(/(\"(?:norte|north|este|east)\"\s*:\s*)(\d{1,3}\.\d{3}\.\d+)/g, (match, prefix, num) => {
-    const clean = num.replace(/\./g, '');
-    return prefix + clean;
+  
+  // === NOVA LÓGICA: Normalizar números brasileiros CORRETAMENTE ===
+  // Padrão: 7.186.708,425 (com ponto de milhar + vírgula decimal)
+  // Precisamos detectar:
+  // 1. Se temos uma sequência tipo XXX.XXX.XXX,XXX (3 dígitos . 3 dígitos . 3 dígitos , decimais)
+  // 2. Isso é número brasileiro: remover . e trocar , por .
+  
+  // Padrão: números com MÚLTIPLOS pontos (ponto de milhar) e vírgula final (decimal)
+  // Exemplo: "7.186.708,425" ou "693.736,178"
+  jsonStr = jsonStr.replace(/(\d{1,3})\.(\d{3})\.(\d{3}),(\d+)/g, (match, g1, g2, g3, g4) => {
+    // XXX.XXX.XXX,DDD → XXXXXXXXX.DDD (5-10 dígitos inteiros)
+    return g1 + g2 + g3 + '.' + g4;
   });
+  
+  // Padrão: 2 ou mais dígitos com ponto separando, terminando em vírgula
+  // Exemplo: "693.736,178" → "693736.178"
+  jsonStr = jsonStr.replace(/(\d{3})\.(\d{3}),(\d+)/g, '$1$2.$3');
+  
+  // Padrão: qualquer número com vírgula decimal dentro de JSON
+  // Se for contexto de número (entre : e ,/}), converter vírgula por ponto
+  jsonStr = jsonStr.replace(/("(?:norte|norte|este|east|north|azimute|distancia)"\s*:\s*)(\d+),(\d+)/g, '$1$2.$3');
+  
   return jsonStr;
 }
 
@@ -103,11 +131,21 @@ function mergeVerticesFromChunks(chunksResults) {
       const id = String(v.id || "").trim();
       let east = v.este ?? v.east;
       let north = v.norte ?? v.north;
-      // Normalizar números com pontos
-      if (typeof east === 'string') east = east.replace(/\./g, '');
-      if (typeof north === 'string') north = north.replace(/\./g, '');
+      
+      // Normalizar números brasileiros CORRETAMENTE:
+      // Padrão: 7.186.708,425 → 7186708.425
+      // Ou: 693.736,178 → 693736.178
+      if (typeof east === 'string') {
+        // Remover todos os pontos, depois trocar vírgula por ponto
+        east = east.replace(/\./g, '').replace(/,/g, '.');
+      }
+      if (typeof north === 'string') {
+        north = north.replace(/\./g, '').replace(/,/g, '.');
+      }
+      
       east = Number(east);
       north = Number(north);
+      
       const key = `${id}|${east}|${north}`;
       if (!Number.isFinite(east) || !Number.isFinite(north)) continue;
       if (!seen.has(key)) {
@@ -142,7 +180,41 @@ async function ensureWebLLM(model = "phi-2") {
 
 // Função IA para processar página por página
 async function deducePolygonVerticesPerPage(pagesText) {
-  const smallPrompt = (text) => `Instrução: Extraia APENAS os vértices (ID, Este, Norte) do texto abaixo e retorne um JSON válido. Sem explicações.\n\nFormato:\n{\n  "vertices": [\n    {"id": "P1", "este": 123456.789, "norte": 7123456.789}\n  ]\n}\n\nTexto:\n${text}`;
+  const smallPrompt = (text) => `Instrução: Você é um especialista em extração de coordenadas geográficas de documentos cartoriais brasileiros. 
+Extraia TODOS os vértices (com ID e coordenadas UTM Este/Norte) do texto abaixo.
+Retorne um JSON válido contendo todos os vértices encontrados.
+
+Responda APENAS com JSON, sem explicações.
+
+Formatos aceitos de coordenadas:
+- "E=693.736,178 e N=7.186.708,425" (com ponto de milhar + vírgula decimal)
+- "Este: 693736.178, Norte: 7186708.425" (com vírgula separadora de casas decimais)
+- "693736178 / 7186708425" (inteiros em metros)
+- Qualquer variação com E, N, Este, Norte, East, North (maiúsculas/minúsculas)
+
+Processe TODAS as formas de identificação de vértices:
+- "Vértice V1", "Vértice P1", "Vértice A", "Pt 1", "Ponto 1"
+- "Do vértice 1 até vértice 2"
+- Linhas separadas com coordenadas
+
+Normalize números brasileiros:
+- 7.186.708,425 → 7186708.425
+- 693.736,178 → 693736.178
+
+Se encontrar azimutes e distâncias, incluir no JSON como azimute (graus decimais) e distancia (metros).
+
+Formato esperado:
+{
+  "vertices": [
+    {"id": "V1", "este": 693736.178, "norte": 7186708.425, "azimute": 133.265, "distancia": 24.86}
+  ]
+}
+
+Se NÃO houver coordenadas válidas, retorne:
+{"vertices": [], "motivo": "sem_coordenadas"}
+
+Texto:
+${text}`;
 
   const results = [];
   const totalPages = pagesText.length;
@@ -164,12 +236,17 @@ async function deducePolygonVerticesPerPage(pagesText) {
     }
     
     const filtered = extractRelevantLinesForAI(pageText);
-    if (filtered.length < 10) {
-      console.log(`[PDFtoArcgis] Página ${i + 1}: sem coordenadas detectadas`);
+    
+    // NOVIDADE: Mesmo se o filtro não encontrar padrão inicial, enviar para IA
+    // Isso permite que documentos em formatos não-convencionais sejam processados
+    const textToSend = filtered.length > 20 ? filtered : pageText;
+    
+    if (textToSend.trim().length < 10) {
+      console.log(`[PDFtoArcgis] Página ${i + 1}: sem conteúdo para processar`);
       continue;
     }
     
-    const prompt = smallPrompt(filtered);
+    const prompt = smallPrompt(textToSend);
     console.log(`[PDFtoArcgis][LOG IA][PROMPT][PAGE ${i + 1}/${totalPages}]`, prompt.substring(0, 200) + '...');
     
     // Aguardar antes de fazer requisição (exceto primeira página)
@@ -206,9 +283,14 @@ async function deducePolygonVerticesPerPage(pagesText) {
         const validVertices = parsed.vertices.filter(v => {
           const e = parseFloat(v.este || v.east || 0);
           const n = parseFloat(v.norte || v.north || 0);
-          // Coordenadas UTM válidas para Brasil: E: 160000-840000, N: 7000000-10000000
-          const isValidE = e >= 160000 && e <= 840000;
-          const isValidN = n >= 7000000 && n <= 10000000;
+          
+          // Coordenadas UTM válidas para Brasil: 
+          // E (Este): 160000-840000 (múltiplas zonas UTM em uso)
+          // N (Norte): 7000000-10000000 (Hemisfério Sul)
+          // NOVIDADE: Aceitar também 600000-900000 para cobrir zonas 19-25
+          const isValidE = e >= 150000 && e <= 900000;
+          const isValidN = n >= 6900000 && n <= 10100000;
+          
           if (!isValidE || !isValidN) {
             console.warn(`[PDFtoArcgis] ⚠️ Coordenada inválida detectada: ${v.id || '?'} E=${e} N=${n}`);
           }
@@ -228,9 +310,14 @@ async function deducePolygonVerticesPerPage(pagesText) {
       if (parsed?.vertices?.length > 0) {
         results.push(parsed);
         const vcount = parsed.vertices.length;
-        console.log(`[PDFtoArcgis] Página ${i + 1}: ${vcount} vértices extraídos`);
+        
+        // Se houver azimutes/distâncias, logar para validação
+        const withMeasures = parsed.vertices.filter(v => v.azimute !== undefined || v.distancia !== undefined);
+        const measureInfo = withMeasures.length > 0 ? ` (${withMeasures.length} com medidas)` : "";
+        
+        console.log(`[PDFtoArcgis] Página ${i + 1}: ${vcount} vértices extraídos${measureInfo}`);
         if (typeof displayLogMessage === 'function') {
-          displayLogMessage(`[PDFtoArcgis][LogUI] ✅ Página ${i + 1}: ${vcount} coordenada(s) obtida(s) pela IA`);
+          displayLogMessage(`[PDFtoArcgis][LogUI] ✅ Página ${i + 1}: ${vcount} coordenada(s)${measureInfo}`);
         }
       } else {
         console.log(`[PDFtoArcgis] Página ${i + 1}: nenhum vértice válido após filtros`);
@@ -2643,21 +2730,27 @@ function detectDocIdFromPageText(pageText) {
   // Referências a outras matrículas aparecem depois no memorial (ex: "conforme referido Orozimbo Ciuffa de MATRÍCULA: 8.462")
   // SOLUÇÃO: Pegar APENAS a PRIMEIRA matrícula do texto (cabeçalho/início)
 
-  // ESTRATÉGIA 1: Procurar APENAS no início do texto (primeiros 2000 caracteres - cabeçalho)
-  const headerText = t.substring(0, 2000);
+  // ESTRATÉGIA 1: Procurar APENAS no início do texto (primeiros 3000 caracteres - cabeçalho + início)
+  const headerText = t.substring(0, 3000);
 
   const matriculaPatterns = [
     // Padrões para MATRÍCULA - com variações OCR degradado
     // ORDEM IMPORTANTE: Do mais específico para o mais genérico
     // Padrões que garantem ser o ID do documento (aparecem no cabeçalho/título)
-    { rx: /MATR[ÍI]CULA\s*N[ºo°e]\s*([\d.,]+)/i, name: "MATRÍCULA Nº (com Ne)" },
-    { rx: /MATR[ÍI]CULA\s*N[ºo°e]?\s*([\d.,]+)/i, name: "MATRÍCULA N (OCR flex)" },
+    
+    // NOVO: Aceitar formatos "M_XXX" (underscore) e "M-XXX" (hífen) do nome do arquivo
+    { rx: /M[_\-\.]?\s*(\d{1,5})/i, name: "M_/- (arquivo)" },
+    
+    { rx: /MATR[ÍI]CULA\s*N[ºo°e]?\s*([0-9.,]+)/i, name: "MATRÍCULA Nº (flex)" },
+    { rx: /MATR[ÍI]CULA\s*N[ºo°e]\s*([\d.,]+)/i, name: "MATRÍCULA Nº" },
     { rx: /^MATR[ÍI]CULA\s*N[ºo°]?\s*([\d.,]+)/im, name: "MATRÍCULA Nº (linha)" },
 
     // PADRÕES PARA "MAT" - muito comuns em cartórios, aparecem no cabeçalho
     { rx: /\bMAT\s+N[ºo°e]\s*([\d.,]+)/i, name: "MAT Nº" },
     { rx: /\bMAT\s*\.\s*N[ºo°e]\s*([\d.,]+)/i, name: "MAT. Nº" },
-    { rx: /\bN[ºo°e]\s+(\d{1,3}(?:[.,]\d{3})*)\s*(?=[-–]|$)/i, name: "Nº (isolado)" },
+    
+    // Padrão alternativo: números com vírgula/ponto sozinhos (após "Nº" ou similares)
+    { rx: /\bN[ºo°e]\s+(\d{1,5}(?:[.,]\d{1,5})*)\s*(?=[-–]|$|\s[A-Z])/i, name: "Nº (isolado)" },
   ];
 
   // Tentar todos os padrões DE MATRÍCULA APENAS NO CABEÇALHO
@@ -2680,7 +2773,8 @@ function detectDocIdFromPageText(pageText) {
   // PROTOCOLO nunca deve ter prioridade sobre MATRÍCULA
   // Usar apenas se MATRÍCULA não foi encontrada
   const protocoloPatterns = [
-    { rx: /PROTOCOLO\s*N[ºo°e]\s*([\d.,]+)/i, name: "PROTOCOLO Nº" },
+    { rx: /PROTOCOLO\s*N[ºo°e]?\s*([\d.,]+)/i, name: "PROTOCOLO Nº" },
+    { rx: /PROCESSO\s*N[ºo°e]?\s*([\d.,]+)/i, name: "PROCESSO Nº" },
   ];
 
   for (const { rx, name } of protocoloPatterns) {
@@ -2688,30 +2782,7 @@ function detectDocIdFromPageText(pageText) {
     if (m && m[1]) {
       let id = m[1].replace(/[.,]/g, "").replace(/^0+/, "");
       if (id && id.length > 0) {
-        console.log(`[PDFtoArcgis] ⚠️ PROTOCOLO detectado (fallback): ${id} (padrão: ${name}) - Raw: "${m[1]}"`);
-        return id;
-      }
-    }
-  }
-
-  // ===== ETAPA 3: Procurar por alternativas (se nenhuma matrícula foi encontrada) =====
-  // DESABILITADO: Padrões alternativos muito genéricos causam falsos positivos
-  // Exemplo: "M. 339" pegava número de outra parte do documento que não era matrícula
-  // Melhor deixar como "SEM_ID" e depois usar heurística de recuperação com páginas próximas
-  const alternativePatterns = [
-    // { rx: /PROCESSO\s*(?:N[ºo°]|#)?\s*([\d.]+)/i, name: "PROCESSO" },
-    // { rx: /IMÓVEL\s*(?:N[ºo°]|#)?\s*([\d.]+)/i, name: "IMÓVEL" },
-    // { rx: /REGISTRO\s*(?:N[ºo°]|#)?\s*([\d.]+)/i, name: "REGISTRO" },
-    // { rx: /\bM\.?\s+(\d{1,3}(?:[.,]\d{3})*)\b/, name: "M. (abreviação)" },  // MUITO GENÉRICO!
-    // { rx: /MATR\s+(\d{1,3}(?:[.,]\d{3})*)/i, name: "MATR (abreviação)" },
-  ];
-
-  for (const { rx, name } of alternativePatterns) {
-    const m = t.match(rx);
-    if (m && m[1]) {
-      let id = m[1].replace(/\./g, "").replace(/^0+/, "");
-      if (id) {
-        console.log(`[PDFtoArcgis] ID alternativo detectado: ${id} (padrão: ${name})`);
+        console.log(`[PDFtoArcgis] ⚠️ ${name} detectado (fallback): ${id} - Raw: "${m[1]}"`);
         return id;
       }
     }
