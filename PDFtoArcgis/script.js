@@ -8,7 +8,7 @@ function setOpenAIApiKey(key) {
 }
 
 async function callOpenAIGPT4Turbo(prompt) {
-  const response = await fetch('/api/openai-gpt5-2', {
+  const response = await fetch('/api/groq-llama3', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ prompt })
