@@ -110,6 +110,7 @@ pdfspliter/
 - **Texto não extraído**: PDF escaneado — Dividir usa OCR Android. PDFtoArcgis não faz mais OCR: se não houver texto extraível, a IA local tentará deduzir apenas do texto disponível.
 - **Coordenadas não encontradas**: Formato desconhecido/OCR ruim — veja console (F12) para debug.
 - **Download falha**: Tente arquivos menores, use navegador moderno.
+- **Erro ao salvar em pasta com arquivos existentes**: ✅ Corrigido em v2.3.1 — agora sobrescreve elegantemente usando `keepExistingData: false`. Melhor sincronização com retry inteligente.
 
 ## Privacidade & Segurança
 
@@ -151,7 +152,16 @@ Contribuições são bem-vindas! Siga o fluxo padrão GitHub (fork, branch, PR).
 
 ## Changelog
 
-### v2.0 (Atual)
+### v2.3.1 (Atual)
+- **PDFtoArcgis**: Corrigido erro ao salvar em pasta com arquivos existentes. Agora usa `keepExistingData: false` com retry inteligente de sincronização.
+- Melhorados logs de progresso durante salvamento em pasta.
+- Tratamento robusto de `InvalidStateError` do FileSystem API.
+
+### v2.3
+- PDFtoArcgis: Delays aumentados para 100ms entre operações de arquivo para evitar corrupção de estado.
+- Logs detalhados para debugging de operações de arquivo.
+
+### v2.0 (Anterior)
 - PDFtoArcgis: validação topológica, memorial, múltiplos IDs, relatórios automáticos, projeções ampliadas
 ### v1.0
 - 6 módulos iniciais, PDF/JPG, i18n, Android WebView
@@ -173,4 +183,4 @@ Desenvolvido com ❤️ em JavaScript
 
 > Todas as páginas do app exibem no rodapé: **Desenvolvido por Marcos Roberto Nunes Lindolpho © 2026**
 
-Última atualização: Janeiro 2026 | Versão: 2.0
+Última atualização: Fevereiro 2026 | Versão: 2.3.1
