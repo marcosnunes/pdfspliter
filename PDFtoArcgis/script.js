@@ -181,8 +181,14 @@ async function ensureWebLLM(model = "phi-2") {
 // Função IA para processar página por página
 async function deducePolygonVerticesPerPage(pagesText) {
   const smallPrompt = (text) => `Instrução: Você é um especialista em extração de coordenadas geográficas de documentos cartoriais brasileiros. 
-Extraia TODOS os vértices (com ID e coordenadas UTM Este/Norte) do texto abaixo.
+Extraia TODOS os vértices (com ID, coordenadas UTM Este/Norte, azimutes e distâncias) do texto abaixo.
 Retorne um JSON válido contendo todos os vértices encontrados.
+
+**IMPORTANTE SOBRE AZIMUTES E DISTÂNCIAS:**
+- Azimutes devem ser extraídos em formato DMS (graus, minutos, segundos) E convertidos para decimal
+- Formatos aceitos: "133°15'52"", "45° 30' 27"", "90°00'00""
+- Distâncias devem ser em metros, com precisão de 2 casas decimais
+- Contexto: "segue com azimute 133°15'52"" e distância de 24,86m até vértice..."
 
 Responda APENAS com JSON, sem explicações.
 
@@ -201,12 +207,23 @@ Normalize números brasileiros:
 - 7.186.708,425 → 7186708.425
 - 693.736,178 → 693736.178
 
-Se encontrar azimutes e distâncias, incluir no JSON como azimute (graus decimais) e distancia (metros).
+**EXTRAÇÃO DE AZIMUTES E DISTÂNCIAS:**
+Se encontrar azimutes e distâncias no memorial descritivo, incluir no JSON:
+- azimute_dms: formato original "133°15'52""
+- azimute: valor em graus decimais (ex: 133.2644)
+- distancia: valor em metros com 2 decimais (ex: 24.86)
 
 Formato esperado:
 {
   "vertices": [
-    {"id": "V1", "este": 693736.178, "norte": 7186708.425, "azimute": 133.265, "distancia": 24.86}
+    {
+      "id": "V1", 
+      "este": 693736.178, 
+      "norte": 7186708.425, 
+      "azimute_dms": "133°15'52"",
+      "azimute": 133.2644,
+      "distancia": 24.86
+    }
   ]
 }
 
@@ -706,6 +723,95 @@ function openNav() {
 function closeNav() { document.getElementById("mySidenav").style.width = "0"; }
 
 
+// === UI: Atualizar painel de validação topológica ===
+function updateValidationUI(topology, corrections = []) {
+  const validationBox = document.getElementById("validationBox");
+  const validationTitle = document.getElementById("validationTitle");
+  const validationErrors = document.getElementById("validationErrors");
+  const validationWarnings = document.getElementById("validationWarnings");
+  const validationSuccess = document.getElementById("validationSuccess");
+  const validationDetails = document.getElementById("validationDetails");
+  const validationActions = document.getElementById("validationActions");
+  const errorList = document.getElementById("errorList");
+  const warningList = document.getElementById("warningList");
+
+  if (!validationBox) return;
+
+  // Mostrar painel
+  validationBox.style.display = "block";
+
+  // Limpar listas
+  if (errorList) errorList.innerHTML = "";
+  if (warningList) warningList.innerHTML = "";
+
+  // Atualizar título
+  if (validationTitle) {
+    if (topology.isValid) {
+      validationTitle.innerHTML = '<i class="fas fa-check-circle" style="color:#28a745;"></i> Polígono Válido!';
+    } else {
+      validationTitle.innerHTML = '<i class="fas fa-exclamation-triangle" style="color:#dc3545;"></i> Problemas Detectados';
+    }
+  }
+
+  // Mostrar erros
+  if (topology.errors && topology.errors.length > 0 && validationErrors && errorList) {
+    validationErrors.style.display = "block";
+    topology.errors.forEach(err => {
+      const li = document.createElement("li");
+      li.textContent = err;
+      errorList.appendChild(li);
+    });
+  } else if (validationErrors) {
+    validationErrors.style.display = "none";
+  }
+
+  // Mostrar avisos
+  if (topology.warnings && topology.warnings.length > 0 && validationWarnings && warningList) {
+    validationWarnings.style.display = "block";
+    topology.warnings.forEach(warn => {
+      const li = document.createElement("li");
+      li.textContent = warn;
+      warningList.appendChild(li);
+    });
+  } else if (validationWarnings) {
+    validationWarnings.style.display = "none";
+  }
+
+  // Mostrar sucesso
+  if (topology.isValid && validationSuccess && validationDetails) {
+    validationSuccess.style.display = "block";
+    
+    const areaHa = (topology.area / 10000).toFixed(4);
+    const areaM2 = topology.area.toFixed(2);
+    const closedText = topology.closed ? "✓ Fechado" : "⚠ Não fechado";
+    
+    validationDetails.innerHTML = `
+      <strong>Área:</strong> ${areaHa} ha (${areaM2} m²)<br>
+      <strong>Fechamento:</strong> ${closedText}<br>
+      <strong>Orientação:</strong> Anti-horária (CCW) ✓<br>
+      <strong>Auto-intersecções:</strong> ${topology.hasIntersections ? '❌ Sim' : '✓ Não'}
+    `;
+    
+    if (corrections.length > 0) {
+      validationDetails.innerHTML += `<br><br><strong>Correções aplicadas:</strong><br>`;
+      corrections.forEach(corr => {
+        validationDetails.innerHTML += `• ${corr}<br>`;
+      });
+    }
+  } else if (validationSuccess) {
+    validationSuccess.style.display = "none";
+  }
+
+  // Mostrar/ocultar botão de correção
+  if (validationActions) {
+    if (!topology.isValid && topology.errors.length > 0) {
+      validationActions.style.display = "block";
+    } else {
+      validationActions.style.display = "none";
+    }
+  }
+}
+
 // --- PWA: Instalar App (com feedback visual) ---
 let deferredPrompt = null;
 let installBtn = null;
@@ -1005,6 +1111,107 @@ function orderVerticesCCW(vertices) {
 }
 
 /**
+ * Corrige automaticamente problemas comuns em polígonos
+ * - Remove vértices duplicados
+ * - Reordena em sequência CCW
+ * - Fecha o polígono se necessário
+ * - Remove vértices colineares (simplificação)
+ */
+function autoCorrectPolygon(vertices, options = {}) {
+  const {
+    removeDuplicates = true,
+    closePolygon = true,
+    removeColinear = false,
+    tolerance = 0.01 // metros
+  } = options;
+
+  if (vertices.length < 3) return vertices;
+
+  let corrected = [...vertices];
+  const corrections = [];
+
+  // === CORREÇÃO 1: Remover duplicados ===
+  if (removeDuplicates) {
+    const unique = [];
+    const seen = new Set();
+
+    for (const v of corrected) {
+      const key = `${v.north.toFixed(3)}_${v.east.toFixed(3)}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        unique.push(v);
+      } else {
+        corrections.push(`🔧 Removido vértice duplicado: ${v.id || '?'}`);
+      }
+    }
+
+    if (unique.length < corrected.length) {
+      console.log(`[PDFtoArcgis] 🔧 Removidos ${corrected.length - unique.length} vértice(s) duplicado(s)`);
+      corrected = unique;
+    }
+  }
+
+  // === CORREÇÃO 2: Reordenar em CCW ===
+  corrected = orderVerticesCCW(corrected);
+  corrections.push("🔄 Vértices reordenados em sequência CCW");
+
+  // === CORREÇÃO 3: Fechar polígono ===
+  if (closePolygon && corrected.length >= 3) {
+    const first = corrected[0];
+    const last = corrected[corrected.length - 1];
+    const dist = Math.hypot(first.north - last.north, first.east - last.east);
+
+    if (dist > tolerance) {
+      // Adicionar cópia do primeiro vértice no final
+      corrected.push({ ...first, id: `${first.id}_closure` });
+      corrections.push(`🔒 Polígono fechado (distância era ${dist.toFixed(2)}m)`);
+      console.log(`[PDFtoArcgis] 🔒 Polígono fechado automaticamente`);
+    }
+  }
+
+  // === CORREÇÃO 4: Remover vértices colineares (opcional) ===
+  if (removeColinear && corrected.length > 3) {
+    const simplified = [corrected[0]];
+
+    for (let i = 1; i < corrected.length - 1; i++) {
+      const prev = corrected[i - 1];
+      const curr = corrected[i];
+      const next = corrected[i + 1];
+
+      // Calcular produto vetorial (cross product) para detectar colinearidade
+      const dx1 = curr.east - prev.east;
+      const dy1 = curr.north - prev.north;
+      const dx2 = next.east - curr.east;
+      const dy2 = next.north - curr.north;
+
+      const crossProduct = dx1 * dy2 - dy1 * dx2;
+
+      // Se cross product ≈ 0, vértices são colineares
+      if (Math.abs(crossProduct) > tolerance) {
+        simplified.push(curr);
+      } else {
+        corrections.push(`🔧 Removido vértice colinear: ${curr.id || '?'}`);
+      }
+    }
+
+    simplified.push(corrected[corrected.length - 1]);
+
+    if (simplified.length < corrected.length) {
+      console.log(`[PDFtoArcgis] 🔧 Removidos ${corrected.length - simplified.length} vértice(s) colinear(es)`);
+      corrected = simplified;
+    }
+  }
+
+  // Reindexar ordem
+  corrected = corrected.map((v, idx) => ({
+    ...v,
+    ordem: idx + 1
+  }));
+
+  return { vertices: corrected, corrections };
+}
+
+/**
  * Valida topologia do polígono (auto-intersecção, orientação, etc)
  */
 function validatePolygonTopology(vertices, projectionKey) {
@@ -1058,7 +1265,26 @@ function validatePolygonTopology(vertices, projectionKey) {
     warnings.push("🔄 Vértices foram reordenados em sequência CCW correta");
   }
 
-  // Verificar se polígono está fechado
+  // === VALIDAÇÃO 1: Verificar vértices duplicados ===
+  const duplicates = [];
+  for (let i = 0; i < orderedVertices.length; i++) {
+    for (let j = i + 1; j < orderedVertices.length; j++) {
+      const dist = Math.hypot(
+        orderedVertices[i].north - orderedVertices[j].north,
+        orderedVertices[i].east - orderedVertices[j].east
+      );
+      if (dist < 0.01) { // Tolerância: 1cm
+        duplicates.push({ i, j, dist });
+      }
+    }
+  }
+
+  if (duplicates.length > 0) {
+    errors.push(`❌ ${duplicates.length} vértice(s) duplicado(s) detectado(s)`);
+    console.log(`[PDFtoArcgis] Duplicados:`, duplicates);
+  }
+
+  // === VALIDAÇÃO 2: Verificar se polígono está fechado ===
   const first = orderedVertices[0];
   const last = orderedVertices[orderedVertices.length - 1];
   const closureDistance = Math.hypot(
@@ -1067,19 +1293,24 @@ function validatePolygonTopology(vertices, projectionKey) {
   );
 
   if (closureDistance > 5) {
-    warnings.push(`⚠️ Polígono não fechado: distância ${closureDistance.toFixed(1)}m`);
+    warnings.push(`⚠️ Polígono não fechado: distância ${closureDistance.toFixed(1)}m entre primeiro e último vértice`);
   }
 
-  // Verificar auto-intersecção (detecção simples)
+  // === VALIDAÇÃO 3: Verificar auto-intersecção (Bentley-Ottmann simplificado) ===
   let hasIntersections = false;
-  for (let i = 0; i < orderedVertices.length - 2; i++) {
+  const intersectionPairs = [];
+  
+  for (let i = 0; i < orderedVertices.length - 1; i++) {
     for (let j = i + 2; j < orderedVertices.length - 1; j++) {
+      // Não verificar arestas adjacentes
+      if (i === 0 && j === orderedVertices.length - 2) continue;
+
       const p1 = orderedVertices[i];
       const p2 = orderedVertices[i + 1];
       const p3 = orderedVertices[j];
       const p4 = orderedVertices[j + 1];
 
-      // Cross product test
+      // Cross product test (detecção de intersecção)
       const d1 = (p2.east - p1.east) * (p3.north - p1.north) - (p2.north - p1.north) * (p3.east - p1.east);
       const d2 = (p2.east - p1.east) * (p4.north - p1.north) - (p2.north - p1.north) * (p4.east - p1.east);
       const d3 = (p4.east - p3.east) * (p1.north - p3.north) - (p4.north - p3.north) * (p1.east - p3.east);
@@ -1087,15 +1318,18 @@ function validatePolygonTopology(vertices, projectionKey) {
 
       if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) &&
         ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))) {
-        errors.push(`❌ Auto-intersecção entre segmentos ${i}-${i + 1} e ${j}-${j + 1}`);
         hasIntersections = true;
-        break;
+        intersectionPairs.push({ edge1: i, edge2: j });
       }
     }
-    if (hasIntersections) break;
   }
 
-  // Validar orientação CCW (Counter-Clockwise)
+  if (hasIntersections) {
+    errors.push(`❌ Auto-intersecções detectadas em ${intersectionPairs.length} pares de arestas`);
+    console.log(`[PDFtoArcgis] Intersecções:`, intersectionPairs);
+  }
+
+  // === VALIDAÇÃO 4: Validar orientação CCW (Counter-Clockwise) ===
   let signedArea = 0;
   for (let i = 0; i < orderedVertices.length; i++) {
     const curr = orderedVertices[i];
@@ -1106,20 +1340,44 @@ function validatePolygonTopology(vertices, projectionKey) {
   const isCCW = signedArea > 0;
   const area = Math.abs(signedArea) / 2;
 
-  // Validar absurdidade de área
-  if (area > 1e8) {
-    errors.push(`❌ Área absurda: ${(area / 1e4).toFixed(1)} ha (indica erro de coordenadas)`);
+  if (!isCCW) {
+    warnings.push("⚠️ Vértices em ordem horária (CW) - convertendo para anti-horária (CCW)");
+    orderedVertices = orderedVertices.reverse();
+  }
+
+  // === VALIDAÇÃO 5: Validar absurdidade de área ===
+  if (area === 0) {
+    errors.push(`❌ Área zero (0 m²) - possível erro de extração de coordenadas`);
+  } else if (area < 1) {
+    errors.push(`❌ Área muito pequena (${area.toFixed(2)} m²) - possível erro de coordenadas`);
+  } else if (area > 1e8) {
+    errors.push(`❌ Área absurda: ${(area / 1e4).toFixed(1)} ha (${area.toExponential(2)} m²) - indica erro grave de coordenadas`);
+  } else if (area > 1e7) {
+    warnings.push(`⚠️ Área muito grande: ${(area / 1e4).toFixed(1)} ha (${area.toExponential(2)} m²) - verificar se está correto`);
+  }
+
+  // === VALIDAÇÃO 6: Verificar segmentos muito longos (possível erro) ===
+  for (let i = 0; i < orderedVertices.length - 1; i++) {
+    const v1 = orderedVertices[i];
+    const v2 = orderedVertices[i + 1];
+    const dist = Math.hypot(v2.north - v1.north, v2.east - v1.east);
+    
+    if (dist > 10000) { // Segmentos > 10km são suspeitos
+      warnings.push(`⚠️ Segmento ${i}→${i + 1} muito longo: ${(dist / 1000).toFixed(2)}km`);
+    }
   }
 
   return {
-    isValid: errors.length === 0 && area > 0,
+    isValid: errors.length === 0 && area > 1,
     errors,
     warnings,
     hasIntersections,
-    corrected: orderedVertices,  // Retornar vértices reordenados
-    isCCW,
+    corrected: orderedVertices,  // Retornar vértices reordenados e corrigidos
+    isCCW: true, // Sempre CCW após correção
     area,
-    closed: closureDistance < 5
+    closed: closureDistance < 5,
+    duplicates: duplicates.length,
+    intersectionPairs
   };
 }
 
@@ -1344,23 +1602,19 @@ function calculateDistanceVincenty(p1, p2, projectionKey = "SIRGAS2000_22S") {
 
 /**
  * Extrair azimutes e distâncias documentadas do texto (memorial)
- * Procura por padrões como "45°30'27" e 258,45m"
+ * Procura por padrões como "133°15'52"", "45°30'27"" e "258,45m"
  */
 function extractAzimuthDistanceFromText(text) {
   const memorialData = [];
 
-  // Padrão: "azimute <azi>, distância <dist>" ou "segue com azimute ... e distância ..."
-  // Formatos de azimute: 45°30'27", 45° 30' 27", 045:30:27
-  // Formatos de distância: 123,45m, 123.45, 123
-  // IMPORTANTE: Distâncias devem estar em contexto "e distância XXXm" ou "até XXXm"
-  // Não pegar números gigantescos que são coordenadas (7331450980.34)
-
-  const azPattern = /(?:azimute?|bearing)[:\s]+([0-9]{1,3})[°º](?:\s*([0-9]{1,2})[\''])?(?:\s*([0-9]{1,2})[\""])?/gi;
-
-  // PATTERN CORRIGIDO: Distâncias têm no máximo 5 dígitos antes do decimal (00000,00m = 100km)
-  // Rejeitar números com 7+ dígitos (são coordenadas)
-  // Padrões: "e distância 123,45 m", "até 456,78m", ", 789.01 m"
-  const distPattern = /(?:e\s+distância|até|até\s+o|,\s+)[:\s]*([0-9]{2,5}[.,][0-9]{1,3})\s*m(?:\s|$|\.|-|,)/gi;
+  // === CORREÇÃO 1: AZIMUTES ===
+  // Padrões melhorados para capturar diversos formatos:
+  // - "azimute 133°15'52"", "Az: 45° 30' 27"", "azimute de 90°"
+  // - "segue com azimute 133°15'52"" até vértice"
+  // - Aceita espaços entre grau/minuto/segundo
+  // - Aceita omissão de minutos/segundos (default 0)
+  
+  const azPattern = /(?:azimute?|az\.?|bearing)[:\s]+([0-9]{1,3})[°º:]\s*([0-9]{1,2})?['']?\s*([0-9]{1,2})?[\""]?/gi;
 
   let azMatch;
   const azimutes = [];
@@ -1369,27 +1623,73 @@ function extractAzimuthDistanceFromText(text) {
     const minutes = azMatch[2] ? parseInt(azMatch[2], 10) : 0;
     const seconds = azMatch[3] ? parseInt(azMatch[3], 10) : 0;
 
+    // Validação: azimute deve estar entre 0° e 360°
     const decimal = degrees + minutes / 60 + seconds / 3600;
-    azimutes.push({ decimal, degrees, minutes, seconds, raw: azMatch[0] });
-    console.log(`[PDFtoArcgis] Azimute extraído: ${decimal.toFixed(2)}° (${degrees}°${minutes}'${seconds}")`);
-  }
-
-  let distMatch;
-  const distances = [];
-  while ((distMatch = distPattern.exec(text)) !== null) {
-    const raw = distMatch[1];
-    const value = parseFloat(normalizeNumber(raw));
-
-    // Validação: distância deve estar entre 0.1m e 10000m (casos reais de lotes)
-    if (Number.isFinite(value) && value >= 0.1 && value <= 10000) {
-      distances.push({ value, raw });
-      console.log(`[PDFtoArcgis] Distância extraída: ${value.toFixed(2)}m (raw: "${raw}")`);
+    if (decimal >= 0 && decimal < 360) {
+      azimutes.push({ 
+        decimal, 
+        degrees, 
+        minutes, 
+        seconds, 
+        raw: azMatch[0],
+        dms: `${degrees}°${minutes}'${seconds}"`
+      });
+      console.log(`[PDFtoArcgis] ✅ Azimute extraído: ${decimal.toFixed(4)}° (${degrees}°${minutes}'${seconds}")`);
     } else {
-      console.log(`[PDFtoArcgis] ⚠️ Distância rejeitada (fora do intervalo): ${value}m`);
+      console.log(`[PDFtoArcgis] ⚠️ Azimute rejeitado (fora de 0-360°): ${decimal.toFixed(2)}°`);
     }
   }
 
-  console.log(`[PDFtoArcgis] Resumo: ${azimutes.length} azimutes, ${distances.length} distâncias`);
+  // === CORREÇÃO 2: DISTÂNCIAS ===
+  // Padrões melhorados para distinguir distâncias de coordenadas:
+  // - Contexto explícito: "distância", "extensão", "até"
+  // - Rejeitar números grandes (coordenadas UTM têm 7 dígitos)
+  // - Aceitar formatos: "123,45m", "456.78 m", "1.234,56m" (mil vírgula decimal)
+  
+  // Padrão 1: Com contexto explícito (alta confiança)
+  const distPatternExplicit = /(?:distância|extensão|até|segue\s+por)[:\s]+([0-9]{1,2}\.?[0-9]{3}[.,][0-9]{1,3}|[0-9]{1,4}[.,][0-9]{1,3})\s*m(?:etros?)?(?:\s|$|,|;|\.)/gi;
+  
+  // Padrão 2: Vírgula antes do número (contexto implícito, média confiança)
+  // Ex: "V1 até V2, 24,86m"
+  const distPatternImplicit = /,\s*([0-9]{1,4}[.,][0-9]{1,3})\s*m(?:etros?)?(?:\s|$|,|;|\.)/gi;
+
+  let distMatch;
+  const distances = [];
+  
+  // Processar padrão explícito (prioridade)
+  while ((distMatch = distPatternExplicit.exec(text)) !== null) {
+    const raw = distMatch[1];
+    const value = parseFloat(normalizeNumber(raw));
+
+    // Validação robusta: distância real de lotes/propriedades
+    // Mínimo: 0.1m (10cm - medidas de detalhes)
+    // Máximo: 50000m (50km - propriedades rurais muito grandes)
+    if (Number.isFinite(value) && value >= 0.1 && value <= 50000) {
+      distances.push({ value, raw, confidence: 'high', context: distMatch[0] });
+      console.log(`[PDFtoArcgis] ✅ Distância extraída (alta confiança): ${value.toFixed(2)}m (contexto: "${distMatch[0].trim()}")`);
+    } else {
+      console.log(`[PDFtoArcgis] ⚠️ Distância rejeitada (fora do intervalo válido): ${value}m`);
+    }
+  }
+  
+  // Processar padrão implícito (se não houver suficientes explícitos)
+  if (distances.length < 3) {
+    while ((distMatch = distPatternImplicit.exec(text)) !== null) {
+      const raw = distMatch[1];
+      const value = parseFloat(normalizeNumber(raw));
+
+      if (Number.isFinite(value) && value >= 0.1 && value <= 50000) {
+        // Evitar duplicatas
+        const isDuplicate = distances.some(d => Math.abs(d.value - value) < 0.01);
+        if (!isDuplicate) {
+          distances.push({ value, raw, confidence: 'medium', context: distMatch[0] });
+          console.log(`[PDFtoArcgis] ✅ Distância extraída (média confiança): ${value.toFixed(2)}m (contexto: "${distMatch[0].trim()}")`);
+        }
+      }
+    }
+  }
+
+  console.log(`[PDFtoArcgis] 📊 Resumo: ${azimutes.length} azimutes, ${distances.length} distâncias`);
 
   return { azimutes, distances };
 }
@@ -3199,6 +3499,69 @@ async function processExtractUnified(pagesText, projInfo = null) {
   extractedCoordinates = vertices;
   fileNameBase = iaObj.matricula ? `MAT_${iaObj.matricula}` : "coordenadas_extracao";
   
+  // === VALIDAÇÃO TOPOLÓGICA ANTES DE EXIBIR ===
+  if (typeof displayLogMessage === 'function') {
+    displayLogMessage(`[PDFtoArcgis][LogUI] 🔍 Validando topologia do polígono...`);
+  }
+  
+  const topology = validatePolygonTopology(vertices, projKey);
+  documentsResults[0].topology = topology;
+  
+  // Log dos resultados de validação
+  if (topology.isValid) {
+    console.log(`[PDFtoArcgis] ✅ Polígono válido: área ${topology.area.toFixed(2)}m², fechado: ${topology.closed ? 'SIM' : 'NÃO'}`);
+  } else {
+    console.warn(`[PDFtoArcgis] ⚠️ Polígono com problemas:`, topology.errors);
+  }
+  
+  if (topology.warnings.length > 0) {
+    console.warn(`[PDFtoArcgis] ⚠️ Avisos:`, topology.warnings);
+  }
+  
+  // Atualizar UI de validação
+  updateValidationUI(topology);
+  
+  // Se houver erros críticos, oferecer correção automática
+  if (!topology.isValid && topology.errors.length > 0) {
+    if (typeof displayLogMessage === 'function') {
+      displayLogMessage(`[PDFtoArcgis][LogUI] ⚠️ Problemas detectados: ${topology.errors.join(', ')}`);
+      displayLogMessage(`[PDFtoArcgis][LogUI] 🔧 Aplicando correções automáticas...`);
+    }
+    
+    const correctionResult = autoCorrectPolygon(vertices, {
+      removeDuplicates: true,
+      closePolygon: true,
+      removeColinear: false
+    });
+    
+    extractedCoordinates = correctionResult.vertices;
+    vertices = correctionResult.vertices;
+    documentsResults[0].vertices = correctionResult.vertices;
+    
+    // Re-validar após correção
+    const revalidated = validatePolygonTopology(correctionResult.vertices, projKey);
+    documentsResults[0].topology = revalidated;
+    
+    // Atualizar UI com resultados da correção
+    updateValidationUI(revalidated, correctionResult.corrections);
+    
+    if (revalidated.isValid) {
+      if (typeof displayLogMessage === 'function') {
+        displayLogMessage(`[PDFtoArcgis][LogUI] ✅ Polígono corrigido com sucesso!`);
+      }
+      console.log(`[PDFtoArcgis] ✅ Correção bem-sucedida. Nova área: ${revalidated.area.toFixed(2)}m²`);
+    } else {
+      if (typeof displayLogMessage === 'function') {
+        displayLogMessage(`[PDFtoArcgis][LogUI] ⚠️ Algumas correções automáticas não resolveram todos os problemas. Verifique o relatório.`);
+      }
+    }
+    
+    // Log das correções aplicadas
+    if (correctionResult.corrections.length > 0) {
+      console.log(`[PDFtoArcgis] 🔧 Correções aplicadas:`, correctionResult.corrections);
+    }
+  }
+  
   resultBox.style.display = 'block';
   countDisplay.textContent = vertices.length;
   previewTableBody.innerHTML = '';
@@ -3648,6 +4011,50 @@ if (forceCrsBtn) {
     } else {
       updateStatus(`ℹ️ CRS aplicado manualmente: ${key}`, "info");
       showDetectedCrsUI(key, { confidence: "manual", reason: "CRS forçado manualmente." });
+    }
+  });
+}
+
+// === BOTÃO DE CORREÇÃO AUTOMÁTICA ===
+const autoCorrectBtn = document.getElementById("autoCorrectBtn");
+if (autoCorrectBtn) {
+  autoCorrectBtn.addEventListener("click", () => {
+    if (extractedCoordinates.length < 3) {
+      updateStatus("⚠️ Não há vértices suficientes para corrigir.", "error");
+      return;
+    }
+
+    updateStatus("🔧 Aplicando correções automáticas...", "info");
+    
+    const correctionResult = autoCorrectPolygon(extractedCoordinates, {
+      removeDuplicates: true,
+      closePolygon: true,
+      removeColinear: false
+    });
+    
+    extractedCoordinates = correctionResult.vertices;
+    
+    // Atualizar documento ativo
+    const doc = getSelectedDoc();
+    if (doc) {
+      doc.vertices = correctionResult.vertices;
+      
+      // Re-validar
+      const projKey = doc.manualProjectionKey || doc.projectionKey;
+      const revalidated = validatePolygonTopology(correctionResult.vertices, projKey);
+      doc.topology = revalidated;
+      
+      // Atualizar UI
+      updateValidationUI(revalidated, correctionResult.corrections);
+      updateActiveDocUI();
+      
+      if (revalidated.isValid) {
+        updateStatus(`✅ Correções aplicadas com sucesso! Polígono agora é válido.`, "success");
+      } else {
+        updateStatus(`⚠️ Algumas correções foram aplicadas, mas ainda há problemas. Verifique o relatório.`, "warning");
+      }
+    } else {
+      updateStatus(`✅ Correções aplicadas.`, "success");
     }
   });
 }
