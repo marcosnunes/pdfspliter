@@ -13,7 +13,7 @@ if (typeof displayLogMessage !== 'function' && window.displayLogMessage) {
 }
 
 async function callOpenAIGPT4Turbo(prompt) {
-  const response = await fetch('/api/groq-llama3', {
+  const response = await fetch('/api/llama-3.1-8b-instant', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ prompt })

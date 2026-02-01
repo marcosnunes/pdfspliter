@@ -1,5 +1,5 @@
-// Vercel Serverless Function: /api/groq-llama3.js
-// Proxy seguro para chamada à Groq LLM (Llama 3) usando variável de ambiente
+// Vercel Serverless Function: /api/llama-3.1-8b-instant.js
+// Proxy seguro para chamada à Groq LLM (llama-3.1-8b-instant) usando variável de ambiente
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -21,7 +21,7 @@ export default async function handler(req, res) {
         'Authorization': 'Bearer ' + apiKey
       },
       body: JSON.stringify({
-        model: 'mixtral-8x7b-32768',
+        model: 'llama-3.1-8b-instant',
         messages: [
           { role: 'system', content: 'Você é um assistente especialista em georreferenciamento de imóveis rurais brasileiros. Extraia apenas os vértices do polígono em UTM/SIRGAS2000, ordem correta, polígono fechado.' },
           { role: 'user', content: prompt }
