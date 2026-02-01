@@ -7,6 +7,11 @@ function setOpenAIApiKey(key) {
   openaiApiKey = key;
 }
 
+// Garante que displayLogMessage está disponível (importa do global se necessário)
+if (typeof displayLogMessage !== 'function' && window.displayLogMessage) {
+  var displayLogMessage = window.displayLogMessage;
+}
+
 async function callOpenAIGPT4Turbo(prompt) {
   const response = await fetch('/api/groq-llama3', {
     method: 'POST',
@@ -14,7 +19,11 @@ async function callOpenAIGPT4Turbo(prompt) {
     body: JSON.stringify({ prompt })
   });
   if (!response.ok) {
-    displayLogMessage('[PDFtoArcgis] Erro na API OpenAI: ' + response.status);
+    if (typeof displayLogMessage === 'function') {
+      displayLogMessage('[PDFtoArcgis] Erro na API OpenAI: ' + response.status);
+    } else {
+      console.error('[PDFtoArcgis] Erro na API OpenAI: ' + response.status);
+    }
     return null;
   }
   const data = await response.json();
