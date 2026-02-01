@@ -3325,9 +3325,18 @@ saveToFolderBtn.onclick = async () => {
   try {
     let handle = await window.showDirectoryPicker({ mode: "readwrite" });
 
+    // Helper local de logging (fallback se displayLogMessage não estiver disponível)
+    const logWrite = (msg) => {
+      if (typeof displayLogMessage === "function") {
+        displayLogMessage(msg);
+      } else {
+        console.log(msg);
+      }
+    };
+
     const writeFile = async (name, data) => {
       try {
-        displayLogMessage(`[PDFtoArcgis] 📝 Gravando ${name}...`);
+        logWrite(`[PDFtoArcgis] 📝 Gravando ${name}...`);
         // Tenta remover o arquivo se já existir
         try {
           const existing = await handle.getFileHandle(name);
@@ -3344,13 +3353,13 @@ saveToFolderBtn.onclick = async () => {
         const w = await fh.createWritable();
         await w.write(data);
         await w.close();
-        displayLogMessage(`[PDFtoArcgis] ✓ ${name} gravado`);
+        logWrite(`[PDFtoArcgis] ✓ ${name} gravado`);
       } catch (err) {
         // Se o usuário cancelar, não mostrar erro
         if (err && err.name === "AbortError") return;
         // Se falhar por estado inválido, re-selecionar diretório
         if (err && (err.name === "InvalidStateError" || err.message.includes("state cached"))) {
-          displayLogMessage("[PDFtoArcgis] ⚠️ Diretório desincronizado. Tentando novamente...");
+          logWrite("[PDFtoArcgis] ⚠️ Diretório desincronizado. Tentando novamente...");
           throw new Error("Diretório desincronizado. Selecione a pasta novamente.");
         }
         // Se falhar, tenta com truncate
@@ -3359,9 +3368,9 @@ saveToFolderBtn.onclick = async () => {
           const w = await fh.createWritable({ keepExistingData: false });
           await w.write(data);
           await w.close();
-          displayLogMessage(`[PDFtoArcgis] ✓ ${name} gravado (com retry)`);
+          logWrite(`[PDFtoArcgis] ✓ ${name} gravado (com retry)`);
         } catch (retryErr) {
-          displayLogMessage(`[PDFtoArcgis] ❌ Erro ao salvar ${name}: ${retryErr.message}`);
+          logWrite(`[PDFtoArcgis] ❌ Erro ao salvar ${name}: ${retryErr.message}`);
           throw retryErr;
         }
       }
