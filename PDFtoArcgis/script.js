@@ -146,6 +146,7 @@ async function deducePolygonVerticesPerPage(pagesText) {
 
   const results = [];
   const totalPages = pagesText.length;
+  let baseDelay = 1500; // Delay padrão entre páginas (1.5 segundos)
   
   if (typeof displayLogMessage === 'function') {
     displayLogMessage(`[PDFtoArcgis][LogUI] 📄 Processando ${totalPages} página(s) individualmente...`);
@@ -171,12 +172,28 @@ async function deducePolygonVerticesPerPage(pagesText) {
     const prompt = smallPrompt(filtered);
     console.log(`[PDFtoArcgis][LOG IA][PROMPT][PAGE ${i + 1}/${totalPages}]`, prompt.substring(0, 200) + '...');
     
+    // Aguardar antes de fazer requisição (exceto primeira página)
+    if (i > 0) {
+      console.log(`[PDFtoArcgis] ⏳ Aguardando ${baseDelay}ms antes de próxima requisição...`);
+      if (typeof displayLogMessage === 'function') {
+        displayLogMessage(`[PDFtoArcgis][LogUI] ⏳ Aguardando ${(baseDelay/1000).toFixed(1)}s antes da próxima página...`);
+      }
+      await new Promise(resolve => setTimeout(resolve, baseDelay));
+    }
+    
+    if (typeof displayLogMessage === 'function') {
+      displayLogMessage(`[PDFtoArcgis][LogUI] 🤖 Enviando página ${i + 1}/${totalPages} para IA obter coordenadas...`);
+    }
+    
     const r = await callOpenAIGPT4Turbo(prompt);
     let content = r?.choices?.[0]?.message?.content || "";
     console.log(`[PDFtoArcgis][LOG IA][RAW][PAGE ${i + 1}/${totalPages}]`, content);
     
     if (!content) {
       console.warn(`[PDFtoArcgis] Página ${i + 1} sem resposta`);
+      if (typeof displayLogMessage === 'function') {
+        displayLogMessage(`[PDFtoArcgis][LogUI] ⚠️ Página ${i + 1}: IA não retornou dados`);
+      }
       continue;
     }
     
@@ -187,34 +204,51 @@ async function deducePolygonVerticesPerPage(pagesText) {
       const vcount = Array.isArray(parsed?.vertices) ? parsed.vertices.length : 0;
       console.log(`[PDFtoArcgis] Página ${i + 1}: ${vcount} vértices extraídos`);
       if (typeof displayLogMessage === 'function') {
-        displayLogMessage(`[PDFtoArcgis][LogUI] ✅ Página ${i + 1}: ${vcount} vértice(s)`);
+        displayLogMessage(`[PDFtoArcgis][LogUI] ✅ Página ${i + 1}: ${vcount} coordenada(s) obtida(s) pela IA`);
       }
     } catch (e) {
       console.error('[PDFtoArcgis][PARSE ERROR][PAGE]', e, content);
-      const arrMatch = content.match(/\[\{[^\}]*\}.*?\]/s);
-      if (arrMatch) {
-        const repaired = repairJsonCoordinates('{"vertices":' + arrMatch[0] + '}');
-        try {
-          const parsed = JSON.parse(repaired);
-          results.push(parsed);
-          const vcount = Array.isArray(parsed?.vertices) ? parsed.vertices.length : 0;
-          console.log(`[PDFtoArcgis] Página ${i + 1} (recovery): ${vcount} vértices`);
-        } catch (e2) {
-          console.error('[PDFtoArcgis][PARSE ERROR][PAGE RETRY]', e2);
+      // Detectar se é mensagem de "sem dados" da IA
+      if (typeof content === 'string' && (content.includes('Não há') || content.includes('não há') || content.includes('no data'))) {
+        console.log(`[PDFtoArcgis] Página ${i + 1}: sem dados de vértices (IA confirmou)`);
+        if (typeof displayLogMessage === 'function') {
+          displayLogMessage(`[PDFtoArcgis][LogUI] ℹ️ Página ${i + 1}: sem coordenadas detectadas pela IA`);
+        }
+        baseDelay = Math.min(baseDelay + 500, 3000); // Aumentar delay progressivamente até 3s
+      } else {
+        // Tentar recuperar JSON do conteúdo
+        const arrMatch = content.match(/\[\{[^\}]*\}.*?\]/s);
+        if (arrMatch) {
+          const repaired = repairJsonCoordinates('{"vertices":' + arrMatch[0] + '}');
+          try {
+            const parsed = JSON.parse(repaired);
+            results.push(parsed);
+            const vcount = Array.isArray(parsed?.vertices) ? parsed.vertices.length : 0;
+            console.log(`[PDFtoArcgis] Página ${i + 1} (recovery): ${vcount} vértices`);
+            if (typeof displayLogMessage === 'function') {
+              displayLogMessage(`[PDFtoArcgis][LogUI] 🔧 Página ${i + 1}: ${vcount} coordenada(s) recuperada(s)`);
+            }
+          } catch (e2) {
+            console.error('[PDFtoArcgis][PARSE ERROR][PAGE RETRY]', e2);
+            if (typeof displayLogMessage === 'function') {
+              displayLogMessage(`[PDFtoArcgis][LogUI] ❌ Página ${i + 1}: erro ao processar resposta da IA`);
+            }
+            baseDelay = Math.min(baseDelay + 500, 3000); // Aumentar delay em caso de erro
+          }
+        } else {
+          if (typeof displayLogMessage === 'function') {
+            displayLogMessage(`[PDFtoArcgis][LogUI] ❌ Página ${i + 1}: IA retornou formato inválido`);
+          }
+          baseDelay = Math.min(baseDelay + 500, 3000); // Aumentar delay em caso de erro
         }
       }
-    }
-    
-    // Delay entre páginas para evitar rate limit (1s entre requisições)
-    if (i < totalPages - 1) {
-      await new Promise(resolve => setTimeout(resolve, 1000));
     }
   }
   
   const mergedVertices = mergeVerticesFromChunks(results);
   console.log(`[PDFtoArcgis] Total de vértices únicos (por página): ${mergedVertices.length}`);
   if (typeof displayLogMessage === 'function') {
-    displayLogMessage(`[PDFtoArcgis][LogUI] 📍 Total: ${mergedVertices.length} vértice(s) único(s)`);
+    displayLogMessage(`[PDFtoArcgis][LogUI] 🎉 Processamento concluído! ${mergedVertices.length} coordenada(s) extraída(s) pela IA`);
   }
   
   if (mergedVertices.length >= 3) {
@@ -2950,7 +2984,7 @@ async function processExtractUnified(pagesText, projInfo = null) {
   
   console.log(`[PDFtoArcgis] Processando ${pagesText.length} página(s) individualmente...`);
   if (typeof displayLogMessage === 'function') {
-    displayLogMessage(`[PDFtoArcgis][LogUI] 📄 Extraindo vértices página por página...`);
+    displayLogMessage(`[PDFtoArcgis][LogUI] � Iniciando extração de coordenadas com IA...`);
   }
   iaObj = await deducePolygonVerticesPerPage(pagesText);
   
@@ -3037,7 +3071,10 @@ async function processExtractUnified(pagesText, projInfo = null) {
 
   // === LIMPAR PROGRESSO E EXIBIR STATUS ===
   progressContainer.style.display = "none";
-  updateStatus(`✅ PDF processado pela IA. ${vertices.length} vértices extraídos.`, 'success');
+  updateStatus(`✅ IA extraiu com sucesso! ${vertices.length} coordenadas obtidas e processadas.`, 'success');
+  if (typeof displayLogMessage === 'function') {
+    displayLogMessage(`[PDFtoArcgis][LogUI] ✨ Pronto! Você pode agora baixar ou salvar os resultados`);
+  }
   
   // === REABILITAR BOTÕES ===
   if (downloadBtn) downloadBtn.disabled = false;
