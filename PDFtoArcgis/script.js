@@ -401,28 +401,44 @@ ${text.substring(0, 4500)}`;
     content = repairJsonCoordinates(jsonExtracted);
     
     // 🔧 PRE-PARSE: Normalizando formato de coordenadas comuns antes de JSON.parse()
-    // Isso melhora taxa de sucesso em JSON malformado
+    // Padrão 1: Coordenadas com ponto como separador decimal (518.881221 → 518881.221)
     content = content.replace(/"este"\s*:\s*(\d+\.\d+),/g, (match, num) => {
-      // Se este é 518.881 (formato de milhares com ponto), converter para 518881.xxx
       const val = parseFloat(num);
-      if (val > 0 && val < 1000) {
-        const normalized = parseFloat(String(num).replace('.', '')) / 1000;
+      // Se este é 519.xxx (formato de 5 dígitos com ponto), converter para 519xxx (remover ponto)
+      if (val > 0 && val < 1000 && String(num).split('.')[0].length === 3) {
+        // 519.29996 → remove o ponto → 51929996, mas precisa ser 519299.96
+        // Na verdade, se foi extraído como 519.29996, significa que foi dividido por 1000
+        // Precisa multiplicar por 1000: 519.29996 * 1000 = 519299.96
+        const normalized = val * 1000;
         return `"este":${normalized},`;
       }
       return match;
     });
     
-    // Detectar e corrigir norte com dígitos extras concatenados (7331352001 → 7331352.001)
+    // Padrão 2: Norte com dígitos concatenados (73313338236 → 7331333.8236)
     content = content.replace(/"norte"\s*:\s*(\d+),/g, (match, num) => {
       const val = parseInt(num);
-      if (val > 9999999999) {
-        const nStr = String(val);
-        if (nStr.length > 10) {
+      const nStr = String(val);
+      
+      // Se norte tem > 10 dígitos, é concatenado (ex: 73313338236 tem 11 dígitos)
+      if (nStr.length > 10) {
+        // Primeira abordagem: 7 dígitos + resto como decimal
+        const prefix = nStr.substring(0, 7);
+        const decimal = nStr.substring(7);
+        return `"norte":${prefix}.${decimal},`;
+      }
+      
+      // Se norte tem exatamente 10 dígitos, pode ser formato compactado
+      if (nStr.length === 10) {
+        // Verificar se começa com 73 e tem padrão de coordenada sem decimal
+        if (nStr.startsWith('73')) {
+          // 7331352001 → 7331352.001
           const prefix = nStr.substring(0, 7);
           const decimal = nStr.substring(7);
           return `"norte":${prefix}.${decimal},`;
         }
       }
+      
       return match;
     });
     
@@ -443,8 +459,8 @@ ${text.substring(0, 4500)}`;
             // Se temos este:518.xyz, converter para 518xxxxx (remover ponto, é milhar)
             const eStr = String(e);
             if (eStr.includes('.') && eStr.split('.')[0].length <= 3) {
-              // Remover ponto: 518.881221 → 518881221, depois dividir por 1000
-              e = parseFloat(eStr.replace('.', '')) / 1000;
+              // Remover ponto: 519.29996 → 51929996 (é o número correto, sem divisão)
+              e = parseFloat(eStr.replace('.', ''));
             }
           }
           
@@ -470,10 +486,22 @@ ${text.substring(0, 4500)}`;
             }
           }
           
-          // Padrão 4: Norte truncado por falta de dígito (733036.7 → 7330036.7)
+          // Padrão 4: Norte truncado por falta de dígito
+          // Detectar se norte está no intervalo 730k-760k (típico de truncamento)
+          // Solução: Inserir '7' no meio, não no início
+          // Ex: 733036 → 7330036 (7 vai entre 73 e 3036)
           if (n > 730000 && n < 760000 && e >= 150000 && e <= 900000) {
-            n = parseFloat('7' + n.toString());
-            console.log(`[PDFtoArcgis] 🔧 N truncado corrigido: ${String(parseFloat(v.norte || 0))} → ${n}`);
+            const nStr = String(Math.floor(n));
+            // Padrão típico: 733036 tem 6 dígitos, precisa de 7 dígitos
+            // Inserir '0' após primeiro dígito: 7|330036 ou inserir '7' após 73: 733|0036
+            // Tentativa 1: 733036 → 7330036 (inserir um '0' no meio)
+            let correctedN = parseFloat('7' + nStr.substring(1));
+            
+            // Validar se fica no intervalo esperado
+            if (correctedN >= 6900000 && correctedN <= 10100000) {
+              n = correctedN;
+              console.log(`[PDFtoArcgis] 🔧 N truncado corrigido: ${nStr} → ${correctedN}`);
+            }
           }
           
           // Atualizar valores no vertex
@@ -3626,44 +3654,44 @@ async function processExtractUnified(pagesText, projInfo = null) {
   // Atualizar UI de validação
   updateValidationUI(topology);
   
-  // Se houver erros críticos, oferecer correção automática
+  // Se houver erros críticos, tentar limpeza manual de duplicatas
   if (!topology.isValid && topology.errors.length > 0) {
     if (typeof displayLogMessage === 'function') {
       displayLogMessage(`[PDFtoArcgis][LogUI] ⚠️ Problemas detectados: ${topology.errors.join(', ')}`);
-      displayLogMessage(`[PDFtoArcgis][LogUI] 🔧 Aplicando correções automáticas...`);
     }
     
-    const correctionResult = autoCorrectPolygon(vertices, {
-      removeDuplicates: true,
-      closePolygon: true,
-      removeColinear: false
-    });
-    
-    extractedCoordinates = correctionResult.vertices;
-    vertices = correctionResult.vertices;
-    documentsResults[0].vertices = correctionResult.vertices;
-    
-    // Re-validar após correção
-    const revalidated = validatePolygonTopology(correctionResult.vertices, projKey);
-    documentsResults[0].topology = revalidated;
-    
-    // Atualizar UI com resultados da correção
-    updateValidationUI(revalidated, correctionResult.corrections);
-    
-    if (revalidated.isValid) {
-      if (typeof displayLogMessage === 'function') {
-        displayLogMessage(`[PDFtoArcgis][LogUI] ✅ Polígono corrigido com sucesso!`);
-      }
-      console.log(`[PDFtoArcgis] ✅ Correção bem-sucedida. Nova área: ${revalidated.area.toFixed(2)}m²`);
-    } else {
-      if (typeof displayLogMessage === 'function') {
-        displayLogMessage(`[PDFtoArcgis][LogUI] ⚠️ Algumas correções automáticas não resolveram todos os problemas. Verifique o relatório.`);
+    // Limpeza manual: remover vértices duplicados muito próximos
+    const uniqueVertices = [];
+    for (const v of vertices) {
+      const isDuplicate = uniqueVertices.some(u => 
+        Math.abs(u.este - v.este) < 0.5 && Math.abs(u.norte - v.norte) < 0.5
+      );
+      if (!isDuplicate) {
+        uniqueVertices.push(v);
       }
     }
     
-    // Log das correções aplicadas
-    if (correctionResult.corrections.length > 0) {
-      console.log(`[PDFtoArcgis] 🔧 Correções aplicadas:`, correctionResult.corrections);
+    if (uniqueVertices.length < vertices.length) {
+      console.log(`[PDFtoArcgis] 🔧 Removidos ${vertices.length - uniqueVertices.length} vértice(s) duplicado(s)`);
+      extractedCoordinates = uniqueVertices;
+      vertices = uniqueVertices;
+      documentsResults[0].vertices = uniqueVertices;
+      
+      // Re-validar após limpeza
+      const revalidated = validatePolygonTopology(uniqueVertices, projKey);
+      documentsResults[0].topology = revalidated;
+      updateValidationUI(revalidated);
+      
+      if (revalidated.isValid) {
+        if (typeof displayLogMessage === 'function') {
+          displayLogMessage(`[PDFtoArcgis][LogUI] ✅ Polígono corrigido com sucesso!`);
+        }
+        console.log(`[PDFtoArcgis] ✅ Correção bem-sucedida. Nova área: ${revalidated.area.toFixed(2)}m²`);
+      } else {
+        if (typeof displayLogMessage === 'function') {
+          displayLogMessage(`[PDFtoArcgis][LogUI] ⚠️ Algumas correções automáticas não resolveram todos os problemas. Verifique o relatório.`);
+        }
+      }
     }
   }
   
