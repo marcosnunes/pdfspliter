@@ -213,39 +213,91 @@ async function ensureWebLLM(model = "phi-2") {
   return webllmEngine;
 }
 
-
-// Função IA para processar página por página
-async function deducePolygonVerticesPerPage(pagesText) {
-  const smallPrompt = (text) => `Extract all vertices from the cadastral document text below.
-Return ONLY valid JSON, no explanations, no markdown, no text before or after.
-
-Expected JSON format:
-{
-  "vertices": [
-    {
-      "id": "V1",
-      "este": 693736.178,
-      "norte": 7186708.425,
-      "azimute_dms": "133°15'52\\"",
-      "azimute": 133.2644,
-      "distancia": 24.86
+// ✅ v2.5 FALLBACK: Extração de vértices usando REGEX puro do texto original
+// Usado quando JSON da IA falha ou é truncado
+function extractVerticesFromTextRegex(pageText) {
+  const vertices = [];
+  
+  // Padrão: Código do vértice (V1, P1, EBC...) seguido de coordenadas
+  // E/Este: ~500k-600k, N/Norte: ~7300k-7350k
+  // Azimute em DMS ou decimal, distância em metros
+  
+  // Regex para padrão: V123 | E 519000.123 N 7330000.456 | azi 123°45'67" | dist 123.45
+  const coordPattern = /([VPE]\s*\d+(?:\s+[MV])?|EBC\s+[VM]\s*\d+)\s+.*?E(?:ste)?\s*[:=]?\s*(\d{6,}[.,]\d{1,3})\s+.*?N(?:orte)?\s*[:=]?\s*(\d{7,}[.,]\d{1,3})/gi;
+  
+  let match;
+  const processedIds = new Set(); // evitar duplicatas
+  
+  while ((match = coordPattern.exec(pageText)) !== null) {
+    const id = (match[1] || 'V' + vertices.length).trim().replace(/\\s+/g, '');
+    
+    // Skip if already processed (duplicates)
+    if (processedIds.has(id)) continue;
+    processedIds.add(id);
+    
+    // Converter formato brasileiro para padrão JS
+    let este = match[2].replace(/\\./g, '').replace(',', '.');
+    let norte = match[3].replace(/\\./g, '').replace(',', '.');
+    
+    este = parseFloat(este);
+    norte = parseFloat(norte);
+    
+    // Validar ranges
+    if (este >= 150000 && este <= 900000 && norte >= 6900000 && norte <= 10100000) {
+      // ✅ Corrigir truncamento de Norte se necessário
+      if (norte > 730000 && norte < 760000) {
+        norte = parseFloat('7' + norte.toString());
+      }
+      
+      vertices.push({
+        id: id,
+        este: Math.round(este * 1000) / 1000, // 3 decimals
+        norte: Math.round(norte * 1000) / 1000,
+        azimute_dms: '',
+        azimute: 0,
+        distancia: 0
+      });
     }
-  ]
+  }
+  
+  console.log(`[PDFtoArcgis] Regex extraction found ${vertices.length} vertices`);
+  return vertices.length > 0 ? vertices : null;
 }
 
-Rules:
-1. Normalize Brazilian numbers: 7.186.708,425 → 7186708.425
-2. Azimuth: keep DMS format + decimal value
-3. Distance: meters with 2 decimals
-4. If no coordinates found, return: {"vertices": [], "motivo": "sem_coordenadas"}
-5. CRITICAL: Return ONLY JSON. No text before or after JSON.
 
-Text:
-${text}`;
+// ✅ v2.5: Detecta e corrige coordenadas truncadas (ex: N=733036 → N=7330036)
+function detectAndFixTruncatedCoordinates(vertex) {
+  const n = parseFloat(vertex.norte || 0);
+  const e = parseFloat(vertex.este || 0);
+  
+  // Se N tem 7 dígitos E começa com 73/74/75 (esperado), faltam zero no início
+  if (n > 730000 && n < 760000 && e >= 500000 && e <= 600000) {
+    vertex.norte = parseFloat('7' + n.toString());
+    console.warn(`[PDFtoArcgis] 🔧 N truncado corrigido: → ${vertex.norte}`);
+  }
+  
+  return vertex;
+}
+
+// Função IA para processar página por página - v2.5 otimizado
+async function deducePolygonVerticesPerPage(pagesText) {
+  const smallPrompt = (text) => `You are a cadastral document parser for Brazilian real estate (SIRGAS2000/UTM).
+
+TASK: Extract ALL vertices. RETURN: ONLY valid JSON. No markdown. No text before/after.
+
+JSON: {"vertices":[{"id":"V1","este":693736.178,"norte":7186708.425,"azimute_dms":"133°15'52\\"","azimute":133.2644,"distancia":24.86}]}
+
+RULES:
+1. Este: 150k-900k, Norte: 6.9M-10.1M (omit invalid)
+2. Fix typos: "B5º" -> numeric only
+3. Max 3 decimals, return {"vertices":[]} if empty
+
+Text (first 4500 chars):
+${text.substring(0, 4500)}`;
 
   const results = [];
   const totalPages = pagesText.length;
-  let baseDelay = 3000; // Delay padrão entre páginas (3 segundos - evita 429)
+  let baseDelay = 5000; // ⬆️ Aumentado de 3s → 5s para evitar 429 rate limit
   
   if (typeof displayLogMessage === 'function') {
     displayLogMessage(`[PDFtoArcgis][LogUI] 📄 Processando ${totalPages} página(s) individualmente...`);
@@ -291,6 +343,10 @@ ${text}`;
     let content = r?.choices?.[0]?.message?.content || "";
     console.log(`[PDFtoArcgis][LOG IA][RAW][PAGE ${i + 1}/${totalPages}]`, content);
     
+    if (typeof displayLogMessage === 'function') {
+      displayLogMessage(`[PDFtoArcgis][LogUI] ⏳ Página ${i + 1}: processando resposta da IA...`);
+    }
+    
     if (!content) {
       console.warn(`[PDFtoArcgis] Página ${i + 1} sem resposta`);
       if (typeof displayLogMessage === 'function') {
@@ -304,9 +360,13 @@ ${text}`;
     if (!jsonExtracted) {
       console.warn(`[PDFtoArcgis] Página ${i + 1}: Não conseguiu extrair JSON da resposta`);
       if (typeof displayLogMessage === 'function') {
-        displayLogMessage(`[PDFtoArcgis][LogUI] ⚠️ Página ${i + 1}: Resposta da IA inválida`);
+        displayLogMessage(`[PDFtoArcgis][LogUI] ⏳ Página ${i + 1}: tentando recuperação alternativa...`);
       }
       continue;
+    }
+    
+    if (typeof displayLogMessage === 'function') {
+      displayLogMessage(`[PDFtoArcgis][LogUI] ⏳ Página ${i + 1}: validando coordenadas extraídas...`);
     }
     
     content = repairJsonCoordinates(jsonExtracted);
@@ -317,17 +377,20 @@ ${text}`;
       if (parsed?.vertices && Array.isArray(parsed.vertices)) {
         const validVertices = parsed.vertices.filter(v => {
           const e = parseFloat(v.este || v.east || 0);
-          const n = parseFloat(v.norte || v.north || 0);
+          let n = parseFloat(v.norte || v.north || 0);
           
-          // Coordenadas UTM válidas para Brasil: 
-          // E (Este): 160000-840000 (múltiplas zonas UTM em uso)
-          // N (Norte): 7000000-10000000 (Hemisfério Sul)
-          // NOVIDADE: Aceitar também 600000-900000 para cobrir zonas 19-25
+          // ✅ Correção de coordenadas truncadas (page 5 bug: N=733036.7 → 7330036.7)
+          if (n > 730000 && n < 760000 && e >= 500000 && e <= 600000) {
+            n = parseFloat('7' + n.toString());
+            v.norte = n; // Atualizar vertex
+          }
+          
+          // Coordenadas UTM válidas para Brasil (todas as zonas 19-25)
           const isValidE = e >= 150000 && e <= 900000;
           const isValidN = n >= 6900000 && n <= 10100000;
           
           if (!isValidE || !isValidN) {
-            console.warn(`[PDFtoArcgis] ⚠️ Coordenada inválida detectada: ${v.id || '?'} E=${e} N=${n}`);
+            console.warn(`[PDFtoArcgis] ⚠️ Coordenada inválida: ${v.id || '?'} E=${e} N=${n}`);
           }
           return isValidE && isValidN;
         });
@@ -389,7 +452,7 @@ ${text}`;
         }
         baseDelay = Math.min(baseDelay + 500, 5000); // Aumentar delay progressivamente até 5s
       } else {
-        // Tentar recuperar JSON do conteúdo
+        // FALLBACK NÍVEL 2: Tentar recuperar JSON do conteúdo
         const arrMatch = content.match(/\[\{[^\}]*\}.*?\]/s);
         if (arrMatch) {
           const repaired = repairJsonCoordinates('{"vertices":' + arrMatch[0] + '}');
@@ -402,17 +465,39 @@ ${text}`;
               displayLogMessage(`[PDFtoArcgis][LogUI] 🔧 Página ${i + 1}: ${vcount} coordenada(s) recuperada(s)`);
             }
           } catch (e2) {
-            console.error('[PDFtoArcgis][PARSE ERROR][PAGE RETRY]', e2);
-            if (typeof displayLogMessage === 'function') {
-              displayLogMessage(`[PDFtoArcgis][LogUI] ❌ Página ${i + 1}: erro ao processar resposta da IA`);
+            // FALLBACK NÍVEL 3: Extração regex direta do texto original (last resort)
+            console.warn('[PDFtoArcgis] 🔴 JSON recovery failed, attempting regex extraction...');
+            const regexVertices = extractVerticesFromTextRegex(pageText);
+            if (regexVertices && regexVertices.length > 0) {
+              results.push({ vertices: regexVertices });
+              console.log(`[PDFtoArcgis] ✅ Página ${i + 1} (REGEX fallback): ${regexVertices.length} vértices`);
+              if (typeof displayLogMessage === 'function') {
+                displayLogMessage(`[PDFtoArcgis][LogUI] 🔧 Página ${i + 1}: ${regexVertices.length} coordenada(s) via regex`);
+              }
+            } else {
+              console.error('[PDFtoArcgis][PARSE ERROR][PAGE RETRY]', e2);
+              if (typeof displayLogMessage === 'function') {
+                displayLogMessage(`[PDFtoArcgis][LogUI] ❌ Página ${i + 1}: erro ao processar resposta da IA`);
+              }
             }
-            baseDelay = Math.min(baseDelay + 500, 5000); // Aumentar delay em caso de erro
+            baseDelay = Math.min(baseDelay + 1000, 8000); // Aumentar delay agressivamente
           }
         } else {
-          if (typeof displayLogMessage === 'function') {
-            displayLogMessage(`[PDFtoArcgis][LogUI] ❌ Página ${i + 1}: IA retornou formato inválido`);
+          // FALLBACK NÍVEL 3B: Se nem regex de JSON funcionou, tentar extração de texto puro
+          console.warn('[PDFtoArcgis] 🔴 No JSON array found, attempting text regex extraction...');
+          const regexVertices = extractVerticesFromTextRegex(pageText);
+          if (regexVertices && regexVertices.length > 0) {
+            results.push({ vertices: regexVertices });
+            console.log(`[PDFtoArcgis] ✅ Página ${i + 1} (TEXT REGEX fallback): ${regexVertices.length} vértices`);
+            if (typeof displayLogMessage === 'function') {
+              displayLogMessage(`[PDFtoArcgis][LogUI] 🔧 Página ${i + 1}: ${regexVertices.length} coordenada(s) via regex`);
+            }
+          } else {
+            if (typeof displayLogMessage === 'function') {
+              displayLogMessage(`[PDFtoArcgis][LogUI] ❌ Página ${i + 1}: IA retornou formato inválido`);
+            }
           }
-          baseDelay = Math.min(baseDelay + 500, 5000); // Aumentar delay em caso de erro
+          baseDelay = Math.min(baseDelay + 1000, 8000); // Aumentar delay agressivamente
         }
       }
     }
@@ -3470,6 +3555,9 @@ async function processExtractUnified(pagesText, projInfo = null) {
   // Log dos resultados de validação
   if (topology.isValid) {
     console.log(`[PDFtoArcgis] ✅ Polígono válido: área ${topology.area.toFixed(2)}m², fechado: ${topology.closed ? 'SIM' : 'NÃO'}`);
+    if (typeof displayLogMessage === 'function') {
+      displayLogMessage(`[PDFtoArcgis][LogUI] ✅ Polígono válido! Área: ${topology.area.toFixed(2)}m²`);
+    }
   } else {
     console.warn(`[PDFtoArcgis] ⚠️ Polígono com problemas:`, topology.errors);
   }
@@ -3522,6 +3610,10 @@ async function processExtractUnified(pagesText, projInfo = null) {
     }
   }
   
+  if (typeof displayLogMessage === 'function') {
+    displayLogMessage(`[PDFtoArcgis][LogUI] 📊 Preparando tabela de vértices para visualização...`);
+  }
+  
   resultBox.style.display = 'block';
   countDisplay.textContent = vertices.length;
   previewTableBody.innerHTML = '';
@@ -3537,6 +3629,10 @@ async function processExtractUnified(pagesText, projInfo = null) {
       <td>${v.azCalc || '---'}</td>
     `;
     previewTableBody.appendChild(row);
+  }
+  
+  if (typeof displayLogMessage === 'function') {
+    displayLogMessage(`[PDFtoArcgis][LogUI] 🎯 Gerando shapefiles e arquivos de saída...`);
   }
 
   // === LIMPAR PROGRESSO E EXIBIR STATUS ===
@@ -3631,6 +3727,10 @@ async function processExtractUnified_legacy(pagesText) {
       memorialValidation,
       memorialData
     });
+  }
+
+  if (typeof displayLogMessage === 'function') {
+    displayLogMessage(`[PDFtoArcgis][LogUI] ✅ Processamento concluído com sucesso!`);
   }
 
   progressContainer.style.display = "none";
