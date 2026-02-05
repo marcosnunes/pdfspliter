@@ -264,6 +264,35 @@ function extractVerticesFromTextRegex(pageText) {
   return vertices.length > 0 ? vertices : null;
 }
 
+// 🔧 Corrigir typos em ângulos DMS (ex: "B5º" → "85º", "B5°00'02\"" → "85°00'02\"")
+function fixDMSTypos(vertex) {
+  if (!vertex.azimute_dms) return vertex;
+  
+  let dms = String(vertex.azimute_dms);
+  
+  // Substituir letra B ou O por 0, I por 1, S por 5, etc.
+  dms = dms.replace(/[BOl]/gi, (match) => {
+    const map = { 'B': '8', 'O': '0', 'l': '1', 'S': '5', 'I': '1' };
+    return map[match.toUpperCase()] || match;
+  });
+  
+  // Verificar se o primeiro número é válido (0-359)
+  const degreeMatch = dms.match(/^(\d+)/);
+  if (degreeMatch) {
+    const deg = parseInt(degreeMatch[1]);
+    if (deg > 360) {
+      // Truncar se > 360 (ex: "3605" → "5" ou "36505" → "5")
+      const degStr = String(deg);
+      const corrected = parseInt(degStr.substring(degStr.length - 2)); // Últimos 2 dígitos
+      if (corrected <= 360) {
+        dms = dms.replace(/^(\d+)/, corrected.toString());
+      }
+    }
+  }
+  
+  vertex.azimute_dms = dms;
+  return vertex;
+}
 
 // ✅ v2.5: Detecta e corrige coordenadas truncadas (ex: N=733036 → N=7330036)
 function detectAndFixTruncatedCoordinates(vertex) {
@@ -370,27 +399,101 @@ ${text.substring(0, 4500)}`;
     }
     
     content = repairJsonCoordinates(jsonExtracted);
+    
+    // 🔧 PRE-PARSE: Normalizando formato de coordenadas comuns antes de JSON.parse()
+    // Isso melhora taxa de sucesso em JSON malformado
+    content = content.replace(/"este"\s*:\s*(\d+\.\d+),/g, (match, num) => {
+      // Se este é 518.881 (formato de milhares com ponto), converter para 518881.xxx
+      const val = parseFloat(num);
+      if (val > 0 && val < 1000) {
+        const normalized = parseFloat(String(num).replace('.', '')) / 1000;
+        return `"este":${normalized},`;
+      }
+      return match;
+    });
+    
+    // Detectar e corrigir norte com dígitos extras concatenados (7331352001 → 7331352.001)
+    content = content.replace(/"norte"\s*:\s*(\d+),/g, (match, num) => {
+      const val = parseInt(num);
+      if (val > 9999999999) {
+        const nStr = String(val);
+        if (nStr.length > 10) {
+          const prefix = nStr.substring(0, 7);
+          const decimal = nStr.substring(7);
+          return `"norte":${prefix}.${decimal},`;
+        }
+      }
+      return match;
+    });
+    
     try {
       const parsed = JSON.parse(content);
       
       // Validar coordenadas UTM (evitar dados fake/teste)
       if (parsed?.vertices && Array.isArray(parsed.vertices)) {
         const validVertices = parsed.vertices.filter(v => {
-          const e = parseFloat(v.este || v.east || 0);
+          // 🔧 NORMALIZACAO: Detectar e corrigir formato de coordenadas malformadas
+          let e = parseFloat(v.este || v.east || 0);
           let n = parseFloat(v.norte || v.north || 0);
           
-          // ✅ Correção de coordenadas truncadas (page 5 bug: N=733036.7 → 7330036.7)
-          if (n > 730000 && n < 760000 && e >= 500000 && e <= 600000) {
+          // Padrão 1: Coordenadas com período como separador decimal (518.881221 → 518881.221)
+          // Detectar se é formato de milhares com ponto decimal errado
+          if (e > 0 && e < 1000 && !isNaN(e)) {
+            // Verificar se este valor é muito pequeno para UTM
+            // Se temos este:518.xyz, converter para 518xxxxx (remover ponto, é milhar)
+            const eStr = String(e);
+            if (eStr.includes('.') && eStr.split('.')[0].length <= 3) {
+              // Remover ponto: 518.881221 → 518881221, depois dividir por 1000
+              e = parseFloat(eStr.replace('.', '')) / 1000;
+            }
+          }
+          
+          // Padrão 2: Norte com dígitos concatenados (7331352001 → 7331352.001)
+          // Detectar se norte tem mais de 10 dígitos (impossível em UTM)
+          if (n > 9999999999) {
+            const nStr = String(Math.floor(n));
+            if (nStr.length > 10) {
+              // Quebrar em 7 dígitos + resto (e.g., 7331352001 → 7331352 + 001)
+              const prefix = nStr.substring(0, 7);
+              const decimal = nStr.substring(7);
+              n = parseFloat(prefix + '.' + decimal);
+            }
+          }
+          
+          // Padrão 3: Coordenadas com período como milhar (como em pt-BR)
+          // Este:519.29996 (com vírgula) deveria ser 519029.96 ou 519299.6
+          if (e > 100 && e < 1000 && e % 1 !== 0) {
+            // Verificar se remove ponto fica razoável
+            const eWithoutDot = parseFloat(String(e).replace('.', ''));
+            if (eWithoutDot >= 150000 && eWithoutDot <= 900000) {
+              e = eWithoutDot;
+            }
+          }
+          
+          // Padrão 4: Norte truncado por falta de dígito (733036.7 → 7330036.7)
+          if (n > 730000 && n < 760000 && e >= 150000 && e <= 900000) {
             n = parseFloat('7' + n.toString());
-            v.norte = n; // Atualizar vertex
+            console.log(`[PDFtoArcgis] 🔧 N truncado corrigido: ${String(parseFloat(v.norte || 0))} → ${n}`);
+          }
+          
+          // Atualizar valores no vertex
+          v.este = e;
+          v.norte = n;
+          
+          // 🔧 Corrigir typos em DMS angles
+          if (v.azimute_dms) {
+            v = fixDMSTypos(v);
           }
           
           // Coordenadas UTM válidas para Brasil (todas as zonas 19-25)
+          // ZONA 19: 150k-300k (Espírito Santo, SP)
+          // ZONA 23: 400k-600k (RJ, SP, PR)
+          // ZONA 25: 700k-900k (SC, RS)
           const isValidE = e >= 150000 && e <= 900000;
           const isValidN = n >= 6900000 && n <= 10100000;
           
           if (!isValidE || !isValidN) {
-            console.warn(`[PDFtoArcgis] ⚠️ Coordenada inválida: ${v.id || '?'} E=${e} N=${n}`);
+            console.warn(`[PDFtoArcgis] ⚠️ Coordenada inválida (após normalização): ${v.id || '?'} E=${e} N=${n}`);
           }
           return isValidE && isValidN;
         });
@@ -431,7 +534,32 @@ ${text.substring(0, 4500)}`;
       const retryJson = extractJSONFromResponse(content);
       if (retryJson) {
         try {
-          const retryParsed = JSON.parse(repairJsonCoordinates(retryJson));
+          let retryContent = repairJsonCoordinates(retryJson);
+          
+          // Aplicar novamente normalização PRE-PARSE
+          retryContent = retryContent.replace(/"este"\s*:\s*(\d+\.\d+),/g, (match, num) => {
+            const val = parseFloat(num);
+            if (val > 0 && val < 1000) {
+              const normalized = parseFloat(String(num).replace('.', '')) / 1000;
+              return `"este":${normalized},`;
+            }
+            return match;
+          });
+          
+          retryContent = retryContent.replace(/"norte"\s*:\s*(\d+),/g, (match, num) => {
+            const val = parseInt(num);
+            if (val > 9999999999) {
+              const nStr = String(val);
+              if (nStr.length > 10) {
+                const prefix = nStr.substring(0, 7);
+                const decimal = nStr.substring(7);
+                return `"norte":${prefix}.${decimal},`;
+              }
+            }
+            return match;
+          });
+          
+          const retryParsed = JSON.parse(retryContent);
           if (retryParsed?.vertices?.length > 0) {
             results.push(retryParsed);
             console.log(`[PDFtoArcgis] ✅ Página ${i + 1}: recuperada com sucesso (retry)`);
