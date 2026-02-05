@@ -1375,99 +1375,6 @@ function orderVerticesCCW(vertices) {
  * - Fecha o polígono se necessário
  * - Remove vértices colineares (simplificação)
  */
-function autoCorrectPolygon(vertices, options = {}) {
-  const {
-    removeDuplicates = true,
-    closePolygon = true,
-    removeColinear = false,
-    tolerance = 0.01 // metros
-  } = options;
-
-  if (vertices.length < 3) return vertices;
-
-  let corrected = [...vertices];
-  const corrections = [];
-
-  // === CORREÇÃO 1: Remover duplicados ===
-  if (removeDuplicates) {
-    const unique = [];
-    const seen = new Set();
-
-    for (const v of corrected) {
-      const key = `${v.north.toFixed(3)}_${v.east.toFixed(3)}`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        unique.push(v);
-      } else {
-        corrections.push(`🔧 Removido vértice duplicado: ${v.id || '?'}`);
-      }
-    }
-
-    if (unique.length < corrected.length) {
-      console.log(`[PDFtoArcgis] 🔧 Removidos ${corrected.length - unique.length} vértice(s) duplicado(s)`);
-      corrected = unique;
-    }
-  }
-
-  // === CORREÇÃO 2: Reordenar em CCW ===
-  corrected = orderVerticesCCW(corrected);
-  corrections.push("🔄 Vértices reordenados em sequência CCW");
-
-  // === CORREÇÃO 3: Fechar polígono ===
-  if (closePolygon && corrected.length >= 3) {
-    const first = corrected[0];
-    const last = corrected[corrected.length - 1];
-    const dist = Math.hypot(first.north - last.north, first.east - last.east);
-
-    if (dist > tolerance) {
-      // Adicionar cópia do primeiro vértice no final
-      corrected.push({ ...first, id: `${first.id}_closure` });
-      corrections.push(`🔒 Polígono fechado (distância era ${dist.toFixed(2)}m)`);
-      console.log(`[PDFtoArcgis] 🔒 Polígono fechado automaticamente`);
-    }
-  }
-
-  // === CORREÇÃO 4: Remover vértices colineares (opcional) ===
-  if (removeColinear && corrected.length > 3) {
-    const simplified = [corrected[0]];
-
-    for (let i = 1; i < corrected.length - 1; i++) {
-      const prev = corrected[i - 1];
-      const curr = corrected[i];
-      const next = corrected[i + 1];
-
-      // Calcular produto vetorial (cross product) para detectar colinearidade
-      const dx1 = curr.east - prev.east;
-      const dy1 = curr.north - prev.north;
-      const dx2 = next.east - curr.east;
-      const dy2 = next.north - curr.north;
-
-      const crossProduct = dx1 * dy2 - dy1 * dx2;
-
-      // Se cross product ≈ 0, vértices são colineares
-      if (Math.abs(crossProduct) > tolerance) {
-        simplified.push(curr);
-      } else {
-        corrections.push(`🔧 Removido vértice colinear: ${curr.id || '?'}`);
-      }
-    }
-
-    simplified.push(corrected[corrected.length - 1]);
-
-    if (simplified.length < corrected.length) {
-      console.log(`[PDFtoArcgis] 🔧 Removidos ${corrected.length - simplified.length} vértice(s) colinear(es)`);
-      corrected = simplified;
-    }
-  }
-
-  // Reindexar ordem
-  corrected = corrected.map((v, idx) => ({
-    ...v,
-    ordem: idx + 1
-  }));
-
-  return { vertices: corrected, corrections };
-}
 
 /**
  * Valida topologia do polígono (auto-intersecção, orientação, etc)
@@ -3496,6 +3403,10 @@ fileInput.addEventListener("change", async (event) => {
     // Loop de leitura de páginas (garante leitura de TODAS as páginas)
     let emptyPages = 0;
     let ocrPages = 0;
+    if (typeof displayLogMessage === 'function') {
+      displayLogMessage(`[PDFtoArcgis][LogUI] 📖 Iniciando leitura de ${pdf.numPages} página(s)...`);
+    }
+    
     for (let i = 1; i <= pdf.numPages; i++) {
       progressBar.value = Math.round((i / pdf.numPages) * 100);
       document.getElementById("progressLabel").innerText = `Lendo página ${i}/${pdf.numPages}...`;
@@ -3508,10 +3419,20 @@ fileInput.addEventListener("change", async (event) => {
         let safeText = pageText || "";
         if (!safeText.trim()) {
           document.getElementById("progressLabel").innerText = `OCR da página ${i}/${pdf.numPages}...`;
+          if (typeof displayLogMessage === 'function') {
+            displayLogMessage(`[PDFtoArcgis][LogUI] 🔍 Página ${i}: Executando OCR (texto extraído vazio)...`);
+          }
           const ocrText = await performOcrOnPage(page, i);
           if (ocrText && ocrText.trim().length > 10) {
             safeText = ocrText;
             ocrPages++;
+            if (typeof displayLogMessage === 'function') {
+              displayLogMessage(`[PDFtoArcgis][LogUI] ✅ Página ${i}: OCR completado (${ocrText.length} caracteres)`);
+            }
+          }
+        } else {
+          if (typeof displayLogMessage === 'function') {
+            displayLogMessage(`[PDFtoArcgis][LogUI] ✓ Página ${i}: Texto extraído (${safeText.length} caracteres)`);
           }
         }
         if (!safeText.trim()) emptyPages++;
@@ -3530,10 +3451,18 @@ fileInput.addEventListener("change", async (event) => {
     }
 
     if (ocrPages > 0) {
-      updateStatus(`ℹ️ OCR aplicado em ${ocrPages} página(s).`, "info");
+      const msg = `ℹ️ OCR aplicado em ${ocrPages} página(s).`;
+      updateStatus(msg, "info");
+      if (typeof displayLogMessage === 'function') {
+        displayLogMessage(`[PDFtoArcgis][LogUI] ${msg}`);
+      }
     }
     if (emptyPages > 0) {
-      updateStatus(`⚠️ ${emptyPages} página(s) sem texto detectável mesmo após OCR. Reexporte o PDF com camada de texto para melhorar a extração.`, "warning");
+      const msg = `⚠️ ${emptyPages} página(s) sem texto detectável mesmo após OCR. Reexporte o PDF com camada de texto para melhorar a extração.`;
+      updateStatus(msg, "warning");
+      if (typeof displayLogMessage === 'function') {
+        displayLogMessage(`[PDFtoArcgis][LogUI] ${msg}`);
+      }
     }
 
     // --- LÓGICA DE INFERÊNCIA REVERSA ---
@@ -4197,50 +4126,6 @@ if (forceCrsBtn) {
     } else {
       updateStatus(`ℹ️ CRS aplicado manualmente: ${key}`, "info");
       showDetectedCrsUI(key, { confidence: "manual", reason: "CRS forçado manualmente." });
-    }
-  });
-}
-
-// === BOTÃO DE CORREÇÃO AUTOMÁTICA ===
-const autoCorrectBtn = document.getElementById("autoCorrectBtn");
-if (autoCorrectBtn) {
-  autoCorrectBtn.addEventListener("click", () => {
-    if (extractedCoordinates.length < 3) {
-      updateStatus("⚠️ Não há vértices suficientes para corrigir.", "error");
-      return;
-    }
-
-    updateStatus("🔧 Aplicando correções automáticas...", "info");
-    
-    const correctionResult = autoCorrectPolygon(extractedCoordinates, {
-      removeDuplicates: true,
-      closePolygon: true,
-      removeColinear: false
-    });
-    
-    extractedCoordinates = correctionResult.vertices;
-    
-    // Atualizar documento ativo
-    const doc = getSelectedDoc();
-    if (doc) {
-      doc.vertices = correctionResult.vertices;
-      
-      // Re-validar
-      const projKey = doc.manualProjectionKey || doc.projectionKey;
-      const revalidated = validatePolygonTopology(correctionResult.vertices, projKey);
-      doc.topology = revalidated;
-      
-      // Atualizar UI
-      updateValidationUI(revalidated, correctionResult.corrections);
-      updateActiveDocUI();
-      
-      if (revalidated.isValid) {
-        updateStatus(`✅ Correções aplicadas com sucesso! Polígono agora é válido.`, "success");
-      } else {
-        updateStatus(`⚠️ Algumas correções foram aplicadas, mas ainda há problemas. Verifique o relatório.`, "warning");
-      }
-    } else {
-      updateStatus(`✅ Correções aplicadas.`, "success");
     }
   });
 }
