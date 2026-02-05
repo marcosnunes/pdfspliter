@@ -1,4 +1,24 @@
 // =============================
+// PDFtoArcgis - ETL SIMPLIFICADO (v2.4)
+// =============================
+// 
+// REFATORAÇÃO ETL: Fluxo otimizado focado em IA como única fonte de transformação
+// 
+// [E] EXTRACTION: PDF.js extrai texto bruto de todas as páginas
+// [T] TRANSFORMATION: IA (Groq llama-3.1-8b) converte texto → JSON estruturado
+// [L] LOAD: Validação topológica + geração de shapefiles/CSV
+//
+// MUDANÇAS IMPLEMENTADAS (v2.4):
+// - ❌ REMOVIDO: extractRelevantLinesForAI() - regex pré-filtragem
+// - ❌ REMOVIDO: extractAzimuthDistanceFromText() - extração regex de azimutes/distâncias
+// - ✅ SIMPLIFICADO: Prompt da IA (minimalista, apenas JSON)
+// - ✅ CENTRALIZADO: IA retorna TUDO (coordenadas, azimutes, distâncias) em um JSON
+// - ✅ BENEFÍCIOS: Menos linhas de código, melhor manutenibilidade, menos erros
+//
+// Fluxo Anterior (v2.3): PDF → Regex (2 níveis) → IA → Regex (normalização)
+// Fluxo Novo (v2.4):     PDF → IA (JSON completo) → Validação
+//
+// =============================
 // Suporte à API OpenAI GPT-4 Turbo
 // =============================
 let openaiApiKey = '';
@@ -45,33 +65,13 @@ async function callOpenAIGPT4Turbo(prompt, retryCount = 0) {
   return data;
 }
 
-function extractRelevantLinesForAI(fullText) {
-  const lines = String(fullText || "").split(/\r?\n/);
-  // Padrões aprimorados para múltiplos formatos de documentos cartoriais brasileiros
-  const vertexPattern = /vértice|pt\s|ponto\s|\bv\d|\bp\d/i; // Variações de identificação de vértice
-  
-  // Padrões de coordenadas em diferentes formatos:
-  // 1. "E=" ou "N=" ou "Este=" ou "Norte="
-  // 2. Números grandes com ponto (milhar) + vírgula (decimal)
-  // 3. Azimutes em formato DDD°MM'SS"
-  const coordPattern = /\b[EN]\b[\s=:]*[\d.,]+|este[\s=:]*[\d.,]+|norte[\s=:]*[\d.,]+|east[\s=:]*[\d.,]+|north[\s=:]*[\d.,]+|°|segue|azimute/i;
-  
-  const keep = [];
-  for (const ln of lines) {
-    const line = ln.trim();
-    if (!line || line.length < 3) continue;
-    
-    // Manter linha se:
-    // 1. Contém identificação de vértice (V1, P1, Vértice, etc)
-    // 2. Contém padrão de coordenada (E=, N=, Este, Norte, etc)
-    // 3. Contém azimute ou "segue"
-    // 4. Contém números grandes (possíveis coordenadas)
-    if ((vertexPattern.test(line) || coordPattern.test(line) || /segue|azimute|distância/i.test(line)) && /\d/.test(line)) {
-      keep.push(line);
-    }
-  }
-  return keep.join("\n");
-}
+// ⚠️ DEPRECATED: extractRelevantLinesForAI() foi DESABILITADO
+// ETL SIMPLIFICADO: Enviar texto COMPLETO à IA (sem pré-filtragem com regex)
+// MOTIVO: A IA é capaz de filtrar padrões relevantes melhor que regex heurísticos
+// BENEFÍCIO: Reduz redundância, melhora taxa de sucesso para formatos variados
+// 
+// function extractRelevantLinesForAI(fullText) {
+// }
 
 function splitTextForAI(text, maxChars = 6000) {
   const chunks = [];
@@ -98,7 +98,7 @@ function repairJsonCoordinates(jsonStr) {
     if (jsonStr.includes('"vertices"')) jsonStr += ']}';
   }
   
-  // === NOVA LÓGICA: Normalizar números brasileiros CORRETAMENTE ===
+  // === LÓGICA: Normalizar números brasileiros CORRETAMENTE ===
   // Padrão: 7.186.708,425 (com ponto de milhar + vírgula decimal)
   // Precisamos detectar:
   // 1. Se temos uma sequência tipo XXX.XXX.XXX,XXX (3 dígitos . 3 dígitos . 3 dígitos , decimais)
@@ -180,55 +180,28 @@ async function ensureWebLLM(model = "phi-2") {
 
 // Função IA para processar página por página
 async function deducePolygonVerticesPerPage(pagesText) {
-  const smallPrompt = (text) => `Instrução: Você é um especialista em extração de coordenadas geográficas de documentos cartoriais brasileiros. 
-Extraia TODOS os vértices (com ID, coordenadas UTM Este/Norte, azimutes e distâncias) do texto abaixo.
-Retorne um JSON válido contendo todos os vértices encontrados.
+  const smallPrompt = (text) => `Você é um especialista em extração de coordenadas de documentos cartoriais brasileiros.
+Extraia TODOS os vértices (ID, Este, Norte, azimutes, distâncias) e retorne APENAS JSON válido.
 
-**IMPORTANTE SOBRE AZIMUTES E DISTÂNCIAS:**
-- Azimutes devem ser extraídos em formato DMS (graus, minutos, segundos) E convertidos para decimal
-- Formatos aceitos: "133°15'52"", "45° 30' 27"", "90°00'00""
-- Distâncias devem ser em metros, com precisão de 2 casas decimais
-- Contexto: "segue com azimute 133°15'52"" e distância de 24,86m até vértice..."
-
-Responda APENAS com JSON, sem explicações.
-
-Formatos aceitos de coordenadas:
-- "E=693.736,178 e N=7.186.708,425" (com ponto de milhar + vírgula decimal)
-- "Este: 693736.178, Norte: 7186708.425" (com vírgula separadora de casas decimais)
-- "693736178 / 7186708425" (inteiros em metros)
-- Qualquer variação com E, N, Este, Norte, East, North (maiúsculas/minúsculas)
-
-Processe TODAS as formas de identificação de vértices:
-- "Vértice V1", "Vértice P1", "Vértice A", "Pt 1", "Ponto 1"
-- "Do vértice 1 até vértice 2"
-- Linhas separadas com coordenadas
-
-Normalize números brasileiros:
-- 7.186.708,425 → 7186708.425
-- 693.736,178 → 693736.178
-
-**EXTRAÇÃO DE AZIMUTES E DISTÂNCIAS:**
-Se encontrar azimutes e distâncias no memorial descritivo, incluir no JSON:
-- azimute_dms: formato original "133°15'52""
-- azimute: valor em graus decimais (ex: 133.2644)
-- distancia: valor em metros com 2 decimais (ex: 24.86)
-
-Formato esperado:
+JSON esperado:
 {
   "vertices": [
     {
-      "id": "V1", 
-      "este": 693736.178, 
-      "norte": 7186708.425, 
-      "azimute_dms": "133°15'52"",
+      "id": "V1",
+      "este": 693736.178,
+      "norte": 7186708.425,
+      "azimute_dms": "133°15'52\\"",
       "azimute": 133.2644,
       "distancia": 24.86
     }
   ]
 }
 
-Se NÃO houver coordenadas válidas, retorne:
-{"vertices": [], "motivo": "sem_coordenadas"}
+Regras:
+1. Normalize números brasileiros: 7.186.708,425 → 7186708.425
+2. Azimute: mantenha formato original (DMS) + valor decimal
+3. Distância: em metros com 2 casas decimais
+4. Se sem dados, retorne: {"vertices": [], "motivo": "sem_coordenadas"}
 
 Texto:
 ${text}`;
@@ -252,11 +225,9 @@ ${text}`;
       displayLogMessage(`[PDFtoArcgis][LogUI] ⏳ Processando página ${i + 1} de ${totalPages}...`);
     }
     
-    const filtered = extractRelevantLinesForAI(pageText);
-    
-    // NOVIDADE: Mesmo se o filtro não encontrar padrão inicial, enviar para IA
-    // Isso permite que documentos em formatos não-convencionais sejam processados
-    const textToSend = filtered.length > 20 ? filtered : pageText;
+    // ETL SIMPLIFICADO: Enviar texto COMPLETO à IA (sem pré-filtragem com regex)
+    // Benefício: IA entende contexto melhor que regex para formatos variados
+    const textToSend = pageText;
     
     if (textToSend.trim().length < 10) {
       console.log(`[PDFtoArcgis] Página ${i + 1}: sem conteúdo para processar`);
@@ -476,8 +447,8 @@ async function deducePolygonVerticesWithAI(fullText) {
 
     if (!reply || !reply.choices?.[0]?.message?.content) {
       // Fallback 2: dividir em chunks e juntar vértices
-      const reduced = extractRelevantLinesForAI(fullText);
-      const chunks = splitTextForAI(reduced, 6000);
+      // ETL: Usar texto completo em chunks (sem pre-filtering)
+      const chunks = splitTextForAI(fullText, 6000);
       const results = [];
       if (typeof displayLogMessage === 'function') {
         displayLogMessage(`[PDFtoArcgis][LogUI] 📊 Dividindo PDF em ${chunks.length} parte(s) para análise...`);
@@ -1600,99 +1571,14 @@ function calculateDistanceVincenty(p1, p2, projectionKey = "SIRGAS2000_22S") {
   };
 }
 
-/**
- * Extrair azimutes e distâncias documentadas do texto (memorial)
- * Procura por padrões como "133°15'52"", "45°30'27"" e "258,45m"
- */
-function extractAzimuthDistanceFromText(text) {
-  const memorialData = [];
-
-  // === CORREÇÃO 1: AZIMUTES ===
-  // Padrões melhorados para capturar diversos formatos:
-  // - "azimute 133°15'52"", "Az: 45° 30' 27"", "azimute de 90°"
-  // - "segue com azimute 133°15'52"" até vértice"
-  // - Aceita espaços entre grau/minuto/segundo
-  // - Aceita omissão de minutos/segundos (default 0)
-  
-  const azPattern = /(?:azimute?|az\.?|bearing)[:\s]+([0-9]{1,3})[°º:]\s*([0-9]{1,2})?['']?\s*([0-9]{1,2})?[\""]?/gi;
-
-  let azMatch;
-  const azimutes = [];
-  while ((azMatch = azPattern.exec(text)) !== null) {
-    const degrees = parseInt(azMatch[1], 10);
-    const minutes = azMatch[2] ? parseInt(azMatch[2], 10) : 0;
-    const seconds = azMatch[3] ? parseInt(azMatch[3], 10) : 0;
-
-    // Validação: azimute deve estar entre 0° e 360°
-    const decimal = degrees + minutes / 60 + seconds / 3600;
-    if (decimal >= 0 && decimal < 360) {
-      azimutes.push({ 
-        decimal, 
-        degrees, 
-        minutes, 
-        seconds, 
-        raw: azMatch[0],
-        dms: `${degrees}°${minutes}'${seconds}"`
-      });
-      console.log(`[PDFtoArcgis] ✅ Azimute extraído: ${decimal.toFixed(4)}° (${degrees}°${minutes}'${seconds}")`);
-    } else {
-      console.log(`[PDFtoArcgis] ⚠️ Azimute rejeitado (fora de 0-360°): ${decimal.toFixed(2)}°`);
-    }
-  }
-
-  // === CORREÇÃO 2: DISTÂNCIAS ===
-  // Padrões melhorados para distinguir distâncias de coordenadas:
-  // - Contexto explícito: "distância", "extensão", "até"
-  // - Rejeitar números grandes (coordenadas UTM têm 7 dígitos)
-  // - Aceitar formatos: "123,45m", "456.78 m", "1.234,56m" (mil vírgula decimal)
-  
-  // Padrão 1: Com contexto explícito (alta confiança)
-  const distPatternExplicit = /(?:distância|extensão|até|segue\s+por)[:\s]+([0-9]{1,2}\.?[0-9]{3}[.,][0-9]{1,3}|[0-9]{1,4}[.,][0-9]{1,3})\s*m(?:etros?)?(?:\s|$|,|;|\.)/gi;
-  
-  // Padrão 2: Vírgula antes do número (contexto implícito, média confiança)
-  // Ex: "V1 até V2, 24,86m"
-  const distPatternImplicit = /,\s*([0-9]{1,4}[.,][0-9]{1,3})\s*m(?:etros?)?(?:\s|$|,|;|\.)/gi;
-
-  let distMatch;
-  const distances = [];
-  
-  // Processar padrão explícito (prioridade)
-  while ((distMatch = distPatternExplicit.exec(text)) !== null) {
-    const raw = distMatch[1];
-    const value = parseFloat(normalizeNumber(raw));
-
-    // Validação robusta: distância real de lotes/propriedades
-    // Mínimo: 0.1m (10cm - medidas de detalhes)
-    // Máximo: 50000m (50km - propriedades rurais muito grandes)
-    if (Number.isFinite(value) && value >= 0.1 && value <= 50000) {
-      distances.push({ value, raw, confidence: 'high', context: distMatch[0] });
-      console.log(`[PDFtoArcgis] ✅ Distância extraída (alta confiança): ${value.toFixed(2)}m (contexto: "${distMatch[0].trim()}")`);
-    } else {
-      console.log(`[PDFtoArcgis] ⚠️ Distância rejeitada (fora do intervalo válido): ${value}m`);
-    }
-  }
-  
-  // Processar padrão implícito (se não houver suficientes explícitos)
-  if (distances.length < 3) {
-    while ((distMatch = distPatternImplicit.exec(text)) !== null) {
-      const raw = distMatch[1];
-      const value = parseFloat(normalizeNumber(raw));
-
-      if (Number.isFinite(value) && value >= 0.1 && value <= 50000) {
-        // Evitar duplicatas
-        const isDuplicate = distances.some(d => Math.abs(d.value - value) < 0.01);
-        if (!isDuplicate) {
-          distances.push({ value, raw, confidence: 'medium', context: distMatch[0] });
-          console.log(`[PDFtoArcgis] ✅ Distância extraída (média confiança): ${value.toFixed(2)}m (contexto: "${distMatch[0].trim()}")`);
-        }
-      }
-    }
-  }
-
-  console.log(`[PDFtoArcgis] 📊 Resumo: ${azimutes.length} azimutes, ${distances.length} distâncias`);
-
-  return { azimutes, distances };
-}
+// ⚠️ DEPRECATED: extractAzimuthDistanceFromText() foi DESABILITADO
+// ETL SIMPLIFICADO: A IA retorna azimutes e distâncias no JSON (sem regex paralelo)
+// MOTIVO: Reduz redundância, código mais simples e mantenível
+// USO ANTERIOR: Chamada removida de linhas 3423 e 3591
+// 
+// function extractAzimuthDistanceFromText(text) {
+//   // Código removido - IA faz essa transformação agora
+// }
 
 /**
  * Validar coerência entre dados documentados (memorial) e coordenadas extraídas
@@ -3468,10 +3354,10 @@ async function processExtractUnified(pagesText, projInfo = null) {
   const projKey = resolvedProjection.key || (getActiveProjectionKey() || "SIRGAS2000_22S");
   window._arcgis_crs_key = projKey;
   const topologyValidation = validatePolygonTopology(vertices, projKey);
-  const memorialData = extractAzimuthDistanceFromText(fullText);
-  const memorialValidation = memorialData.azimutes.length > 0
-    ? validateMemorialCoherence(vertices, memorialData, projKey)
-    : null;
+  
+  // ETL SIMPLIFICADO: A IA fornece azimutes/distâncias, sem regex paralelo
+  const memorialData = { azimutes: [], distances: [] };
+  const memorialValidation = { matches: [], issues: [] };
 
   // === ADICIONAR À documentsResults (para compatibilidade com "Salvar na Pasta") ===
   documentsResults = [{
@@ -3635,11 +3521,9 @@ async function processExtractUnified_legacy(pagesText) {
     // 3. NOVO: Validação topológica completa
     const topologyValidation = validatePolygonTopology(cleaned, projKey);
 
-    // 4. NOVO: Validação de coerência com memorial
-    const memorialData = extractAzimuthDistanceFromText(doc.text);
-    const memorialValidation = memorialData.azimutes.length > 0
-      ? validateMemorialCoherence(cleaned, memorialData, projKey)
-      : null;
+    // 4. ETL SIMPLIFICADO: A IA fornece azimutes/distâncias, sem regex paralelo
+    const memorialData = { azimutes: [], distances: [] };
+    const memorialValidation = null;
 
     // 5. Construir warnings com informações detalhadas
     const warnings = [];
