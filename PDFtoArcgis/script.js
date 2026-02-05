@@ -1,5 +1,5 @@
 // =============================
-// PDFtoArcgis - ETL SIMPLIFICADO (v2.4)
+// PDFtoArcgis - ETL SIMPLIFICADO (v2.4.1)
 // =============================
 // 
 // REFATORAÇÃO ETL: Fluxo otimizado focado em IA como única fonte de transformação
@@ -8,15 +8,22 @@
 // [T] TRANSFORMATION: IA (Groq llama-3.1-8b) converte texto → JSON estruturado
 // [L] LOAD: Validação topológica + geração de shapefiles/CSV
 //
-// MUDANÇAS IMPLEMENTADAS (v2.4):
+// MUDANÇAS IMPLEMENTADAS (v2.4.1):
 // - ❌ REMOVIDO: extractRelevantLinesForAI() - regex pré-filtragem
 // - ❌ REMOVIDO: extractAzimuthDistanceFromText() - extração regex de azimutes/distâncias
 // - ✅ SIMPLIFICADO: Prompt da IA (minimalista, apenas JSON)
 // - ✅ CENTRALIZADO: IA retorna TUDO (coordenadas, azimutes, distâncias) em um JSON
+// - ✅ MELHORADO: Tratamento robusto de respostas com markdown/texto explicativo
 // - ✅ BENEFÍCIOS: Menos linhas de código, melhor manutenibilidade, menos erros
 //
+// v2.4.1 FIXES:
+// - Adicionada função extractJSONFromResponse() para lidar com markdown
+// - Melhorado prompt: Agora em inglês, mais imperativo ("Return ONLY JSON")
+// - Adicionado retry com extração de JSON dentro de texto/markdown
+// - Validação de resposta ANTES de tentar JSON.parse()
+//
 // Fluxo Anterior (v2.3): PDF → Regex (2 níveis) → IA → Regex (normalização)
-// Fluxo Novo (v2.4):     PDF → IA (JSON completo) → Validação
+// Fluxo Novo (v2.4.1):  PDF → IA (JSON completo + Markdown handling) → Validação
 //
 // =============================
 // Suporte à API OpenAI GPT-4 Turbo
@@ -157,8 +164,37 @@ function mergeVerticesFromChunks(chunksResults) {
   return merged;
 }
 
-// === [WebLLM: LLM no navegador via CDN] ===
-let webllmEngine = null;
+// =============================
+// Função Auxiliar: Extrair JSON de Markdown ou Texto
+// =============================
+function extractJSONFromResponse(rawResponse) {
+  if (!rawResponse) return null;
+  
+  const str = String(rawResponse).trim();
+  
+  // Padrão 1: JSON direto (esperado)
+  if (str.startsWith('{') || str.startsWith('[')) {
+    return str;
+  }
+  
+  // Padrão 2: JSON dentro de markdown (```json ... ```)
+  const mdMatch = str.match(/```json\s*([\s\S]*?)\s*```/);
+  if (mdMatch && mdMatch[1]) {
+    return mdMatch[1].trim();
+  }
+  
+  // Padrão 3: JSON após texto explicativo
+  // Procura por { ... } ou [ ... ] em qualquer posição
+  const jsonMatch = str.match(/(\{[\s\S]*\}|\[[\s\S]*\])/);
+  if (jsonMatch && jsonMatch[1]) {
+    return jsonMatch[1].trim();
+  }
+  
+  console.warn('[PDFtoArcgis] ⚠️ Não conseguiu extrair JSON da resposta:', str.substring(0, 100));
+  return null;
+}
+
+// =============================
 async function ensureWebLLM(model = "phi-2") {
   if (window.webllm && webllmEngine) return webllmEngine;
   // Carrega o script WebLLM se necessário
@@ -180,10 +216,10 @@ async function ensureWebLLM(model = "phi-2") {
 
 // Função IA para processar página por página
 async function deducePolygonVerticesPerPage(pagesText) {
-  const smallPrompt = (text) => `Você é um especialista em extração de coordenadas de documentos cartoriais brasileiros.
-Extraia TODOS os vértices (ID, Este, Norte, azimutes, distâncias) e retorne APENAS JSON válido.
+  const smallPrompt = (text) => `Extract all vertices from the cadastral document text below.
+Return ONLY valid JSON, no explanations, no markdown, no text before or after.
 
-JSON esperado:
+Expected JSON format:
 {
   "vertices": [
     {
@@ -197,13 +233,14 @@ JSON esperado:
   ]
 }
 
-Regras:
-1. Normalize números brasileiros: 7.186.708,425 → 7186708.425
-2. Azimute: mantenha formato original (DMS) + valor decimal
-3. Distância: em metros com 2 casas decimais
-4. Se sem dados, retorne: {"vertices": [], "motivo": "sem_coordenadas"}
+Rules:
+1. Normalize Brazilian numbers: 7.186.708,425 → 7186708.425
+2. Azimuth: keep DMS format + decimal value
+3. Distance: meters with 2 decimals
+4. If no coordinates found, return: {"vertices": [], "motivo": "sem_coordenadas"}
+5. CRITICAL: Return ONLY JSON. No text before or after JSON.
 
-Texto:
+Text:
 ${text}`;
 
   const results = [];
@@ -262,7 +299,17 @@ ${text}`;
       continue;
     }
     
-    content = repairJsonCoordinates(content);
+    // ETL MELHORIA: Extrair JSON de dentro de markdown ou texto explicativo
+    const jsonExtracted = extractJSONFromResponse(content);
+    if (!jsonExtracted) {
+      console.warn(`[PDFtoArcgis] Página ${i + 1}: Não conseguiu extrair JSON da resposta`);
+      if (typeof displayLogMessage === 'function') {
+        displayLogMessage(`[PDFtoArcgis][LogUI] ⚠️ Página ${i + 1}: Resposta da IA inválida`);
+      }
+      continue;
+    }
+    
+    content = repairJsonCoordinates(jsonExtracted);
     try {
       const parsed = JSON.parse(content);
       
@@ -315,8 +362,27 @@ ${text}`;
       }
     } catch (e) {
       console.error('[PDFtoArcgis][PARSE ERROR][PAGE]', e, content);
+      
+      // Tentar novamente com extração mais agressiva
+      console.log(`[PDFtoArcgis] 🔄 Tentando extração alternativa para página ${i + 1}...`);
+      const retryJson = extractJSONFromResponse(content);
+      if (retryJson) {
+        try {
+          const retryParsed = JSON.parse(repairJsonCoordinates(retryJson));
+          if (retryParsed?.vertices?.length > 0) {
+            results.push(retryParsed);
+            console.log(`[PDFtoArcgis] ✅ Página ${i + 1}: recuperada com sucesso (retry)`);
+            if (typeof displayLogMessage === 'function') {
+              displayLogMessage(`[PDFtoArcgis][LogUI] 🔧 Página ${i + 1}: recuperada (retry)`);
+            }
+          }
+        } catch (e2) {
+          console.error('[PDFtoArcgis][PARSE ERROR RETRY]', e2);
+        }
+      }
+      
       // Detectar se é mensagem de "sem dados" da IA
-      if (typeof content === 'string' && (content.includes('Não há') || content.includes('não há') || content.includes('no data'))) {
+      if (typeof content === 'string' && (content.includes('Não há') || content.includes('não há') || content.includes('no data') || content.includes('no coordinates'))) {
         console.log(`[PDFtoArcgis] Página ${i + 1}: sem dados de vértices (IA confirmou)`);
         if (typeof displayLogMessage === 'function') {
           displayLogMessage(`[PDFtoArcgis][LogUI] ℹ️ Página ${i + 1}: sem coordenadas detectadas pela IA`);
@@ -466,8 +532,16 @@ async function deducePolygonVerticesWithAI(fullText) {
           console.warn(`[PDFtoArcgis] Chunk ${i + 1} sem resposta`);
           continue;
         }
+        
+        // ETL MELHORIA: Extrair JSON de dentro de markdown/texto explicativo
+        const jsonExtracted = extractJSONFromResponse(content);
+        if (!jsonExtracted) {
+          console.warn(`[PDFtoArcgis] Chunk ${i + 1}: Não conseguiu extrair JSON`);
+          continue;
+        }
+        
         // Reparar JSON malformado
-        content = repairJsonCoordinates(content);
+        content = repairJsonCoordinates(jsonExtracted);
         try {
           const parsed = JSON.parse(content);
           results.push(parsed);
