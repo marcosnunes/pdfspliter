@@ -1808,6 +1808,15 @@ fileInput.addEventListener("change", async (event) => {
   documentsResults = [];
   activeDocIndex = -1;
 
+  const ocrAvailable = (window.Android && window.Android.performOCR) || window.Tesseract;
+  if (!ocrAvailable) {
+    const msg = "⚠️ OCR indisponivel: habilite Tesseract.js no navegador ou OCR do Android.";
+    updateStatus(msg, "warning");
+    if (typeof displayLogMessage === 'function') {
+      displayLogMessage(`[PDFtoArcgis][LogUI] ${msg}`);
+    }
+  }
+
   try {
     updateStatus("📄 Carregando PDF...", "info");
     const arrayBuffer = await file.arrayBuffer();

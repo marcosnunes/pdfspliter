@@ -35,6 +35,54 @@
       document.head.appendChild(s);
     })();
   </script>
+  <script>
+    (function ensureTesseractLoaded() {
+      if (window.Tesseract) {
+        console.log("[OCR] Tesseract.js carregado.");
+        return;
+      }
+      console.warn("[OCR] Tesseract.js nao carregado. Tentando jsDelivr...");
+      var s = document.createElement("script");
+      s.src = "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";
+      s.onload = function() {
+        if (window.Tesseract) {
+          console.log("[OCR] Tesseract.js carregado via jsDelivr.");
+          return;
+        }
+        console.warn("[OCR] jsDelivr falhou. Tentando unpkg...");
+        var f = document.createElement("script");
+        f.src = "https://unpkg.com/tesseract.js@5/dist/tesseract.min.js";
+        f.onload = function() {
+          if (window.Tesseract) {
+            console.log("[OCR] Tesseract.js carregado via unpkg.");
+          } else {
+            console.error("[OCR] Falha ao carregar Tesseract.js.");
+          }
+        };
+        f.onerror = function() {
+          console.error("[OCR] Falha ao carregar Tesseract.js (unpkg).");
+        };
+        document.head.appendChild(f);
+      };
+      s.onerror = function() {
+        console.warn("[OCR] Falha ao carregar Tesseract.js (jsDelivr). Tentando unpkg...");
+        var f = document.createElement("script");
+        f.src = "https://unpkg.com/tesseract.js@5/dist/tesseract.min.js";
+        f.onload = function() {
+          if (window.Tesseract) {
+            console.log("[OCR] Tesseract.js carregado via unpkg.");
+          } else {
+            console.error("[OCR] Falha ao carregar Tesseract.js.");
+          }
+        };
+        f.onerror = function() {
+          console.error("[OCR] Falha ao carregar Tesseract.js (unpkg).");
+        };
+        document.head.appendChild(f);
+      };
+      document.head.appendChild(s);
+    })();
+  </script>
 </head>
 <body>
   <!-- Estrutura do Menu Lateral (Sidenav) -->
