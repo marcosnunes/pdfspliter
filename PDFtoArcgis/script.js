@@ -1,4 +1,4 @@
-// PDFtoArcgis - fluxo IA direto (texto bruto -> JSON -> validacao)
+﻿// PDFtoArcgis - fluxo IA direto (texto bruto -> JSON -> validacao)
 //
 // Garante que displayLogMessage está disponível (importa do global se necessário)
 if (typeof displayLogMessage !== 'function' && window.displayLogMessage) {
@@ -69,7 +69,7 @@ function repairJsonCoordinates(jsonStr) {
   
   // Padrão: qualquer número com vírgula decimal dentro de JSON
   // Se for contexto de número (entre : e ,/}), converter vírgula por ponto
-  jsonStr = jsonStr.replace(/("(?:norte|norte|este|east|north|azimute|distancia)"\s*:\s*)(\d+),(\d+)/g, '$1$2.$3');
+  jsonStr = jsonStr.replace(/("(?:norte|norte|este|east|north|azimute|distancia|lat|lon|latitude|longitude)"\s*:\s*)(-?\d+),(\d+)/g, '$1$2.$3');
 
   // Corrigir aspas duplas extras em azimute_dms (ex: 133°15'52"")
   jsonStr = jsonStr.replace(/("azimute_dms"\s*:\s*"[^"]*)""/g, '$1\\"');
@@ -107,6 +107,28 @@ function mergeVerticesFromChunks(chunksResults) {
         seen.add(key);
         merged.push({ id: v.id || id, este: east, norte: north });
       }
+    }
+  }
+  return merged;
+}
+
+function mergeLatLonFromChunks(chunksResults) {
+  const merged = [];
+  const seen = new Set();
+  for (const obj of chunksResults) {
+    const verts = Array.isArray(obj?.vertices) ? obj.vertices : [];
+    for (const v of verts) {
+      let lat = v.lat ?? v.latitude;
+      let lon = v.lon ?? v.longitude;
+      if (typeof lat === 'string') lat = lat.replace(/,/g, '.');
+      if (typeof lon === 'string') lon = lon.replace(/,/g, '.');
+      lat = Number(lat);
+      lon = Number(lon);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+      const key = `${lat}|${lon}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push({ id: v.id || '', lat, lon });
     }
   }
   return merged;
@@ -170,6 +192,77 @@ function fixDMSTypos(vertex) {
   return vertex;
 }
 
+function parseDmsToDegrees(dms) {
+  if (!dms) return null;
+  const parts = String(dms).match(/-?\d+(?:\.\d+)?/g);
+  if (!parts || parts.length === 0) return null;
+  const deg = Math.abs(parseFloat(parts[0])) || 0;
+  const min = parts.length > 1 ? Math.abs(parseFloat(parts[1])) : 0;
+  const sec = parts.length > 2 ? Math.abs(parseFloat(parts[2])) : 0;
+  const value = deg + (min / 60) + (sec / 3600);
+  return value;
+}
+
+function normalizeAzimuth(value, dms) {
+  let az = value;
+  if (typeof az === 'string') az = az.replace(/,/g, '.');
+  az = Number(az);
+  if (!Number.isFinite(az) && dms) az = parseDmsToDegrees(dms);
+  if (!Number.isFinite(az)) return null;
+  az = ((az % 360) + 360) % 360;
+  return az;
+}
+
+function inferUtmZoneFromLon(lon) {
+  if (!Number.isFinite(lon)) return null;
+  const zone = Math.floor((lon + 180) / 6) + 1;
+  if (zone < 1 || zone > 60) return null;
+  return zone;
+}
+
+function latLonToUtm(lat, lon, zone) {
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  const utmZone = zone || inferUtmZoneFromLon(lon);
+  if (!utmZone) return null;
+  const projStr = `+proj=utm +zone=${utmZone} +south +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs`;
+  try {
+    const xy = proj4(proj4.WGS84, projStr, [lon, lat]);
+    return { east: xy[0], north: xy[1], zone: utmZone };
+  } catch (e) {
+    return null;
+  }
+}
+
+function buildRelativeVerticesFromMeasures(rawVertices, startE = 0, startN = 0) {
+  const vertices = [];
+  let currE = startE;
+  let currN = startN;
+  let idx = 0;
+
+  for (const v of rawVertices) {
+    const az = normalizeAzimuth(v.azimute, v.azimute_dms);
+    let dist = v.distancia;
+    if (typeof dist === 'string') dist = dist.replace(/\./g, '').replace(/,/g, '.');
+    dist = Number(dist);
+    if (!Number.isFinite(az) || !Number.isFinite(dist)) {
+      continue;
+    }
+    const id = v.id || `V${String(idx + 1).padStart(3, '0')}`;
+    vertices.push({ id, east: currE, north: currN, ordem: idx + 1 });
+    const rad = (az * Math.PI) / 180;
+    currE += dist * Math.sin(rad);
+    currN += dist * Math.cos(rad);
+    idx++;
+  }
+
+  if (vertices.length >= 1) {
+    const id = `V${String(vertices.length + 1).padStart(3, '0')}`;
+    vertices.push({ id, east: currE, north: currN, ordem: vertices.length + 1 });
+  }
+
+  return vertices;
+}
+
 // Função IA para processar página por página - v2.5 otimizado
 async function deducePolygonVerticesPerPage(pagesText) {
   const smallPrompt = (text) => `You are a cadastral document parser for Brazilian real estate (SIRGAS2000/UTM).
@@ -177,18 +270,24 @@ async function deducePolygonVerticesPerPage(pagesText) {
 TASK: Extract ALL vertices from the RAW text below (no cleanup applied). RETURN: ONLY valid JSON. No markdown. No text before/after.
 
 JSON: {"vertices":[{"id":"V1","este":693736.178,"norte":7186708.425,"azimute_dms":"133°15'52\"","azimute":133.2644,"distancia":24.86}]}
+JSON (lat/lon): {"crs":"WGS84","vertices":[{"id":"V1","lat":-24.075847,"lon":-50.725369}]}
+JSON (relative): {"modo":"relativo","vertices":[{"id":"V1","azimute_dms":"133°15'52\"","distancia":24.86}]}
 
 RULES:
 1. Este: 150k-900k, Norte: 6.9M-10.1M (omit invalid)
 2. Fix typos: "B5º" -> numeric only
 3. Escape double quotes in azimute_dms as \\\" (JSON valid)
-4. Max 3 decimals, return {"vertices":[]} if empty
-5. Do not invent data
+4. If coordinates are in lat/lon (DMS or decimal), output decimal lat/lon (no DMS)
+5. If only azimuth/distances and no coordinates exist, set modo="relativo" and return vertices with azimute/distancia only
+6. Max 3 decimals, return {"vertices":[]} if empty
+7. Do not invent data
 
 Raw text from PDF (full page):
 ${text}`;
 
   const results = [];
+  const latLonResults = [];
+  let relativeResult = null;
   const totalPages = pagesText.length;
   let baseDelay = 5000; // ⬆️ Aumentado de 3s → 5s para evitar 429 rate limit
   
@@ -399,7 +498,18 @@ ${text}`;
         parsed.vertices = validVertices;
       }
       
-      if (parsed?.vertices?.length > 0) {
+      if (parsed?.modo === "relativo" || parsed?.relative === true) {
+        relativeResult = parsed;
+        break;
+      }
+
+      const hasLatLon = Array.isArray(parsed?.vertices)
+        && parsed.vertices.some(v => v.lat !== undefined || v.lon !== undefined || v.latitude !== undefined || v.longitude !== undefined)
+        && !parsed.vertices.some(v => v.este !== undefined || v.east !== undefined || v.norte !== undefined || v.north !== undefined);
+
+      if (hasLatLon) {
+        latLonResults.push(parsed);
+      } else if (parsed?.vertices?.length > 0) {
         results.push(parsed);
         const vcount = parsed.vertices.length;
         
@@ -480,6 +590,19 @@ ${text}`;
     }
   }
   
+  if (relativeResult) return relativeResult;
+
+  if (latLonResults.length > 0) {
+    const mergedLatLon = mergeLatLonFromChunks(latLonResults);
+    if (typeof displayLogMessage === 'function') {
+      displayLogMessage(`[PDFtoArcgis][LogUI] 🎉 IA concluiu: ${mergedLatLon.length} coordenada(s) lat/lon`);
+    }
+    return {
+      ...latLonResults[0],
+      vertices: mergedLatLon
+    };
+  }
+
   const mergedVertices = mergeVerticesFromChunks(results);
   console.log(`[PDFtoArcgis] Total de vértices únicos: ${mergedVertices.length}`);
   
@@ -1399,12 +1522,18 @@ function resolveProjectionKeyForOutput(iaObj, projInfo, inferredByCoords) {
 
 
 // CSV com metadados
-function gerarCsvParaVertices(vertices, epsg, docId = null, topologyInfo = null, memorialInfo = null) {
+function gerarCsvParaVertices(vertices, epsg, docId = null, topologyInfo = null, memorialInfo = null, relativeInfo = null) {
   let csv = "\ufeffsep=;\n";
 
   // Cabeçalho profissional com metadados
   csv += `# MATRÍCULA;${docId || "N/A"}\n`;
   csv += `# EPSG;${epsg}\n`;
+  if (relativeInfo?.relative) {
+    csv += `# CRS_RELATIVO;SIM\n`;
+    if (relativeInfo.start) {
+      csv += `# ORIGEM_RELATIVA;${relativeInfo.start.east},${relativeInfo.start.north}\n`;
+    }
+  }
   if (topologyInfo) {
     csv += `# TOPOLOGY_VALID;${topologyInfo.isValid ? "SIM" : "NÃO"}\n`;
     csv += `# AREA_M2;${topologyInfo.area.toFixed(2)}\n`;
@@ -1714,13 +1843,62 @@ async function processExtractUnified(pagesText, projInfo = null) {
     return;
   }
 
-  // Normalizar vértices da IA para formato interno
-  let vertices = (iaObj.vertices || []).map((v, idx) => ({
+  const rawVertices = Array.isArray(iaObj.vertices) ? iaObj.vertices : [];
+  let relativeMode = iaObj?.modo === "relativo" || iaObj?.relative === true;
+  const hasLatLon = rawVertices.some(v => v?.lat !== undefined || v?.lon !== undefined || v?.latitude !== undefined || v?.longitude !== undefined);
+
+  let vertices = rawVertices.map((v, idx) => ({
     id: v.id || `V${String(idx + 1).padStart(3, '0')}`,
-    north: typeof v.norte === 'number' ? v.norte : (typeof v.north === 'number' ? v.north : parseFloat(v.norte || v.north || 0)),
-    east: typeof v.este === 'number' ? v.este : (typeof v.east === 'number' ? v.east : parseFloat(v.este || v.east || 0)),
+    north: typeof v.norte === 'number' ? v.norte : (typeof v.north === 'number' ? v.north : parseFloat((v.norte ?? v.north ?? "").toString().replace(/,/g, "."))),
+    east: typeof v.este === 'number' ? v.este : (typeof v.east === 'number' ? v.east : parseFloat((v.este ?? v.east ?? "").toString().replace(/,/g, "."))),
+    lat: typeof v.lat === 'number' ? v.lat : (typeof v.latitude === 'number' ? v.latitude : parseFloat((v.lat ?? v.latitude ?? "").toString().replace(/,/g, "."))),
+    lon: typeof v.lon === 'number' ? v.lon : (typeof v.longitude === 'number' ? v.longitude : parseFloat((v.lon ?? v.longitude ?? "").toString().replace(/,/g, "."))),
+    azimute: v.azimute,
+    azimute_dms: v.azimute_dms,
+    distancia: v.distancia,
     ordem: idx + 1
   }));
+
+  let relativeInfo = null;
+  const warnings = [];
+  let forceProjectionKey = null;
+  let projectionReason = null;
+
+  const hasCoords = vertices.some(v => Number.isFinite(v.north) && Number.isFinite(v.east));
+  const hasMeasures = rawVertices.some(v => v?.azimute !== undefined || v?.azimute_dms || v?.distancia !== undefined);
+  if (!relativeMode && !hasCoords && hasMeasures) relativeMode = true;
+
+  if (relativeMode) {
+    const rebuilt = buildRelativeVerticesFromMeasures(rawVertices, 0, 0);
+    vertices = rebuilt;
+    relativeInfo = { relative: true, start: { east: 0, north: 0 } };
+    forceProjectionKey = "RELATIVO";
+    projectionReason = "Polígono relativo (sem coordenadas absolutas); origem (0,0).";
+    warnings.push("Polígono relativo: sem georreferenciamento absoluto (origem 0,0).");
+  } else if (hasLatLon) {
+    const converted = [];
+    let zone = null;
+    for (const v of vertices) {
+      if (!Number.isFinite(v.lat) || !Number.isFinite(v.lon)) continue;
+      const conv = latLonToUtm(v.lat, v.lon, zone);
+      if (!conv) continue;
+      zone = conv.zone || zone;
+      converted.push({
+        id: v.id,
+        north: conv.north,
+        east: conv.east,
+        ordem: converted.length + 1,
+        azimute: v.azimute,
+        azimute_dms: v.azimute_dms,
+        distancia: v.distancia
+      });
+    }
+    vertices = converted;
+    if (zone) {
+      forceProjectionKey = `SIRGAS2000_${String(zone).padStart(2, '0')}S`;
+      projectionReason = "Lat/Lon convertidas para UTM (SIRGAS2000).";
+    }
+  }
 
   // Remover vértices inválidos
   vertices = vertices.filter(v => Number.isFinite(v.north) && Number.isFinite(v.east));
@@ -1736,9 +1914,9 @@ async function processExtractUnified(pagesText, projInfo = null) {
 
   // CRS: IA + texto + coordenadas
   const fullText = pagesText.join("\n");
-  const inferredByCoords = inferCrsByCoordinates(vertices);
+  const inferredByCoords = forceProjectionKey === "RELATIVO" ? null : inferCrsByCoordinates(vertices);
   const resolvedProjection = resolveProjectionKeyForOutput(iaObj, projInfo, inferredByCoords);
-  const projKey = resolvedProjection.key || (getActiveProjectionKey() || "SIRGAS2000_22S");
+  const projKey = forceProjectionKey || resolvedProjection.key || (getActiveProjectionKey() || "SIRGAS2000_22S");
   window._arcgis_crs_key = projKey;
   const topologyValidation = validatePolygonTopology(vertices, projKey);
   
@@ -1752,14 +1930,17 @@ async function processExtractUnified(pagesText, projInfo = null) {
     pages: "1-" + pagesText.length,
     projectionKey: projKey,
     manualProjectionKey: null,
-    projectionInfo: resolvedProjection.info || (inferredByCoords
-      ? { confidence: "média", reason: inferredByCoords.reason }
-      : { confidence: "baixa", reason: "CRS não inferido pelas coordenadas; usando seleção atual/padrão" }),
+    projectionInfo: forceProjectionKey
+      ? { confidence: "baixa", reason: projectionReason || "CRS relativo" }
+      : (resolvedProjection.info || (inferredByCoords
+        ? { confidence: "média", reason: inferredByCoords.reason }
+        : { confidence: "baixa", reason: "CRS não inferido pelas coordenadas; usando seleção atual/padrão" })),
     vertices: vertices,
-    warnings: [],
+    warnings: warnings,
     topology: topologyValidation,
     memorialValidation: memorialValidation,
     memorialData: memorialData,
+    relativeInfo: relativeInfo,
     text: fullText
   }];
 
@@ -1885,9 +2066,9 @@ downloadBtn.onclick = () => {
   if (!extractedCoordinates.length) return;
   try {
     const key = getActiveProjectionKey();
-    const epsg = PROJECTIONS[key]?.epsg || "";
-    const crsName = key ? key.replace(/[^\w]/g, "_") : "CRS";
     const doc = getSelectedDoc();
+    const epsg = PROJECTIONS[key]?.epsg || (doc?.relativeInfo?.relative ? "RELATIVO" : "");
+    const crsName = doc?.relativeInfo?.relative ? "RELATIVO" : (key ? key.replace(/[^\w]/g, "_") : "CRS");
 
     // Gerar CSV com diagnóstico profissional
     const csv = gerarCsvParaVertices(
@@ -1895,7 +2076,8 @@ downloadBtn.onclick = () => {
       epsg,
       doc?.docId || "DESCONHECIDA",
       doc?.topology,
-      doc?.memorialValidation
+      doc?.memorialValidation,
+      doc?.relativeInfo
     );
 
     const link = document.createElement("a");
@@ -2080,7 +2262,8 @@ saveToFolderBtn.onclick = async () => {
 
       const projKey = doc.manualProjectionKey || doc.projectionKey || getActiveProjectionKey();
       const projection = PROJECTIONS[projKey];
-      if (!projection) {
+      const isRelative = doc.relativeInfo?.relative === true;
+      if (!projection && !isRelative) {
         skipped.push(`Arquivo ${pdfOrigemSrc || "src"}: CRS não suportado (${projKey})`);
         continue;
       }
@@ -2088,13 +2271,13 @@ saveToFolderBtn.onclick = async () => {
       const base = sanitizeFileName(pdfOrigemNomeBase || fileNameBase);
       const ring = vertices.map(c => [c.east, c.north]);
 
-      let crsName = projection && projection.epsg ? projection.epsg : "CRS";
+      let crsName = projection && projection.epsg ? projection.epsg : (isRelative ? "RELATIVO" : "CRS");
       crsName = String(crsName).replace(/[^\w\d]/g, "_");
 
       // Limite (POLYGON)
       await new Promise((resolve, reject) => {
         window.shpwrite.write(
-          [{ NOME: base, VERTICES: vertices.length, EPSG: projection.epsg, TIPO: "LIMITE" }],
+          [{ NOME: base, VERTICES: vertices.length, EPSG: projection?.epsg || (isRelative ? "RELATIVO" : ""), TIPO: "LIMITE" }],
           "POLYGON",
           [[[ring]]],
           async (err, files) => {
@@ -2107,7 +2290,9 @@ saveToFolderBtn.onclick = async () => {
               await new Promise(r => setTimeout(r, 100));
               await writeFile(`${base}_${crsName}_limite.dbf`, toArrayBufferFS(files.dbf));
               await new Promise(r => setTimeout(r, 100));
-              await writeFile(`${base}_${crsName}_limite.prj`, projection.wkt);
+              if (projection?.wkt) {
+                await writeFile(`${base}_${crsName}_limite.prj`, projection.wkt);
+              }
               resolve();
             } catch (e) { reject(e); }
           }
@@ -2121,7 +2306,7 @@ saveToFolderBtn.onclick = async () => {
         ORDEM: c.ordem,
         NORTH: c.north,
         EAST: c.east,
-        EPSG: projection.epsg
+        EPSG: projection?.epsg || (isRelative ? "RELATIVO" : "")
       }));
 
       await new Promise((resolve, reject) => {
@@ -2139,7 +2324,9 @@ saveToFolderBtn.onclick = async () => {
               await new Promise(r => setTimeout(r, 100));
               await writeFile(`${base}_${crsName}_vertices.dbf`, toArrayBufferFS(files.dbf));
               await new Promise(r => setTimeout(r, 100));
-              await writeFile(`${base}_${crsName}_vertices.prj`, projection.wkt);
+              if (projection?.wkt) {
+                await writeFile(`${base}_${crsName}_vertices.prj`, projection.wkt);
+              }
               resolve();
             } catch (e) { reject(e); }
           }
@@ -2147,7 +2334,7 @@ saveToFolderBtn.onclick = async () => {
       });
 
       // CSV
-      const csv = gerarCsvParaVertices(vertices, projection.epsg, docId, doc.topology, doc.memorialValidation);
+      const csv = gerarCsvParaVertices(vertices, projection?.epsg || (isRelative ? "RELATIVO" : ""), docId, doc.topology, doc.memorialValidation, doc.relativeInfo);
       await writeFile(`${base}_${crsName}_Validado.csv`, csv);
 
       // Relatório de validação
