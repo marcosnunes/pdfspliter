@@ -126,6 +126,36 @@
 
         <div id="status" style="display:none;"></div>
 
+        <!-- NOVO: Painel de Validação Topológica -->
+        <div id="validationBox" class="stat-card" style="display:none; text-align:left; border-left: 4px solid #ff9800;">
+          <p style="text-transform: uppercase; font-size: 0.8rem; margin: 0; color: #666;">
+            <i class="fas fa-check-circle"></i> Validação Topológica do Polígono
+          </p>
+          
+          <div id="validationStatus" style="margin-top:10px; padding:10px; border-radius:5px; background-color:#f8f9fa;">
+            <h4 id="validationTitle" style="margin:0 0 10px 0; color:#2c3e50;">
+              <i class="fas fa-spinner fa-spin"></i> Validando...
+            </h4>
+            
+            <div id="validationErrors" style="display:none; margin-bottom:10px;">
+              <strong style="color:#dc3545;"><i class="fas fa-exclamation-triangle"></i> Erros Críticos:</strong>
+              <ul id="errorList" style="margin:5px 0; padding-left:20px; color:#dc3545;"></ul>
+            </div>
+            
+            <div id="validationWarnings" style="display:none; margin-bottom:10px;">
+              <strong style="color:#ff9800;"><i class="fas fa-exclamation-circle"></i> Avisos:</strong>
+              <ul id="warningList" style="margin:5px 0; padding-left:20px; color:#ff9800;"></ul>
+            </div>
+            
+            <div id="validationSuccess" style="display:none;">
+              <strong style="color:#28a745;"><i class="fas fa-check-circle"></i> Polígono Válido!</strong>
+              <div id="validationDetails" style="margin-top:5px; font-size:0.9rem; color:#666;"></div>
+            </div>
+          </div>
+          
+
+        </div>
+
         <!-- NOVO: bloco de metadados do memorial -->
         <div id="memorialMetaBox" class="stat-card" style="display:none; text-align:left;">
           <p style="text-transform: uppercase; font-size: 0.8rem; margin: 0; color: #666;">Dados para o Memorial Descritivo</p>
