@@ -37,16 +37,26 @@
   </script>
   <script>
     (function ensureTesseractLoaded() {
+      if (!window.__tesseractReady) {
+        window.__tesseractReady = new Promise(function(resolve, reject) {
+          window.__resolveTesseract = resolve;
+          window.__rejectTesseract = reject;
+        });
+      }
+
       if (window.Tesseract) {
         console.log("[OCR] Tesseract.js carregado.");
+        if (window.__resolveTesseract) window.__resolveTesseract(true);
         return;
       }
+
       console.warn("[OCR] Tesseract.js nao carregado. Tentando jsDelivr...");
       var s = document.createElement("script");
       s.src = "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";
       s.onload = function() {
         if (window.Tesseract) {
           console.log("[OCR] Tesseract.js carregado via jsDelivr.");
+          if (window.__resolveTesseract) window.__resolveTesseract(true);
           return;
         }
         console.warn("[OCR] jsDelivr falhou. Tentando unpkg...");
@@ -55,12 +65,15 @@
         f.onload = function() {
           if (window.Tesseract) {
             console.log("[OCR] Tesseract.js carregado via unpkg.");
+            if (window.__resolveTesseract) window.__resolveTesseract(true);
           } else {
             console.error("[OCR] Falha ao carregar Tesseract.js.");
+            if (window.__rejectTesseract) window.__rejectTesseract(new Error("Tesseract.js not loaded"));
           }
         };
         f.onerror = function() {
           console.error("[OCR] Falha ao carregar Tesseract.js (unpkg).");
+          if (window.__rejectTesseract) window.__rejectTesseract(new Error("Tesseract.js load error"));
         };
         document.head.appendChild(f);
       };
@@ -71,12 +84,15 @@
         f.onload = function() {
           if (window.Tesseract) {
             console.log("[OCR] Tesseract.js carregado via unpkg.");
+            if (window.__resolveTesseract) window.__resolveTesseract(true);
           } else {
             console.error("[OCR] Falha ao carregar Tesseract.js.");
+            if (window.__rejectTesseract) window.__rejectTesseract(new Error("Tesseract.js not loaded"));
           }
         };
         f.onerror = function() {
           console.error("[OCR] Falha ao carregar Tesseract.js (unpkg).");
+          if (window.__rejectTesseract) window.__rejectTesseract(new Error("Tesseract.js load error"));
         };
         document.head.appendChild(f);
       };

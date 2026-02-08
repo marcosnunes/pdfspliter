@@ -725,10 +725,9 @@ function hasCoordinateSignal(text) {
   // Lat/Lon decimal with labels or hemisphere
   if (/(lat(?:itude)?|lon(?:gitude)?)[^\d-]*-?\d{1,2}[.,]\d{4,}/i.test(t)) return true;
   if (/(lat(?:itude)?|lon(?:gitude)?)[^\d-]*-?\d{1,3}[.,]\d{4,}/i.test(t)) return true;
-  if (/(\bS\b|\bN\b|\bW\b|\bE\b)\s*\d{1,2}[.,]\d{4,}\s*(\bS\b|\bN\b|\bW\b|\bE\b)?/i.test(t)) return true;
 
   // Lat/Lon DMS
-  if (/\d{1,3}\s*°\s*\d{1,2}\s*['’]\s*\d{1,2}\s*["”]\s*[NSEW]?/i.test(t)) return true;
+  if (/\d{1,3}\s*°\s*\d{1,2}\s*['’]\s*\d{1,2}\s*["”]\s*[NSEW]/i.test(t)) return true;
 
   // Azimuth/Distance narrative
   if (/(azimute|rumo|dist[aâ]ncia)\s*[:=]?\s*\d+/i.test(t)) return true;
@@ -788,6 +787,17 @@ async function performOcrOnPage(page, pageIndex) {
     try {
       const ocrText = await window.Android.performOCR(pageIndex);
       return (ocrText && ocrText.length > 10) ? ocrText : "";
+    } catch (e) {
+      return "";
+    }
+  }
+
+  if (window.__tesseractReady && !window.Tesseract) {
+    try {
+      await Promise.race([
+        window.__tesseractReady,
+        new Promise((_, reject) => setTimeout(() => reject(new Error('OCR timeout')), 8000))
+      ]);
     } catch (e) {
       return "";
     }
