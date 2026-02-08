@@ -805,13 +805,19 @@ async function performOcrOnPage(page, pageIndex) {
 
   if (window.Tesseract) {
     try {
+      const ocrOptions = {
+        lang: 'por',
+        workerPath: 'vendor/tesseract/worker.min.js',
+        corePath: 'vendor/tesseract/tesseract-core.wasm.js',
+        langPath: 'vendor/tesseract/lang-data'
+      };
       const canvas = document.createElement('canvas');
       const viewport = page.getViewport({ scale: 2.0 });
       canvas.width = viewport.width;
       canvas.height = viewport.height;
       const ctx = canvas.getContext('2d');
       await page.render({ canvasContext: ctx, viewport }).promise;
-      const result = await window.Tesseract.recognize(canvas, 'por');
+      const result = await window.Tesseract.recognize(canvas, 'por', ocrOptions);
       const text = result?.data?.text || "";
       return (text && text.length > 10) ? text : "";
     } catch (e) {
@@ -1011,7 +1017,7 @@ function scrollToResults() {
 
 // Configuração do PDF.js para uso local/Android
 pdfjsLib.GlobalWorkerOptions.workerSrc =
-  "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js";
+  "vendor/pdf.worker.min.js";
 
 // UI e estado
 const fileInput = document.getElementById("fileInput");

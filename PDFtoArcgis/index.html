@@ -8,31 +8,21 @@
 
   <link rel="stylesheet" href="style.css" />
   <link rel="manifest" href="/manifest.json" />
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" />
+  <link rel="stylesheet" href="vendor/fontawesome/css/all.min.css" />
 
-  <script src="https://unpkg.com/@mapbox/shp-write@latest/shpwrite.js"></script>
-  <script src="https://unpkg.com/shpjs@latest/dist/shp.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/pizzip/3.1.4/pizzip.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.9.2/proj4.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/docx@8/build/index.umd.js"></script>
+  <script src="vendor/shpwrite.js"></script>
+  <script src="vendor/shp.min.js"></script>
+  <script src="vendor/pizzip.min.js"></script>
+  <script src="vendor/proj4.min.js"></script>
+  <script src="vendor/FileSaver.min.js"></script>
+  <script src="vendor/docx.umd.js"></script>
   <script>
     (function ensureDocxLoaded() {
       if (window.docx && window.docx.Document) {
-        console.log("[DOCX] Biblioteca carregada via jsDelivr.");
+        console.log("[DOCX] Biblioteca carregada (local).");
         return;
       }
-      console.warn("[DOCX] jsDelivr não carregou. Tentando fallback cdnjs...");
-      var s = document.createElement("script");
-      s.src = "https://cdnjs.cloudflare.com/ajax/libs/docx/8.3.2/docx.umd.js";
-      s.onload = function() {
-        if (window.docx && window.docx.Document) {
-          console.log("[DOCX] Biblioteca carregada via cdnjs (fallback).");
-        } else {
-          console.error("[DOCX] Falha ao carregar a UMD (fallback).");
-        }
-      };
-      document.head.appendChild(s);
+      console.warn("[DOCX] Biblioteca nao encontrada. Verifique o arquivo local.");
     })();
   </script>
   <script>
@@ -54,7 +44,7 @@
       }
 
       var s = document.createElement("script");
-      s.src = "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";
+      s.src = "vendor/tesseract/tesseract.min.js";
       s.onload = function() {
         if (window.Tesseract) {
           if (!window.__tesseractLogged) {
@@ -64,9 +54,9 @@
           if (window.__resolveTesseract) window.__resolveTesseract(true);
           return;
         }
-        console.warn("[OCR] jsDelivr falhou. Tentando unpkg...");
+        console.warn("[OCR] Falha ao carregar Tesseract.js. Verifique os arquivos locais.");
         var f = document.createElement("script");
-        f.src = "https://unpkg.com/tesseract.js@5/dist/tesseract.min.js";
+        f.src = "vendor/tesseract/tesseract.min.js";
         f.onload = function() {
           if (window.Tesseract) {
             if (!window.__tesseractLogged) {
@@ -86,9 +76,9 @@
         document.head.appendChild(f);
       };
       s.onerror = function() {
-        console.warn("[OCR] Falha ao carregar Tesseract.js (jsDelivr). Tentando unpkg...");
+        console.warn("[OCR] Falha ao carregar Tesseract.js. Verifique os arquivos locais.");
         var f = document.createElement("script");
-        f.src = "https://unpkg.com/tesseract.js@5/dist/tesseract.min.js";
+        f.src = "vendor/tesseract/tesseract.min.js";
         f.onload = function() {
           if (window.Tesseract) {
             if (!window.__tesseractLogged) {
@@ -302,8 +292,7 @@
   </div>
 
   <!-- PDF e OCR -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+  <script src="vendor/pdf.min.js"></script>
 
   
   <!-- Seu script principal -->
