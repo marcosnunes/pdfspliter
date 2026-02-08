@@ -722,11 +722,13 @@ function hasCoordinateSignal(text) {
   if (/(\bE(?:ste)?\b|\bLeste\b|\bEast\b)\s*[:=]?\s*\d{5,7}[.,]?\d*/i.test(t)) return true;
   if (/(\bN(?:orte)?\b|\bNorth\b)\s*[:=]?\s*\d{6,8}[.,]?\d*/i.test(t)) return true;
 
-  // Lat/Lon decimal
-  if (/-?\d{1,2}[.,]\d{4,}\s*[;\s,]+\s*-?\d{1,3}[.,]\d{4,}/.test(t)) return true;
+  // Lat/Lon decimal with labels or hemisphere
+  if (/(lat(?:itude)?|lon(?:gitude)?)[^\d-]*-?\d{1,2}[.,]\d{4,}/i.test(t)) return true;
+  if (/(lat(?:itude)?|lon(?:gitude)?)[^\d-]*-?\d{1,3}[.,]\d{4,}/i.test(t)) return true;
+  if (/(\bS\b|\bN\b|\bW\b|\bE\b)\s*\d{1,2}[.,]\d{4,}\s*(\bS\b|\bN\b|\bW\b|\bE\b)?/i.test(t)) return true;
 
   // Lat/Lon DMS
-  if (/\d{1,3}\s*°\s*\d{1,2}\s*['’]\s*\d{1,2}\s*["”]/.test(t)) return true;
+  if (/\d{1,3}\s*°\s*\d{1,2}\s*['’]\s*\d{1,2}\s*["”]\s*[NSEW]?/i.test(t)) return true;
 
   // Azimuth/Distance narrative
   if (/(azimute|rumo|dist[aâ]ncia)\s*[:=]?\s*\d+/i.test(t)) return true;
