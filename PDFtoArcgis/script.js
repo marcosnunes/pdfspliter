@@ -142,6 +142,10 @@ function extractJSONFromResponse(rawResponse) {
   
   // Padrão 1: JSON direto (esperado)
   if (str.startsWith('{') || str.startsWith('[')) {
+    const jsonMatches = str.match(/(\{[\s\S]*?\}|\[[\s\S]*?\])/g);
+    if (jsonMatches && jsonMatches.length > 0) {
+      return jsonMatches[0].trim();
+    }
     return str;
   }
   
