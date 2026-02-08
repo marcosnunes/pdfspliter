@@ -137,31 +137,75 @@ function mergeLatLonFromChunks(chunksResults) {
 // Extrai JSON de respostas com markdown ou texto extra.
 function extractJSONFromResponse(rawResponse) {
   if (!rawResponse) return null;
-  
+
   const str = String(rawResponse).trim();
-  
+
+  const extractFirstJsonBlock = (text) => {
+    const startIndex = text.search(/[\[{]/);
+    if (startIndex === -1) return null;
+
+    const stack = [];
+    let inString = false;
+    let escaped = false;
+
+    for (let i = startIndex; i < text.length; i++) {
+      const ch = text[i];
+
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+          continue;
+        }
+        if (ch === '\\') {
+          escaped = true;
+          continue;
+        }
+        if (ch === '"') {
+          inString = false;
+        }
+        continue;
+      }
+
+      if (ch === '"') {
+        inString = true;
+        continue;
+      }
+
+      if (ch === '{' || ch === '[') {
+        stack.push(ch);
+        continue;
+      }
+
+      if (ch === '}' || ch === ']') {
+        if (stack.length === 0) return null;
+        stack.pop();
+        if (stack.length === 0) {
+          return text.slice(startIndex, i + 1).trim();
+        }
+      }
+    }
+
+    return null;
+  };
+
   // Padrão 1: JSON direto (esperado)
   if (str.startsWith('{') || str.startsWith('[')) {
-    const jsonMatches = str.match(/(\{[\s\S]*?\}|\[[\s\S]*?\])/g);
-    if (jsonMatches && jsonMatches.length > 0) {
-      return jsonMatches[0].trim();
-    }
-    return str;
+    const direct = extractFirstJsonBlock(str);
+    return direct || str;
   }
-  
+
   // Padrão 2: JSON dentro de markdown (```json ... ```)
   const mdMatch = str.match(/```json\s*([\s\S]*?)\s*```/);
   if (mdMatch && mdMatch[1]) {
-    return mdMatch[1].trim();
+    const mdBlock = extractFirstJsonBlock(mdMatch[1].trim());
+    if (mdBlock) return mdBlock;
   }
-  
+
   // Padrão 3: JSON após texto explicativo
   // Procura pelo primeiro bloco JSON para evitar respostas com multiplos JSONs
-  const jsonMatches = str.match(/(\{[\s\S]*?\}|\[[\s\S]*?\])/g);
-  if (jsonMatches && jsonMatches.length > 0) {
-    return jsonMatches[0].trim();
-  }
-  
+  const extracted = extractFirstJsonBlock(str);
+  if (extracted) return extracted;
+
   console.warn('[PDFtoArcgis] ⚠️ Não conseguiu extrair JSON da resposta:', str.substring(0, 100));
   return null;
 }
