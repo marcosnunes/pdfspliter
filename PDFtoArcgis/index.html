@@ -45,17 +45,22 @@
       }
 
       if (window.Tesseract) {
-        console.log("[OCR] Tesseract.js carregado.");
+        if (!window.__tesseractLogged) {
+          console.log("[OCR] Tesseract.js carregado.");
+          window.__tesseractLogged = true;
+        }
         if (window.__resolveTesseract) window.__resolveTesseract(true);
         return;
       }
 
-      console.warn("[OCR] Tesseract.js nao carregado. Tentando jsDelivr...");
       var s = document.createElement("script");
       s.src = "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";
       s.onload = function() {
         if (window.Tesseract) {
-          console.log("[OCR] Tesseract.js carregado via jsDelivr.");
+          if (!window.__tesseractLogged) {
+            console.log("[OCR] Tesseract.js carregado via jsDelivr.");
+            window.__tesseractLogged = true;
+          }
           if (window.__resolveTesseract) window.__resolveTesseract(true);
           return;
         }
@@ -64,7 +69,10 @@
         f.src = "https://unpkg.com/tesseract.js@5/dist/tesseract.min.js";
         f.onload = function() {
           if (window.Tesseract) {
-            console.log("[OCR] Tesseract.js carregado via unpkg.");
+            if (!window.__tesseractLogged) {
+              console.log("[OCR] Tesseract.js carregado via unpkg.");
+              window.__tesseractLogged = true;
+            }
             if (window.__resolveTesseract) window.__resolveTesseract(true);
           } else {
             console.error("[OCR] Falha ao carregar Tesseract.js.");
@@ -83,7 +91,10 @@
         f.src = "https://unpkg.com/tesseract.js@5/dist/tesseract.min.js";
         f.onload = function() {
           if (window.Tesseract) {
-            console.log("[OCR] Tesseract.js carregado via unpkg.");
+            if (!window.__tesseractLogged) {
+              console.log("[OCR] Tesseract.js carregado via unpkg.");
+              window.__tesseractLogged = true;
+            }
             if (window.__resolveTesseract) window.__resolveTesseract(true);
           } else {
             console.error("[OCR] Falha ao carregar Tesseract.js.");
