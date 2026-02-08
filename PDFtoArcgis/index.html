@@ -48,19 +48,19 @@
       s.onload = function() {
         if (window.Tesseract) {
           if (!window.__tesseractLogged) {
-            console.log("[OCR] Tesseract.js carregado via jsDelivr.");
+            console.log("[OCR] Tesseract.js carregado (local).");
             window.__tesseractLogged = true;
           }
           if (window.__resolveTesseract) window.__resolveTesseract(true);
           return;
         }
-        console.warn("[OCR] Falha ao carregar Tesseract.js. Verifique os arquivos locais.");
+        console.warn("[OCR] Falha ao carregar Tesseract.js local. Verifique os arquivos locais.");
         var f = document.createElement("script");
         f.src = "vendor/tesseract/tesseract.min.js";
         f.onload = function() {
           if (window.Tesseract) {
             if (!window.__tesseractLogged) {
-              console.log("[OCR] Tesseract.js carregado via unpkg.");
+              console.log("[OCR] Tesseract.js carregado (local).");
               window.__tesseractLogged = true;
             }
             if (window.__resolveTesseract) window.__resolveTesseract(true);
@@ -76,13 +76,13 @@
         document.head.appendChild(f);
       };
       s.onerror = function() {
-        console.warn("[OCR] Falha ao carregar Tesseract.js. Verifique os arquivos locais.");
+        console.warn("[OCR] Falha ao carregar Tesseract.js local. Verifique os arquivos locais.");
         var f = document.createElement("script");
         f.src = "vendor/tesseract/tesseract.min.js";
         f.onload = function() {
           if (window.Tesseract) {
             if (!window.__tesseractLogged) {
-              console.log("[OCR] Tesseract.js carregado via unpkg.");
+              console.log("[OCR] Tesseract.js carregado (local).");
               window.__tesseractLogged = true;
             }
             if (window.__resolveTesseract) window.__resolveTesseract(true);

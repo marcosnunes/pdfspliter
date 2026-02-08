@@ -73,6 +73,9 @@ function repairJsonCoordinates(jsonStr) {
 
   // Corrigir aspas duplas extras em azimute_dms (ex: 133°15'52"")
   jsonStr = jsonStr.replace(/("azimute_dms"\s*:\s*"[^"]*)""/g, '$1\\"');
+
+  // Corrigir respostas com "vertices" repetido ("vertices":[...],"vertices":[...])
+  jsonStr = jsonStr.replace(/\],\s*"vertices"\s*:\s*\[/g, ',');
   
   return jsonStr;
 }
@@ -1878,6 +1881,12 @@ fileInput.addEventListener("change", async (event) => {
         } else {
           if (typeof displayLogMessage === 'function') {
             displayLogMessage(`[PDFtoArcgis][LogUI] ✓ Página ${i}: texto ok (${safeText.length} chars)`);
+          }
+        }
+        if (safeText && !hasCoordinateSignal(safeText)) {
+          safeText = "";
+          if (typeof displayLogMessage === 'function') {
+            displayLogMessage(`[PDFtoArcgis][LogUI] ℹ️ Página ${i}: sem padrao de coordenadas`);
           }
         }
         if (!safeText.trim()) emptyPages++;
