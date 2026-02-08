@@ -1,31 +1,4 @@
 // =============================
-// PDFtoArcgis - ETL SIMPLIFICADO (v2.4.1)
-// =============================
-// 
-// REFATORAÇÃO ETL: Fluxo otimizado focado em IA como única fonte de transformação
-// 
-// [E] EXTRACTION: PDF.js extrai texto bruto de todas as páginas
-// [T] TRANSFORMATION: IA (Groq llama-3.1-8b) converte texto → JSON estruturado
-// [L] LOAD: Validação topológica + geração de shapefiles/CSV
-//
-// MUDANÇAS IMPLEMENTADAS (v2.4.1):
-// - ❌ REMOVIDO: extractRelevantLinesForAI() - regex pré-filtragem
-// - ❌ REMOVIDO: extractAzimuthDistanceFromText() - extração regex de azimutes/distâncias
-// - ✅ SIMPLIFICADO: Prompt da IA (minimalista, apenas JSON)
-// - ✅ CENTRALIZADO: IA retorna TUDO (coordenadas, azimutes, distâncias) em um JSON
-// - ✅ MELHORADO: Tratamento robusto de respostas com markdown/texto explicativo
-// - ✅ BENEFÍCIOS: Menos linhas de código, melhor manutenibilidade, menos erros
-//
-// v2.4.1 FIXES:
-// - Adicionada função extractJSONFromResponse() para lidar com markdown
-// - Melhorado prompt: Agora em inglês, mais imperativo ("Return ONLY JSON")
-// - Adicionado retry com extração de JSON dentro de texto/markdown
-// - Validação de resposta ANTES de tentar JSON.parse()
-//
-// Fluxo Anterior (v2.3): PDF → Regex (2 níveis) → IA → Regex (normalização)
-// Fluxo Novo (v2.4.1):  PDF → IA (JSON completo + Markdown handling) → Validação
-//
-// =============================
 // Suporte à API OpenAI GPT-4 Turbo
 // =============================
 let openaiApiKey = '';
@@ -72,13 +45,22 @@ async function callOpenAIGPT4Turbo(prompt, retryCount = 0) {
   return data;
 }
 
-// ⚠️ DEPRECATED: extractRelevantLinesForAI() foi DESABILITADO
-// ETL SIMPLIFICADO: Enviar texto COMPLETO à IA (sem pré-filtragem com regex)
-// MOTIVO: A IA é capaz de filtrar padrões relevantes melhor que regex heurísticos
-// BENEFÍCIO: Reduz redundância, melhora taxa de sucesso para formatos variados
-// 
-// function extractRelevantLinesForAI(fullText) {
-// }
+function extractRelevantLinesForAI(fullText) {
+  const lines = String(fullText || "").split(/\r?\n/);
+  // Ultra-agressivo: apenas linhas que contenham vértice ID + coordenadas E/N
+  const vertexPattern = /vértice\s+[a-z]?\d+|^[a-z]?\d+[\s\.,]*$/i;
+  const coordPattern = /\b[EN]\b[\s\.,0-9]*m?\b|^\d{4,}\.\d{2,}|^\d+[\s\.,]\d{2,}m?$/;
+  const keep = [];
+  for (const ln of lines) {
+    const line = ln.trim();
+    if (!line || line.length < 3) continue;
+    // Manter linha se tem "vértice" + ID, ou if é puramente coordenada numérica
+    if ((vertexPattern.test(line) || coordPattern.test(line)) && /\d/.test(line)) {
+      keep.push(line);
+    }
+  }
+  return keep.join("\n");
+}
 
 function splitTextForAI(text, maxChars = 6000) {
   const chunks = [];
@@ -104,28 +86,11 @@ function repairJsonCoordinates(jsonStr) {
   if (!jsonStr.endsWith(']') && !jsonStr.endsWith('}')) {
     if (jsonStr.includes('"vertices"')) jsonStr += ']}';
   }
-  
-  // === LÓGICA: Normalizar números brasileiros CORRETAMENTE ===
-  // Padrão: 7.186.708,425 (com ponto de milhar + vírgula decimal)
-  // Precisamos detectar:
-  // 1. Se temos uma sequência tipo XXX.XXX.XXX,XXX (3 dígitos . 3 dígitos . 3 dígitos , decimais)
-  // 2. Isso é número brasileiro: remover . e trocar , por .
-  
-  // Padrão: números com MÚLTIPLOS pontos (ponto de milhar) e vírgula final (decimal)
-  // Exemplo: "7.186.708,425" ou "693.736,178"
-  jsonStr = jsonStr.replace(/(\d{1,3})\.(\d{3})\.(\d{3}),(\d+)/g, (match, g1, g2, g3, g4) => {
-    // XXX.XXX.XXX,DDD → XXXXXXXXX.DDD (5-10 dígitos inteiros)
-    return g1 + g2 + g3 + '.' + g4;
+  // Normalizar números com pontos como separadores de milhares (7.330.34207 -> 7330.34207)
+  jsonStr = jsonStr.replace(/(\"(?:norte|north|este|east)\"\s*:\s*)(\d{1,3}\.\d{3}\.\d+)/g, (match, prefix, num) => {
+    const clean = num.replace(/\./g, '');
+    return prefix + clean;
   });
-  
-  // Padrão: 2 ou mais dígitos com ponto separando, terminando em vírgula
-  // Exemplo: "693.736,178" → "693736.178"
-  jsonStr = jsonStr.replace(/(\d{3})\.(\d{3}),(\d+)/g, '$1$2.$3');
-  
-  // Padrão: qualquer número com vírgula decimal dentro de JSON
-  // Se for contexto de número (entre : e ,/}), converter vírgula por ponto
-  jsonStr = jsonStr.replace(/("(?:norte|norte|este|east|north|azimute|distancia)"\s*:\s*)(\d+),(\d+)/g, '$1$2.$3');
-  
   return jsonStr;
 }
 
@@ -138,21 +103,11 @@ function mergeVerticesFromChunks(chunksResults) {
       const id = String(v.id || "").trim();
       let east = v.este ?? v.east;
       let north = v.norte ?? v.north;
-      
-      // Normalizar números brasileiros CORRETAMENTE:
-      // Padrão: 7.186.708,425 → 7186708.425
-      // Ou: 693.736,178 → 693736.178
-      if (typeof east === 'string') {
-        // Remover todos os pontos, depois trocar vírgula por ponto
-        east = east.replace(/\./g, '').replace(/,/g, '.');
-      }
-      if (typeof north === 'string') {
-        north = north.replace(/\./g, '').replace(/,/g, '.');
-      }
-      
+      // Normalizar números com pontos
+      if (typeof east === 'string') east = east.replace(/\./g, '');
+      if (typeof north === 'string') north = north.replace(/\./g, '');
       east = Number(east);
       north = Number(north);
-      
       const key = `${id}|${east}|${north}`;
       if (!Number.isFinite(east) || !Number.isFinite(north)) continue;
       if (!seen.has(key)) {
@@ -164,37 +119,8 @@ function mergeVerticesFromChunks(chunksResults) {
   return merged;
 }
 
-// =============================
-// Função Auxiliar: Extrair JSON de Markdown ou Texto
-// =============================
-function extractJSONFromResponse(rawResponse) {
-  if (!rawResponse) return null;
-  
-  const str = String(rawResponse).trim();
-  
-  // Padrão 1: JSON direto (esperado)
-  if (str.startsWith('{') || str.startsWith('[')) {
-    return str;
-  }
-  
-  // Padrão 2: JSON dentro de markdown (```json ... ```)
-  const mdMatch = str.match(/```json\s*([\s\S]*?)\s*```/);
-  if (mdMatch && mdMatch[1]) {
-    return mdMatch[1].trim();
-  }
-  
-  // Padrão 3: JSON após texto explicativo
-  // Procura por { ... } ou [ ... ] em qualquer posição
-  const jsonMatch = str.match(/(\{[\s\S]*\}|\[[\s\S]*\])/);
-  if (jsonMatch && jsonMatch[1]) {
-    return jsonMatch[1].trim();
-  }
-  
-  console.warn('[PDFtoArcgis] ⚠️ Não conseguiu extrair JSON da resposta:', str.substring(0, 100));
-  return null;
-}
-
-// =============================
+// === [WebLLM: LLM no navegador via CDN] ===
+let webllmEngine = null;
 async function ensureWebLLM(model = "phi-2") {
   if (window.webllm && webllmEngine) return webllmEngine;
   // Carrega o script WebLLM se necessário
@@ -213,120 +139,14 @@ async function ensureWebLLM(model = "phi-2") {
   return webllmEngine;
 }
 
-// ✅ v2.5 FALLBACK: Extração de vértices usando REGEX puro do texto original
-// Usado quando JSON da IA falha ou é truncado
-function extractVerticesFromTextRegex(pageText) {
-  const vertices = [];
-  
-  // Padrão: Código do vértice (V1, P1, EBC...) seguido de coordenadas
-  // E/Este: ~500k-600k, N/Norte: ~7300k-7350k
-  // Azimute em DMS ou decimal, distância em metros
-  
-  // Regex para padrão: V123 | E 519000.123 N 7330000.456 | azi 123°45'67" | dist 123.45
-  const coordPattern = /([VPE]\s*\d+(?:\s+[MV])?|EBC\s+[VM]\s*\d+)\s+.*?E(?:ste)?\s*[:=]?\s*(\d{6,}[.,]\d{1,3})\s+.*?N(?:orte)?\s*[:=]?\s*(\d{7,}[.,]\d{1,3})/gi;
-  
-  let match;
-  const processedIds = new Set(); // evitar duplicatas
-  
-  while ((match = coordPattern.exec(pageText)) !== null) {
-    const id = (match[1] || 'V' + vertices.length).trim().replace(/\\s+/g, '');
-    
-    // Skip if already processed (duplicates)
-    if (processedIds.has(id)) continue;
-    processedIds.add(id);
-    
-    // Converter formato brasileiro para padrão JS
-    let este = match[2].replace(/\\./g, '').replace(',', '.');
-    let norte = match[3].replace(/\\./g, '').replace(',', '.');
-    
-    este = parseFloat(este);
-    norte = parseFloat(norte);
-    
-    // Validar ranges
-    if (este >= 150000 && este <= 900000 && norte >= 6900000 && norte <= 10100000) {
-      // ✅ Corrigir truncamento de Norte se necessário
-      if (norte > 730000 && norte < 760000) {
-        norte = parseFloat('7' + norte.toString());
-      }
-      
-      vertices.push({
-        id: id,
-        este: Math.round(este * 1000) / 1000, // 3 decimals
-        norte: Math.round(norte * 1000) / 1000,
-        azimute_dms: '',
-        azimute: 0,
-        distancia: 0
-      });
-    }
-  }
-  
-  console.log(`[PDFtoArcgis] Regex extraction found ${vertices.length} vertices`);
-  return vertices.length > 0 ? vertices : null;
-}
 
-// 🔧 Corrigir typos em ângulos DMS (ex: "B5º" → "85º", "B5°00'02\"" → "85°00'02\"")
-function fixDMSTypos(vertex) {
-  if (!vertex.azimute_dms) return vertex;
-  
-  let dms = String(vertex.azimute_dms);
-  
-  // Substituir letra B ou O por 0, I por 1, S por 5, etc.
-  dms = dms.replace(/[BOl]/gi, (match) => {
-    const map = { 'B': '8', 'O': '0', 'l': '1', 'S': '5', 'I': '1' };
-    return map[match.toUpperCase()] || match;
-  });
-  
-  // Verificar se o primeiro número é válido (0-359)
-  const degreeMatch = dms.match(/^(\d+)/);
-  if (degreeMatch) {
-    const deg = parseInt(degreeMatch[1]);
-    if (deg > 360) {
-      // Truncar se > 360 (ex: "3605" → "5" ou "36505" → "5")
-      const degStr = String(deg);
-      const corrected = parseInt(degStr.substring(degStr.length - 2)); // Últimos 2 dígitos
-      if (corrected <= 360) {
-        dms = dms.replace(/^(\d+)/, corrected.toString());
-      }
-    }
-  }
-  
-  vertex.azimute_dms = dms;
-  return vertex;
-}
-
-// ✅ v2.5: Detecta e corrige coordenadas truncadas (ex: N=733036 → N=7330036)
-function detectAndFixTruncatedCoordinates(vertex) {
-  const n = parseFloat(vertex.norte || 0);
-  const e = parseFloat(vertex.este || 0);
-  
-  // Se N tem 7 dígitos E começa com 73/74/75 (esperado), faltam zero no início
-  if (n > 730000 && n < 760000 && e >= 500000 && e <= 600000) {
-    vertex.norte = parseFloat('7' + n.toString());
-    console.warn(`[PDFtoArcgis] 🔧 N truncado corrigido: → ${vertex.norte}`);
-  }
-  
-  return vertex;
-}
-
-// Função IA para processar página por página - v2.5 otimizado
+// Função IA para processar página por página
 async function deducePolygonVerticesPerPage(pagesText) {
-  const smallPrompt = (text) => `You are a cadastral document parser for Brazilian real estate (SIRGAS2000/UTM).
-
-TASK: Extract ALL vertices. RETURN: ONLY valid JSON. No markdown. No text before/after.
-
-JSON: {"vertices":[{"id":"V1","este":693736.178,"norte":7186708.425,"azimute_dms":"133°15'52\\"","azimute":133.2644,"distancia":24.86}]}
-
-RULES:
-1. Este: 150k-900k, Norte: 6.9M-10.1M (omit invalid)
-2. Fix typos: "B5º" -> numeric only
-3. Max 3 decimals, return {"vertices":[]} if empty
-
-Text (first 4500 chars):
-${text.substring(0, 4500)}`;
+  const smallPrompt = (text) => `Instrução: Extraia APENAS os vértices (ID, Este, Norte) do texto abaixo e retorne um JSON válido. Sem explicações.\n\nFormato:\n{\n  "vertices": [\n    {"id": "P1", "este": 123456.789, "norte": 7123456.789}\n  ]\n}\n\nTexto:\n${text}`;
 
   const results = [];
   const totalPages = pagesText.length;
-  let baseDelay = 5000; // ⬆️ Aumentado de 3s → 5s para evitar 429 rate limit
+  let baseDelay = 3000; // Delay padrão entre páginas (3 segundos - evita 429)
   
   if (typeof displayLogMessage === 'function') {
     displayLogMessage(`[PDFtoArcgis][LogUI] 📄 Processando ${totalPages} página(s) individualmente...`);
@@ -343,16 +163,13 @@ ${text.substring(0, 4500)}`;
       displayLogMessage(`[PDFtoArcgis][LogUI] ⏳ Processando página ${i + 1} de ${totalPages}...`);
     }
     
-    // ETL SIMPLIFICADO: Enviar texto COMPLETO à IA (sem pré-filtragem com regex)
-    // Benefício: IA entende contexto melhor que regex para formatos variados
-    const textToSend = pageText;
-    
-    if (textToSend.trim().length < 10) {
-      console.log(`[PDFtoArcgis] Página ${i + 1}: sem conteúdo para processar`);
+    const filtered = extractRelevantLinesForAI(pageText);
+    if (filtered.length < 10) {
+      console.log(`[PDFtoArcgis] Página ${i + 1}: sem coordenadas detectadas`);
       continue;
     }
     
-    const prompt = smallPrompt(textToSend);
+    const prompt = smallPrompt(filtered);
     console.log(`[PDFtoArcgis][LOG IA][PROMPT][PAGE ${i + 1}/${totalPages}]`, prompt.substring(0, 200) + '...');
     
     // Aguardar antes de fazer requisição (exceto primeira página)
@@ -372,10 +189,6 @@ ${text.substring(0, 4500)}`;
     let content = r?.choices?.[0]?.message?.content || "";
     console.log(`[PDFtoArcgis][LOG IA][RAW][PAGE ${i + 1}/${totalPages}]`, content);
     
-    if (typeof displayLogMessage === 'function') {
-      displayLogMessage(`[PDFtoArcgis][LogUI] ⏳ Página ${i + 1}: processando resposta da IA...`);
-    }
-    
     if (!content) {
       console.warn(`[PDFtoArcgis] Página ${i + 1} sem resposta`);
       if (typeof displayLogMessage === 'function') {
@@ -384,144 +197,20 @@ ${text.substring(0, 4500)}`;
       continue;
     }
     
-    // ETL MELHORIA: Extrair JSON de dentro de markdown ou texto explicativo
-    const jsonExtracted = extractJSONFromResponse(content);
-    if (!jsonExtracted) {
-      console.warn(`[PDFtoArcgis] Página ${i + 1}: Não conseguiu extrair JSON da resposta`);
-      if (typeof displayLogMessage === 'function') {
-        displayLogMessage(`[PDFtoArcgis][LogUI] ⏳ Página ${i + 1}: tentando recuperação alternativa...`);
-      }
-      continue;
-    }
-    
-    if (typeof displayLogMessage === 'function') {
-      displayLogMessage(`[PDFtoArcgis][LogUI] ⏳ Página ${i + 1}: validando coordenadas extraídas...`);
-    }
-    
-    content = repairJsonCoordinates(jsonExtracted);
-    
-    // 🔧 PRE-PARSE: Normalizando formato de coordenadas comuns antes de JSON.parse()
-    // Padrão 1: Coordenadas com ponto como separador decimal (518.881221 → 518881.221)
-    content = content.replace(/"este"\s*:\s*(\d+\.\d+),/g, (match, num) => {
-      const val = parseFloat(num);
-      // Se este é 519.xxx (formato de 5 dígitos com ponto), converter para 519xxx (remover ponto)
-      if (val > 0 && val < 1000 && String(num).split('.')[0].length === 3) {
-        // 519.29996 → remove o ponto → 51929996, mas precisa ser 519299.96
-        // Na verdade, se foi extraído como 519.29996, significa que foi dividido por 1000
-        // Precisa multiplicar por 1000: 519.29996 * 1000 = 519299.96
-        const normalized = val * 1000;
-        return `"este":${normalized},`;
-      }
-      return match;
-    });
-    
-    // Padrão 2: Norte com dígitos concatenados (73313338236 → 7331333.8236)
-    content = content.replace(/"norte"\s*:\s*(\d+),/g, (match, num) => {
-      const val = parseInt(num);
-      const nStr = String(val);
-      
-      // Se norte tem > 10 dígitos, é concatenado (ex: 73313338236 tem 11 dígitos)
-      if (nStr.length > 10) {
-        // Primeira abordagem: 7 dígitos + resto como decimal
-        const prefix = nStr.substring(0, 7);
-        const decimal = nStr.substring(7);
-        return `"norte":${prefix}.${decimal},`;
-      }
-      
-      // Se norte tem exatamente 10 dígitos, pode ser formato compactado
-      if (nStr.length === 10) {
-        // Verificar se começa com 73 e tem padrão de coordenada sem decimal
-        if (nStr.startsWith('73')) {
-          // 7331352001 → 7331352.001
-          const prefix = nStr.substring(0, 7);
-          const decimal = nStr.substring(7);
-          return `"norte":${prefix}.${decimal},`;
-        }
-      }
-      
-      return match;
-    });
-    
+    content = repairJsonCoordinates(content);
     try {
       const parsed = JSON.parse(content);
       
       // Validar coordenadas UTM (evitar dados fake/teste)
       if (parsed?.vertices && Array.isArray(parsed.vertices)) {
         const validVertices = parsed.vertices.filter(v => {
-          // 🔧 NORMALIZACAO: Detectar e corrigir formato de coordenadas malformadas
-          let e = parseFloat(v.este || v.east || 0);
-          let n = parseFloat(v.norte || v.north || 0);
-          
-          // Padrão 1: Coordenadas com período como separador decimal (518.881221 → 518881.221)
-          // Detectar se é formato de milhares com ponto decimal errado
-          if (e > 0 && e < 1000 && !isNaN(e)) {
-            // Verificar se este valor é muito pequeno para UTM
-            // Se temos este:518.xyz, converter para 518xxxxx (remover ponto, é milhar)
-            const eStr = String(e);
-            if (eStr.includes('.') && eStr.split('.')[0].length <= 3) {
-              // Remover ponto: 519.29996 → 51929996 (é o número correto, sem divisão)
-              e = parseFloat(eStr.replace('.', ''));
-            }
-          }
-          
-          // Padrão 2: Norte com dígitos concatenados (7331352001 → 7331352.001)
-          // Detectar se norte tem mais de 10 dígitos (impossível em UTM)
-          if (n > 9999999999) {
-            const nStr = String(Math.floor(n));
-            if (nStr.length > 10) {
-              // Quebrar em 7 dígitos + resto (e.g., 7331352001 → 7331352 + 001)
-              const prefix = nStr.substring(0, 7);
-              const decimal = nStr.substring(7);
-              n = parseFloat(prefix + '.' + decimal);
-            }
-          }
-          
-          // Padrão 3: Coordenadas com período como milhar (como em pt-BR)
-          // Este:519.29996 (com vírgula) deveria ser 519029.96 ou 519299.6
-          if (e > 100 && e < 1000 && e % 1 !== 0) {
-            // Verificar se remove ponto fica razoável
-            const eWithoutDot = parseFloat(String(e).replace('.', ''));
-            if (eWithoutDot >= 150000 && eWithoutDot <= 900000) {
-              e = eWithoutDot;
-            }
-          }
-          
-          // Padrão 4: Norte truncado por falta de dígito
-          // Detectar se norte está no intervalo 730k-760k (típico de truncamento)
-          // Solução: Inserir '7' no meio, não no início
-          // Ex: 733036 → 7330036 (7 vai entre 73 e 3036)
-          if (n > 730000 && n < 760000 && e >= 150000 && e <= 900000) {
-            const nStr = String(Math.floor(n));
-            // Padrão típico: 733036 tem 6 dígitos, precisa de 7 dígitos
-            // Inserir '0' após primeiro dígito: 7|330036 ou inserir '7' após 73: 733|0036
-            // Tentativa 1: 733036 → 7330036 (inserir um '0' no meio)
-            let correctedN = parseFloat('7' + nStr.substring(1));
-            
-            // Validar se fica no intervalo esperado
-            if (correctedN >= 6900000 && correctedN <= 10100000) {
-              n = correctedN;
-              console.log(`[PDFtoArcgis] 🔧 N truncado corrigido: ${nStr} → ${correctedN}`);
-            }
-          }
-          
-          // Atualizar valores no vertex
-          v.este = e;
-          v.norte = n;
-          
-          // 🔧 Corrigir typos em DMS angles
-          if (v.azimute_dms) {
-            v = fixDMSTypos(v);
-          }
-          
-          // Coordenadas UTM válidas para Brasil (todas as zonas 19-25)
-          // ZONA 19: 150k-300k (Espírito Santo, SP)
-          // ZONA 23: 400k-600k (RJ, SP, PR)
-          // ZONA 25: 700k-900k (SC, RS)
-          const isValidE = e >= 150000 && e <= 900000;
-          const isValidN = n >= 6900000 && n <= 10100000;
-          
+          const e = parseFloat(v.este || v.east || 0);
+          const n = parseFloat(v.norte || v.north || 0);
+          // Coordenadas UTM válidas para Brasil: E: 160000-840000, N: 7000000-10000000
+          const isValidE = e >= 160000 && e <= 840000;
+          const isValidN = n >= 7000000 && n <= 10000000;
           if (!isValidE || !isValidN) {
-            console.warn(`[PDFtoArcgis] ⚠️ Coordenada inválida (após normalização): ${v.id || '?'} E=${e} N=${n}`);
+            console.warn(`[PDFtoArcgis] ⚠️ Coordenada inválida detectada: ${v.id || '?'} E=${e} N=${n}`);
           }
           return isValidE && isValidN;
         });
@@ -539,14 +228,9 @@ ${text.substring(0, 4500)}`;
       if (parsed?.vertices?.length > 0) {
         results.push(parsed);
         const vcount = parsed.vertices.length;
-        
-        // Se houver azimutes/distâncias, logar para validação
-        const withMeasures = parsed.vertices.filter(v => v.azimute !== undefined || v.distancia !== undefined);
-        const measureInfo = withMeasures.length > 0 ? ` (${withMeasures.length} com medidas)` : "";
-        
-        console.log(`[PDFtoArcgis] Página ${i + 1}: ${vcount} vértices extraídos${measureInfo}`);
+        console.log(`[PDFtoArcgis] Página ${i + 1}: ${vcount} vértices extraídos`);
         if (typeof displayLogMessage === 'function') {
-          displayLogMessage(`[PDFtoArcgis][LogUI] ✅ Página ${i + 1}: ${vcount} coordenada(s)${measureInfo}`);
+          displayLogMessage(`[PDFtoArcgis][LogUI] ✅ Página ${i + 1}: ${vcount} coordenada(s) obtida(s) pela IA`);
         }
       } else {
         console.log(`[PDFtoArcgis] Página ${i + 1}: nenhum vértice válido após filtros`);
@@ -556,59 +240,15 @@ ${text.substring(0, 4500)}`;
       }
     } catch (e) {
       console.error('[PDFtoArcgis][PARSE ERROR][PAGE]', e, content);
-      
-      // Tentar novamente com extração mais agressiva
-      console.log(`[PDFtoArcgis] 🔄 Tentando extração alternativa para página ${i + 1}...`);
-      const retryJson = extractJSONFromResponse(content);
-      if (retryJson) {
-        try {
-          let retryContent = repairJsonCoordinates(retryJson);
-          
-          // Aplicar novamente normalização PRE-PARSE
-          retryContent = retryContent.replace(/"este"\s*:\s*(\d+\.\d+),/g, (match, num) => {
-            const val = parseFloat(num);
-            if (val > 0 && val < 1000) {
-              const normalized = parseFloat(String(num).replace('.', '')) / 1000;
-              return `"este":${normalized},`;
-            }
-            return match;
-          });
-          
-          retryContent = retryContent.replace(/"norte"\s*:\s*(\d+),/g, (match, num) => {
-            const val = parseInt(num);
-            if (val > 9999999999) {
-              const nStr = String(val);
-              if (nStr.length > 10) {
-                const prefix = nStr.substring(0, 7);
-                const decimal = nStr.substring(7);
-                return `"norte":${prefix}.${decimal},`;
-              }
-            }
-            return match;
-          });
-          
-          const retryParsed = JSON.parse(retryContent);
-          if (retryParsed?.vertices?.length > 0) {
-            results.push(retryParsed);
-            console.log(`[PDFtoArcgis] ✅ Página ${i + 1}: recuperada com sucesso (retry)`);
-            if (typeof displayLogMessage === 'function') {
-              displayLogMessage(`[PDFtoArcgis][LogUI] 🔧 Página ${i + 1}: recuperada (retry)`);
-            }
-          }
-        } catch (e2) {
-          console.error('[PDFtoArcgis][PARSE ERROR RETRY]', e2);
-        }
-      }
-      
       // Detectar se é mensagem de "sem dados" da IA
-      if (typeof content === 'string' && (content.includes('Não há') || content.includes('não há') || content.includes('no data') || content.includes('no coordinates'))) {
+      if (typeof content === 'string' && (content.includes('Não há') || content.includes('não há') || content.includes('no data'))) {
         console.log(`[PDFtoArcgis] Página ${i + 1}: sem dados de vértices (IA confirmou)`);
         if (typeof displayLogMessage === 'function') {
           displayLogMessage(`[PDFtoArcgis][LogUI] ℹ️ Página ${i + 1}: sem coordenadas detectadas pela IA`);
         }
         baseDelay = Math.min(baseDelay + 500, 5000); // Aumentar delay progressivamente até 5s
       } else {
-        // FALLBACK NÍVEL 2: Tentar recuperar JSON do conteúdo
+        // Tentar recuperar JSON do conteúdo
         const arrMatch = content.match(/\[\{[^\}]*\}.*?\]/s);
         if (arrMatch) {
           const repaired = repairJsonCoordinates('{"vertices":' + arrMatch[0] + '}');
@@ -621,39 +261,17 @@ ${text.substring(0, 4500)}`;
               displayLogMessage(`[PDFtoArcgis][LogUI] 🔧 Página ${i + 1}: ${vcount} coordenada(s) recuperada(s)`);
             }
           } catch (e2) {
-            // FALLBACK NÍVEL 3: Extração regex direta do texto original (last resort)
-            console.warn('[PDFtoArcgis] 🔴 JSON recovery failed, attempting regex extraction...');
-            const regexVertices = extractVerticesFromTextRegex(pageText);
-            if (regexVertices && regexVertices.length > 0) {
-              results.push({ vertices: regexVertices });
-              console.log(`[PDFtoArcgis] ✅ Página ${i + 1} (REGEX fallback): ${regexVertices.length} vértices`);
-              if (typeof displayLogMessage === 'function') {
-                displayLogMessage(`[PDFtoArcgis][LogUI] 🔧 Página ${i + 1}: ${regexVertices.length} coordenada(s) via regex`);
-              }
-            } else {
-              console.error('[PDFtoArcgis][PARSE ERROR][PAGE RETRY]', e2);
-              if (typeof displayLogMessage === 'function') {
-                displayLogMessage(`[PDFtoArcgis][LogUI] ❌ Página ${i + 1}: erro ao processar resposta da IA`);
-              }
+            console.error('[PDFtoArcgis][PARSE ERROR][PAGE RETRY]', e2);
+            if (typeof displayLogMessage === 'function') {
+              displayLogMessage(`[PDFtoArcgis][LogUI] ❌ Página ${i + 1}: erro ao processar resposta da IA`);
             }
-            baseDelay = Math.min(baseDelay + 1000, 8000); // Aumentar delay agressivamente
+            baseDelay = Math.min(baseDelay + 500, 5000); // Aumentar delay em caso de erro
           }
         } else {
-          // FALLBACK NÍVEL 3B: Se nem regex de JSON funcionou, tentar extração de texto puro
-          console.warn('[PDFtoArcgis] 🔴 No JSON array found, attempting text regex extraction...');
-          const regexVertices = extractVerticesFromTextRegex(pageText);
-          if (regexVertices && regexVertices.length > 0) {
-            results.push({ vertices: regexVertices });
-            console.log(`[PDFtoArcgis] ✅ Página ${i + 1} (TEXT REGEX fallback): ${regexVertices.length} vértices`);
-            if (typeof displayLogMessage === 'function') {
-              displayLogMessage(`[PDFtoArcgis][LogUI] 🔧 Página ${i + 1}: ${regexVertices.length} coordenada(s) via regex`);
-            }
-          } else {
-            if (typeof displayLogMessage === 'function') {
-              displayLogMessage(`[PDFtoArcgis][LogUI] ❌ Página ${i + 1}: IA retornou formato inválido`);
-            }
+          if (typeof displayLogMessage === 'function') {
+            displayLogMessage(`[PDFtoArcgis][LogUI] ❌ Página ${i + 1}: IA retornou formato inválido`);
           }
-          baseDelay = Math.min(baseDelay + 1000, 8000); // Aumentar delay agressivamente
+          baseDelay = Math.min(baseDelay + 500, 5000); // Aumentar delay em caso de erro
         }
       }
     }
@@ -754,8 +372,8 @@ async function deducePolygonVerticesWithAI(fullText) {
 
     if (!reply || !reply.choices?.[0]?.message?.content) {
       // Fallback 2: dividir em chunks e juntar vértices
-      // ETL: Usar texto completo em chunks (sem pre-filtering)
-      const chunks = splitTextForAI(fullText, 6000);
+      const reduced = extractRelevantLinesForAI(fullText);
+      const chunks = splitTextForAI(reduced, 6000);
       const results = [];
       if (typeof displayLogMessage === 'function') {
         displayLogMessage(`[PDFtoArcgis][LogUI] 📊 Dividindo PDF em ${chunks.length} parte(s) para análise...`);
@@ -773,16 +391,8 @@ async function deducePolygonVerticesWithAI(fullText) {
           console.warn(`[PDFtoArcgis] Chunk ${i + 1} sem resposta`);
           continue;
         }
-        
-        // ETL MELHORIA: Extrair JSON de dentro de markdown/texto explicativo
-        const jsonExtracted = extractJSONFromResponse(content);
-        if (!jsonExtracted) {
-          console.warn(`[PDFtoArcgis] Chunk ${i + 1}: Não conseguiu extrair JSON`);
-          continue;
-        }
-        
         // Reparar JSON malformado
-        content = repairJsonCoordinates(jsonExtracted);
+        content = repairJsonCoordinates(content);
         try {
           const parsed = JSON.parse(content);
           results.push(parsed);
@@ -1008,95 +618,6 @@ function openNav() {
 }
 function closeNav() { document.getElementById("mySidenav").style.width = "0"; }
 
-
-// === UI: Atualizar painel de validação topológica ===
-function updateValidationUI(topology, corrections = []) {
-  const validationBox = document.getElementById("validationBox");
-  const validationTitle = document.getElementById("validationTitle");
-  const validationErrors = document.getElementById("validationErrors");
-  const validationWarnings = document.getElementById("validationWarnings");
-  const validationSuccess = document.getElementById("validationSuccess");
-  const validationDetails = document.getElementById("validationDetails");
-  const validationActions = document.getElementById("validationActions");
-  const errorList = document.getElementById("errorList");
-  const warningList = document.getElementById("warningList");
-
-  if (!validationBox) return;
-
-  // Mostrar painel
-  validationBox.style.display = "block";
-
-  // Limpar listas
-  if (errorList) errorList.innerHTML = "";
-  if (warningList) warningList.innerHTML = "";
-
-  // Atualizar título
-  if (validationTitle) {
-    if (topology.isValid) {
-      validationTitle.innerHTML = '<i class="fas fa-check-circle" style="color:#28a745;"></i> Polígono Válido!';
-    } else {
-      validationTitle.innerHTML = '<i class="fas fa-exclamation-triangle" style="color:#dc3545;"></i> Problemas Detectados';
-    }
-  }
-
-  // Mostrar erros
-  if (topology.errors && topology.errors.length > 0 && validationErrors && errorList) {
-    validationErrors.style.display = "block";
-    topology.errors.forEach(err => {
-      const li = document.createElement("li");
-      li.textContent = err;
-      errorList.appendChild(li);
-    });
-  } else if (validationErrors) {
-    validationErrors.style.display = "none";
-  }
-
-  // Mostrar avisos
-  if (topology.warnings && topology.warnings.length > 0 && validationWarnings && warningList) {
-    validationWarnings.style.display = "block";
-    topology.warnings.forEach(warn => {
-      const li = document.createElement("li");
-      li.textContent = warn;
-      warningList.appendChild(li);
-    });
-  } else if (validationWarnings) {
-    validationWarnings.style.display = "none";
-  }
-
-  // Mostrar sucesso
-  if (topology.isValid && validationSuccess && validationDetails) {
-    validationSuccess.style.display = "block";
-    
-    const areaHa = (topology.area / 10000).toFixed(4);
-    const areaM2 = topology.area.toFixed(2);
-    const closedText = topology.closed ? "✓ Fechado" : "⚠ Não fechado";
-    
-    validationDetails.innerHTML = `
-      <strong>Área:</strong> ${areaHa} ha (${areaM2} m²)<br>
-      <strong>Fechamento:</strong> ${closedText}<br>
-      <strong>Orientação:</strong> Anti-horária (CCW) ✓<br>
-      <strong>Auto-intersecções:</strong> ${topology.hasIntersections ? '❌ Sim' : '✓ Não'}
-    `;
-    
-    if (corrections.length > 0) {
-      validationDetails.innerHTML += `<br><br><strong>Correções aplicadas:</strong><br>`;
-      corrections.forEach(corr => {
-        validationDetails.innerHTML += `• ${corr}<br>`;
-      });
-    }
-  } else if (validationSuccess) {
-    validationSuccess.style.display = "none";
-  }
-
-  // Mostrar/ocultar botão de correção
-  if (validationActions) {
-    if (!topology.isValid && topology.errors.length > 0) {
-      validationActions.style.display = "block";
-    } else {
-      validationActions.style.display = "none";
-    }
-  }
-}
 
 // --- PWA: Instalar App (com feedback visual) ---
 let deferredPrompt = null;
@@ -1397,14 +918,6 @@ function orderVerticesCCW(vertices) {
 }
 
 /**
- * Corrige automaticamente problemas comuns em polígonos
- * - Remove vértices duplicados
- * - Reordena em sequência CCW
- * - Fecha o polígono se necessário
- * - Remove vértices colineares (simplificação)
- */
-
-/**
  * Valida topologia do polígono (auto-intersecção, orientação, etc)
  */
 function validatePolygonTopology(vertices, projectionKey) {
@@ -1458,26 +971,7 @@ function validatePolygonTopology(vertices, projectionKey) {
     warnings.push("🔄 Vértices foram reordenados em sequência CCW correta");
   }
 
-  // === VALIDAÇÃO 1: Verificar vértices duplicados ===
-  const duplicates = [];
-  for (let i = 0; i < orderedVertices.length; i++) {
-    for (let j = i + 1; j < orderedVertices.length; j++) {
-      const dist = Math.hypot(
-        orderedVertices[i].north - orderedVertices[j].north,
-        orderedVertices[i].east - orderedVertices[j].east
-      );
-      if (dist < 0.01) { // Tolerância: 1cm
-        duplicates.push({ i, j, dist });
-      }
-    }
-  }
-
-  if (duplicates.length > 0) {
-    errors.push(`❌ ${duplicates.length} vértice(s) duplicado(s) detectado(s)`);
-    console.log(`[PDFtoArcgis] Duplicados:`, duplicates);
-  }
-
-  // === VALIDAÇÃO 2: Verificar se polígono está fechado ===
+  // Verificar se polígono está fechado
   const first = orderedVertices[0];
   const last = orderedVertices[orderedVertices.length - 1];
   const closureDistance = Math.hypot(
@@ -1486,24 +980,19 @@ function validatePolygonTopology(vertices, projectionKey) {
   );
 
   if (closureDistance > 5) {
-    warnings.push(`⚠️ Polígono não fechado: distância ${closureDistance.toFixed(1)}m entre primeiro e último vértice`);
+    warnings.push(`⚠️ Polígono não fechado: distância ${closureDistance.toFixed(1)}m`);
   }
 
-  // === VALIDAÇÃO 3: Verificar auto-intersecção (Bentley-Ottmann simplificado) ===
+  // Verificar auto-intersecção (detecção simples)
   let hasIntersections = false;
-  const intersectionPairs = [];
-  
-  for (let i = 0; i < orderedVertices.length - 1; i++) {
+  for (let i = 0; i < orderedVertices.length - 2; i++) {
     for (let j = i + 2; j < orderedVertices.length - 1; j++) {
-      // Não verificar arestas adjacentes
-      if (i === 0 && j === orderedVertices.length - 2) continue;
-
       const p1 = orderedVertices[i];
       const p2 = orderedVertices[i + 1];
       const p3 = orderedVertices[j];
       const p4 = orderedVertices[j + 1];
 
-      // Cross product test (detecção de intersecção)
+      // Cross product test
       const d1 = (p2.east - p1.east) * (p3.north - p1.north) - (p2.north - p1.north) * (p3.east - p1.east);
       const d2 = (p2.east - p1.east) * (p4.north - p1.north) - (p2.north - p1.north) * (p4.east - p1.east);
       const d3 = (p4.east - p3.east) * (p1.north - p3.north) - (p4.north - p3.north) * (p1.east - p3.east);
@@ -1511,18 +1000,15 @@ function validatePolygonTopology(vertices, projectionKey) {
 
       if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) &&
         ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))) {
+        errors.push(`❌ Auto-intersecção entre segmentos ${i}-${i + 1} e ${j}-${j + 1}`);
         hasIntersections = true;
-        intersectionPairs.push({ edge1: i, edge2: j });
+        break;
       }
     }
+    if (hasIntersections) break;
   }
 
-  if (hasIntersections) {
-    errors.push(`❌ Auto-intersecções detectadas em ${intersectionPairs.length} pares de arestas`);
-    console.log(`[PDFtoArcgis] Intersecções:`, intersectionPairs);
-  }
-
-  // === VALIDAÇÃO 4: Validar orientação CCW (Counter-Clockwise) ===
+  // Validar orientação CCW (Counter-Clockwise)
   let signedArea = 0;
   for (let i = 0; i < orderedVertices.length; i++) {
     const curr = orderedVertices[i];
@@ -1533,44 +1019,20 @@ function validatePolygonTopology(vertices, projectionKey) {
   const isCCW = signedArea > 0;
   const area = Math.abs(signedArea) / 2;
 
-  if (!isCCW) {
-    warnings.push("⚠️ Vértices em ordem horária (CW) - convertendo para anti-horária (CCW)");
-    orderedVertices = orderedVertices.reverse();
-  }
-
-  // === VALIDAÇÃO 5: Validar absurdidade de área ===
-  if (area === 0) {
-    errors.push(`❌ Área zero (0 m²) - possível erro de extração de coordenadas`);
-  } else if (area < 1) {
-    errors.push(`❌ Área muito pequena (${area.toFixed(2)} m²) - possível erro de coordenadas`);
-  } else if (area > 1e8) {
-    errors.push(`❌ Área absurda: ${(area / 1e4).toFixed(1)} ha (${area.toExponential(2)} m²) - indica erro grave de coordenadas`);
-  } else if (area > 1e7) {
-    warnings.push(`⚠️ Área muito grande: ${(area / 1e4).toFixed(1)} ha (${area.toExponential(2)} m²) - verificar se está correto`);
-  }
-
-  // === VALIDAÇÃO 6: Verificar segmentos muito longos (possível erro) ===
-  for (let i = 0; i < orderedVertices.length - 1; i++) {
-    const v1 = orderedVertices[i];
-    const v2 = orderedVertices[i + 1];
-    const dist = Math.hypot(v2.north - v1.north, v2.east - v1.east);
-    
-    if (dist > 10000) { // Segmentos > 10km são suspeitos
-      warnings.push(`⚠️ Segmento ${i}→${i + 1} muito longo: ${(dist / 1000).toFixed(2)}km`);
-    }
+  // Validar absurdidade de área
+  if (area > 1e8) {
+    errors.push(`❌ Área absurda: ${(area / 1e4).toFixed(1)} ha (indica erro de coordenadas)`);
   }
 
   return {
-    isValid: errors.length === 0 && area > 1,
+    isValid: errors.length === 0 && area > 0,
     errors,
     warnings,
     hasIntersections,
-    corrected: orderedVertices,  // Retornar vértices reordenados e corrigidos
-    isCCW: true, // Sempre CCW após correção
+    corrected: orderedVertices,  // Retornar vértices reordenados
+    isCCW,
     area,
-    closed: closureDistance < 5,
-    duplicates: duplicates.length,
-    intersectionPairs
+    closed: closureDistance < 5
   };
 }
 
@@ -1793,14 +1255,57 @@ function calculateDistanceVincenty(p1, p2, projectionKey = "SIRGAS2000_22S") {
   };
 }
 
-// ⚠️ DEPRECATED: extractAzimuthDistanceFromText() foi DESABILITADO
-// ETL SIMPLIFICADO: A IA retorna azimutes e distâncias no JSON (sem regex paralelo)
-// MOTIVO: Reduz redundância, código mais simples e mantenível
-// USO ANTERIOR: Chamada removida de linhas 3423 e 3591
-// 
-// function extractAzimuthDistanceFromText(text) {
-//   // Código removido - IA faz essa transformação agora
-// }
+/**
+ * Extrair azimutes e distâncias documentadas do texto (memorial)
+ * Procura por padrões como "45°30'27" e 258,45m"
+ */
+function extractAzimuthDistanceFromText(text) {
+  const memorialData = [];
+
+  // Padrão: "azimute <azi>, distância <dist>" ou "segue com azimute ... e distância ..."
+  // Formatos de azimute: 45°30'27", 45° 30' 27", 045:30:27
+  // Formatos de distância: 123,45m, 123.45, 123
+  // IMPORTANTE: Distâncias devem estar em contexto "e distância XXXm" ou "até XXXm"
+  // Não pegar números gigantescos que são coordenadas (7331450980.34)
+
+  const azPattern = /(?:azimute?|bearing)[:\s]+([0-9]{1,3})[°º](?:\s*([0-9]{1,2})[\''])?(?:\s*([0-9]{1,2})[\""])?/gi;
+
+  // PATTERN CORRIGIDO: Distâncias têm no máximo 5 dígitos antes do decimal (00000,00m = 100km)
+  // Rejeitar números com 7+ dígitos (são coordenadas)
+  // Padrões: "e distância 123,45 m", "até 456,78m", ", 789.01 m"
+  const distPattern = /(?:e\s+distância|até|até\s+o|,\s+)[:\s]*([0-9]{2,5}[.,][0-9]{1,3})\s*m(?:\s|$|\.|-|,)/gi;
+
+  let azMatch;
+  const azimutes = [];
+  while ((azMatch = azPattern.exec(text)) !== null) {
+    const degrees = parseInt(azMatch[1], 10);
+    const minutes = azMatch[2] ? parseInt(azMatch[2], 10) : 0;
+    const seconds = azMatch[3] ? parseInt(azMatch[3], 10) : 0;
+
+    const decimal = degrees + minutes / 60 + seconds / 3600;
+    azimutes.push({ decimal, degrees, minutes, seconds, raw: azMatch[0] });
+    console.log(`[PDFtoArcgis] Azimute extraído: ${decimal.toFixed(2)}° (${degrees}°${minutes}'${seconds}")`);
+  }
+
+  let distMatch;
+  const distances = [];
+  while ((distMatch = distPattern.exec(text)) !== null) {
+    const raw = distMatch[1];
+    const value = parseFloat(normalizeNumber(raw));
+
+    // Validação: distância deve estar entre 0.1m e 10000m (casos reais de lotes)
+    if (Number.isFinite(value) && value >= 0.1 && value <= 10000) {
+      distances.push({ value, raw });
+      console.log(`[PDFtoArcgis] Distância extraída: ${value.toFixed(2)}m (raw: "${raw}")`);
+    } else {
+      console.log(`[PDFtoArcgis] ⚠️ Distância rejeitada (fora do intervalo): ${value}m`);
+    }
+  }
+
+  console.log(`[PDFtoArcgis] Resumo: ${azimutes.length} azimutes, ${distances.length} distâncias`);
+
+  return { azimutes, distances };
+}
 
 /**
  * Validar coerência entre dados documentados (memorial) e coordenadas extraídas
@@ -3138,27 +2643,21 @@ function detectDocIdFromPageText(pageText) {
   // Referências a outras matrículas aparecem depois no memorial (ex: "conforme referido Orozimbo Ciuffa de MATRÍCULA: 8.462")
   // SOLUÇÃO: Pegar APENAS a PRIMEIRA matrícula do texto (cabeçalho/início)
 
-  // ESTRATÉGIA 1: Procurar APENAS no início do texto (primeiros 3000 caracteres - cabeçalho + início)
-  const headerText = t.substring(0, 3000);
+  // ESTRATÉGIA 1: Procurar APENAS no início do texto (primeiros 2000 caracteres - cabeçalho)
+  const headerText = t.substring(0, 2000);
 
   const matriculaPatterns = [
     // Padrões para MATRÍCULA - com variações OCR degradado
     // ORDEM IMPORTANTE: Do mais específico para o mais genérico
     // Padrões que garantem ser o ID do documento (aparecem no cabeçalho/título)
-    
-    // NOVO: Aceitar formatos "M_XXX" (underscore) e "M-XXX" (hífen) do nome do arquivo
-    { rx: /M[_\-\.]?\s*(\d{1,5})/i, name: "M_/- (arquivo)" },
-    
-    { rx: /MATR[ÍI]CULA\s*N[ºo°e]?\s*([0-9.,]+)/i, name: "MATRÍCULA Nº (flex)" },
-    { rx: /MATR[ÍI]CULA\s*N[ºo°e]\s*([\d.,]+)/i, name: "MATRÍCULA Nº" },
+    { rx: /MATR[ÍI]CULA\s*N[ºo°e]\s*([\d.,]+)/i, name: "MATRÍCULA Nº (com Ne)" },
+    { rx: /MATR[ÍI]CULA\s*N[ºo°e]?\s*([\d.,]+)/i, name: "MATRÍCULA N (OCR flex)" },
     { rx: /^MATR[ÍI]CULA\s*N[ºo°]?\s*([\d.,]+)/im, name: "MATRÍCULA Nº (linha)" },
 
     // PADRÕES PARA "MAT" - muito comuns em cartórios, aparecem no cabeçalho
     { rx: /\bMAT\s+N[ºo°e]\s*([\d.,]+)/i, name: "MAT Nº" },
     { rx: /\bMAT\s*\.\s*N[ºo°e]\s*([\d.,]+)/i, name: "MAT. Nº" },
-    
-    // Padrão alternativo: números com vírgula/ponto sozinhos (após "Nº" ou similares)
-    { rx: /\bN[ºo°e]\s+(\d{1,5}(?:[.,]\d{1,5})*)\s*(?=[-–]|$|\s[A-Z])/i, name: "Nº (isolado)" },
+    { rx: /\bN[ºo°e]\s+(\d{1,3}(?:[.,]\d{3})*)\s*(?=[-–]|$)/i, name: "Nº (isolado)" },
   ];
 
   // Tentar todos os padrões DE MATRÍCULA APENAS NO CABEÇALHO
@@ -3181,8 +2680,7 @@ function detectDocIdFromPageText(pageText) {
   // PROTOCOLO nunca deve ter prioridade sobre MATRÍCULA
   // Usar apenas se MATRÍCULA não foi encontrada
   const protocoloPatterns = [
-    { rx: /PROTOCOLO\s*N[ºo°e]?\s*([\d.,]+)/i, name: "PROTOCOLO Nº" },
-    { rx: /PROCESSO\s*N[ºo°e]?\s*([\d.,]+)/i, name: "PROCESSO Nº" },
+    { rx: /PROTOCOLO\s*N[ºo°e]\s*([\d.,]+)/i, name: "PROTOCOLO Nº" },
   ];
 
   for (const { rx, name } of protocoloPatterns) {
@@ -3190,7 +2688,30 @@ function detectDocIdFromPageText(pageText) {
     if (m && m[1]) {
       let id = m[1].replace(/[.,]/g, "").replace(/^0+/, "");
       if (id && id.length > 0) {
-        console.log(`[PDFtoArcgis] ⚠️ ${name} detectado (fallback): ${id} - Raw: "${m[1]}"`);
+        console.log(`[PDFtoArcgis] ⚠️ PROTOCOLO detectado (fallback): ${id} (padrão: ${name}) - Raw: "${m[1]}"`);
+        return id;
+      }
+    }
+  }
+
+  // ===== ETAPA 3: Procurar por alternativas (se nenhuma matrícula foi encontrada) =====
+  // DESABILITADO: Padrões alternativos muito genéricos causam falsos positivos
+  // Exemplo: "M. 339" pegava número de outra parte do documento que não era matrícula
+  // Melhor deixar como "SEM_ID" e depois usar heurística de recuperação com páginas próximas
+  const alternativePatterns = [
+    // { rx: /PROCESSO\s*(?:N[ºo°]|#)?\s*([\d.]+)/i, name: "PROCESSO" },
+    // { rx: /IMÓVEL\s*(?:N[ºo°]|#)?\s*([\d.]+)/i, name: "IMÓVEL" },
+    // { rx: /REGISTRO\s*(?:N[ºo°]|#)?\s*([\d.]+)/i, name: "REGISTRO" },
+    // { rx: /\bM\.?\s+(\d{1,3}(?:[.,]\d{3})*)\b/, name: "M. (abreviação)" },  // MUITO GENÉRICO!
+    // { rx: /MATR\s+(\d{1,3}(?:[.,]\d{3})*)/i, name: "MATR (abreviação)" },
+  ];
+
+  for (const { rx, name } of alternativePatterns) {
+    const m = t.match(rx);
+    if (m && m[1]) {
+      let id = m[1].replace(/\./g, "").replace(/^0+/, "");
+      if (id) {
+        console.log(`[PDFtoArcgis] ID alternativo detectado: ${id} (padrão: ${name})`);
         return id;
       }
     }
@@ -3431,10 +2952,6 @@ fileInput.addEventListener("change", async (event) => {
     // Loop de leitura de páginas (garante leitura de TODAS as páginas)
     let emptyPages = 0;
     let ocrPages = 0;
-    if (typeof displayLogMessage === 'function') {
-      displayLogMessage(`[PDFtoArcgis][LogUI] 📖 Iniciando leitura de ${pdf.numPages} página(s)...`);
-    }
-    
     for (let i = 1; i <= pdf.numPages; i++) {
       progressBar.value = Math.round((i / pdf.numPages) * 100);
       document.getElementById("progressLabel").innerText = `Lendo página ${i}/${pdf.numPages}...`;
@@ -3447,20 +2964,10 @@ fileInput.addEventListener("change", async (event) => {
         let safeText = pageText || "";
         if (!safeText.trim()) {
           document.getElementById("progressLabel").innerText = `OCR da página ${i}/${pdf.numPages}...`;
-          if (typeof displayLogMessage === 'function') {
-            displayLogMessage(`[PDFtoArcgis][LogUI] 🔍 Página ${i}: Executando OCR (texto extraído vazio)...`);
-          }
           const ocrText = await performOcrOnPage(page, i);
           if (ocrText && ocrText.trim().length > 10) {
             safeText = ocrText;
             ocrPages++;
-            if (typeof displayLogMessage === 'function') {
-              displayLogMessage(`[PDFtoArcgis][LogUI] ✅ Página ${i}: OCR completado (${ocrText.length} caracteres)`);
-            }
-          }
-        } else {
-          if (typeof displayLogMessage === 'function') {
-            displayLogMessage(`[PDFtoArcgis][LogUI] ✓ Página ${i}: Texto extraído (${safeText.length} caracteres)`);
           }
         }
         if (!safeText.trim()) emptyPages++;
@@ -3479,18 +2986,10 @@ fileInput.addEventListener("change", async (event) => {
     }
 
     if (ocrPages > 0) {
-      const msg = `ℹ️ OCR aplicado em ${ocrPages} página(s).`;
-      updateStatus(msg, "info");
-      if (typeof displayLogMessage === 'function') {
-        displayLogMessage(`[PDFtoArcgis][LogUI] ${msg}`);
-      }
+      updateStatus(`ℹ️ OCR aplicado em ${ocrPages} página(s).`, "info");
     }
     if (emptyPages > 0) {
-      const msg = `⚠️ ${emptyPages} página(s) sem texto detectável mesmo após OCR. Reexporte o PDF com camada de texto para melhorar a extração.`;
-      updateStatus(msg, "warning");
-      if (typeof displayLogMessage === 'function') {
-        displayLogMessage(`[PDFtoArcgis][LogUI] ${msg}`);
-      }
+      updateStatus(`⚠️ ${emptyPages} página(s) sem texto detectável mesmo após OCR. Reexporte o PDF com camada de texto para melhorar a extração.`, "warning");
     }
 
     // --- LÓGICA DE INFERÊNCIA REVERSA ---
@@ -3598,10 +3097,10 @@ async function processExtractUnified(pagesText, projInfo = null) {
   const projKey = resolvedProjection.key || (getActiveProjectionKey() || "SIRGAS2000_22S");
   window._arcgis_crs_key = projKey;
   const topologyValidation = validatePolygonTopology(vertices, projKey);
-  
-  // ETL SIMPLIFICADO: A IA fornece azimutes/distâncias, sem regex paralelo
-  const memorialData = { azimutes: [], distances: [] };
-  const memorialValidation = { matches: [], issues: [] };
+  const memorialData = extractAzimuthDistanceFromText(fullText);
+  const memorialValidation = memorialData.azimutes.length > 0
+    ? validateMemorialCoherence(vertices, memorialData, projKey)
+    : null;
 
   // === ADICIONAR À documentsResults (para compatibilidade com "Salvar na Pasta") ===
   documentsResults = [{
@@ -3629,76 +3128,6 @@ async function processExtractUnified(pagesText, projInfo = null) {
   extractedCoordinates = vertices;
   fileNameBase = iaObj.matricula ? `MAT_${iaObj.matricula}` : "coordenadas_extracao";
   
-  // === VALIDAÇÃO TOPOLÓGICA ANTES DE EXIBIR ===
-  if (typeof displayLogMessage === 'function') {
-    displayLogMessage(`[PDFtoArcgis][LogUI] 🔍 Validando topologia do polígono...`);
-  }
-  
-  const topology = validatePolygonTopology(vertices, projKey);
-  documentsResults[0].topology = topology;
-  
-  // Log dos resultados de validação
-  if (topology.isValid) {
-    console.log(`[PDFtoArcgis] ✅ Polígono válido: área ${topology.area.toFixed(2)}m², fechado: ${topology.closed ? 'SIM' : 'NÃO'}`);
-    if (typeof displayLogMessage === 'function') {
-      displayLogMessage(`[PDFtoArcgis][LogUI] ✅ Polígono válido! Área: ${topology.area.toFixed(2)}m²`);
-    }
-  } else {
-    console.warn(`[PDFtoArcgis] ⚠️ Polígono com problemas:`, topology.errors);
-  }
-  
-  if (topology.warnings.length > 0) {
-    console.warn(`[PDFtoArcgis] ⚠️ Avisos:`, topology.warnings);
-  }
-  
-  // Atualizar UI de validação
-  updateValidationUI(topology);
-  
-  // Se houver erros críticos, tentar limpeza manual de duplicatas
-  if (!topology.isValid && topology.errors.length > 0) {
-    if (typeof displayLogMessage === 'function') {
-      displayLogMessage(`[PDFtoArcgis][LogUI] ⚠️ Problemas detectados: ${topology.errors.join(', ')}`);
-    }
-    
-    // Limpeza manual: remover vértices duplicados muito próximos
-    const uniqueVertices = [];
-    for (const v of vertices) {
-      const isDuplicate = uniqueVertices.some(u => 
-        Math.abs(u.este - v.este) < 0.5 && Math.abs(u.norte - v.norte) < 0.5
-      );
-      if (!isDuplicate) {
-        uniqueVertices.push(v);
-      }
-    }
-    
-    if (uniqueVertices.length < vertices.length) {
-      console.log(`[PDFtoArcgis] 🔧 Removidos ${vertices.length - uniqueVertices.length} vértice(s) duplicado(s)`);
-      extractedCoordinates = uniqueVertices;
-      vertices = uniqueVertices;
-      documentsResults[0].vertices = uniqueVertices;
-      
-      // Re-validar após limpeza
-      const revalidated = validatePolygonTopology(uniqueVertices, projKey);
-      documentsResults[0].topology = revalidated;
-      updateValidationUI(revalidated);
-      
-      if (revalidated.isValid) {
-        if (typeof displayLogMessage === 'function') {
-          displayLogMessage(`[PDFtoArcgis][LogUI] ✅ Polígono corrigido com sucesso!`);
-        }
-        console.log(`[PDFtoArcgis] ✅ Correção bem-sucedida. Nova área: ${revalidated.area.toFixed(2)}m²`);
-      } else {
-        if (typeof displayLogMessage === 'function') {
-          displayLogMessage(`[PDFtoArcgis][LogUI] ⚠️ Algumas correções automáticas não resolveram todos os problemas. Verifique o relatório.`);
-        }
-      }
-    }
-  }
-  
-  if (typeof displayLogMessage === 'function') {
-    displayLogMessage(`[PDFtoArcgis][LogUI] 📊 Preparando tabela de vértices para visualização...`);
-  }
-  
   resultBox.style.display = 'block';
   countDisplay.textContent = vertices.length;
   previewTableBody.innerHTML = '';
@@ -3714,10 +3143,6 @@ async function processExtractUnified(pagesText, projInfo = null) {
       <td>${v.azCalc || '---'}</td>
     `;
     previewTableBody.appendChild(row);
-  }
-  
-  if (typeof displayLogMessage === 'function') {
-    displayLogMessage(`[PDFtoArcgis][LogUI] 🎯 Gerando shapefiles e arquivos de saída...`);
   }
 
   // === LIMPAR PROGRESSO E EXIBIR STATUS ===
@@ -3776,9 +3201,11 @@ async function processExtractUnified_legacy(pagesText) {
     // 3. NOVO: Validação topológica completa
     const topologyValidation = validatePolygonTopology(cleaned, projKey);
 
-    // 4. ETL SIMPLIFICADO: A IA fornece azimutes/distâncias, sem regex paralelo
-    const memorialData = { azimutes: [], distances: [] };
-    const memorialValidation = null;
+    // 4. NOVO: Validação de coerência com memorial
+    const memorialData = extractAzimuthDistanceFromText(doc.text);
+    const memorialValidation = memorialData.azimutes.length > 0
+      ? validateMemorialCoherence(cleaned, memorialData, projKey)
+      : null;
 
     // 5. Construir warnings com informações detalhadas
     const warnings = [];
@@ -3812,10 +3239,6 @@ async function processExtractUnified_legacy(pagesText) {
       memorialValidation,
       memorialData
     });
-  }
-
-  if (typeof displayLogMessage === 'function') {
-    displayLogMessage(`[PDFtoArcgis][LogUI] ✅ Processamento concluído com sucesso!`);
   }
 
   progressContainer.style.display = "none";
