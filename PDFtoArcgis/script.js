@@ -70,6 +70,9 @@ function repairJsonCoordinates(jsonStr) {
   // Padrão: qualquer número com vírgula decimal dentro de JSON
   // Se for contexto de número (entre : e ,/}), converter vírgula por ponto
   jsonStr = jsonStr.replace(/("(?:norte|norte|este|east|north|azimute|distancia)"\s*:\s*)(\d+),(\d+)/g, '$1$2.$3');
+
+  // Corrigir aspas duplas extras em azimute_dms (ex: 133°15'52"")
+  jsonStr = jsonStr.replace(/("azimute_dms"\s*:\s*"[^"]*)""/g, '$1\\"');
   
   return jsonStr;
 }
@@ -178,8 +181,9 @@ JSON: {"vertices":[{"id":"V1","este":693736.178,"norte":7186708.425,"azimute_dms
 RULES:
 1. Este: 150k-900k, Norte: 6.9M-10.1M (omit invalid)
 2. Fix typos: "B5º" -> numeric only
-3. Max 3 decimals, return {"vertices":[]} if empty
-4. Do not invent data
+3. Escape double quotes in azimute_dms as \\\" (JSON valid)
+4. Max 3 decimals, return {"vertices":[]} if empty
+5. Do not invent data
 
 Raw text from PDF (full page):
 ${text}`;
