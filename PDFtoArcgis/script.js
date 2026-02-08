@@ -152,10 +152,10 @@ function extractJSONFromResponse(rawResponse) {
   }
   
   // Padrão 3: JSON após texto explicativo
-  // Procura por { ... } ou [ ... ] em qualquer posição
-  const jsonMatch = str.match(/(\{[\s\S]*\}|\[[\s\S]*\])/);
-  if (jsonMatch && jsonMatch[1]) {
-    return jsonMatch[1].trim();
+  // Procura pelo primeiro bloco JSON para evitar respostas com multiplos JSONs
+  const jsonMatches = str.match(/(\{[\s\S]*?\}|\[[\s\S]*?\])/g);
+  if (jsonMatches && jsonMatches.length > 0) {
+    return jsonMatches[0].trim();
   }
   
   console.warn('[PDFtoArcgis] ⚠️ Não conseguiu extrair JSON da resposta:', str.substring(0, 100));
