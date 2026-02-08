@@ -713,6 +713,27 @@ function orderVerticesByProximity(vertices) {
   }));
 }
 
+function hasCoordinateSignal(text) {
+  if (!text) return false;
+  const t = String(text);
+
+  // UTM markers or explicit labels
+  if (/\b(utm|sirgas|sirg|sgrs)\b/i.test(t)) return true;
+  if (/(\bE(?:ste)?\b|\bLeste\b|\bEast\b)\s*[:=]?\s*\d{5,7}[.,]?\d*/i.test(t)) return true;
+  if (/(\bN(?:orte)?\b|\bNorth\b)\s*[:=]?\s*\d{6,8}[.,]?\d*/i.test(t)) return true;
+
+  // Lat/Lon decimal
+  if (/-?\d{1,2}[.,]\d{4,}\s*[;\s,]+\s*-?\d{1,3}[.,]\d{4,}/.test(t)) return true;
+
+  // Lat/Lon DMS
+  if (/\d{1,3}\s*°\s*\d{1,2}\s*['’]\s*\d{1,2}\s*["”]/.test(t)) return true;
+
+  // Azimuth/Distance narrative
+  if (/(azimute|rumo|dist[aâ]ncia)\s*[:=]?\s*\d+/i.test(t)) return true;
+
+  return false;
+}
+
 // Extração robusta de texto por página (sem OCR): garante leitura de todas as páginas
 async function extractPageTextSafely(page, pageIndex) {
   const tryExtract = async (options) => {
@@ -1810,18 +1831,22 @@ fileInput.addEventListener("change", async (event) => {
 
         // Se a página estiver vazia/escaneada, apenas mantém o texto vazio (não faz OCR)
         let safeText = pageText || "";
-        if (!safeText.trim()) {
+        const hasSignal = hasCoordinateSignal(safeText);
+        if (!safeText.trim() || !hasSignal) {
           document.getElementById("progressLabel").innerText = `OCR da página ${i}/${pdf.numPages}...`;
           if (typeof displayLogMessage === 'function') {
-            displayLogMessage(`[PDFtoArcgis][LogUI] 🔍 Página ${i}: OCR (texto vazio)`);
+            const reason = safeText.trim() ? 'sem padrao de coordenadas' : 'texto vazio';
+            displayLogMessage(`[PDFtoArcgis][LogUI] 🔍 Página ${i}: OCR (${reason})`);
           }
           const ocrText = await performOcrOnPage(page, i);
-          if (ocrText && ocrText.trim().length > 10) {
+          if (ocrText && ocrText.trim().length > 10 && hasCoordinateSignal(ocrText)) {
             safeText = ocrText;
             ocrPages++;
             if (typeof displayLogMessage === 'function') {
               displayLogMessage(`[PDFtoArcgis][LogUI] ✅ Página ${i}: OCR ok (${ocrText.length} chars)`);
             }
+          } else if (!hasSignal) {
+            safeText = "";
           }
         } else {
           if (typeof displayLogMessage === 'function') {
