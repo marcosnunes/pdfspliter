@@ -1,86 +1,20 @@
-// Menu lateral (Sidenav)
 function openNav() {
-    document.getElementById("mySidenav").style.width = "250px";
-    if (typeof isAppInstalled === 'function' && typeof hideInstallBtn === 'function') {
-        if (isAppInstalled()) hideInstallBtn();
-    }
+    const sidenav = document.getElementById('mySidenav');
+    if (sidenav) sidenav.style.width = '250px';
 }
 
 function closeNav() {
-    document.getElementById("mySidenav").style.width = "0";
+    const sidenav = document.getElementById('mySidenav');
+    if (sidenav) sidenav.style.width = '0';
 }
 
-// --- PWA: Instalar App (com feedback visual) ---
-let deferredPrompt = null;
-const installBtn = document.getElementById('installPwaBtn');
-function hideInstallBtn() {
-    if (installBtn) installBtn.style.display = 'none';
-}
-function isAppInstalled() {
-    // Checa standalone (PWA instalado) e display-mode
-    if (window.matchMedia('(display-mode: standalone)').matches) return true;
-    if (window.navigator.standalone === true) return true;
-    // Checa se já existe service worker controlando e não há prompt
-    if (window.matchMedia('(display-mode: minimal-ui)').matches) return true;
-    // iOS: verifica se está rodando como app
-    if (window.navigator && window.navigator.standalone) return true;
-    // Android Chrome: verifica se não há prompt e já está instalado
-    if (window.matchMedia('(display-mode: fullscreen)').matches) return true;
-    return false;
-}
-if (isAppInstalled()) {
-    hideInstallBtn();
-}
-window.addEventListener('appinstalled', hideInstallBtn);
-window.addEventListener('DOMContentLoaded', function() {
-    if (isAppInstalled()) hideInstallBtn();
-});
-window.addEventListener('beforeinstallprompt', (e) => {
-    if (isAppInstalled()) {
-        hideInstallBtn();
-        return;
-    }
-    e.preventDefault();
-    deferredPrompt = e;
-    if (installBtn) {
-        installBtn.style.display = 'block';
-        installBtn.classList.remove('success', 'error');
-        installBtn.textContent = 'Instalar App';
-    }
-});
-if (installBtn) {
-    installBtn.addEventListener('click', async () => {
-        if (deferredPrompt) {
-            try {
-                deferredPrompt.prompt();
-                const { outcome } = await deferredPrompt.userChoice;
-                if (outcome === 'accepted') {
-                    installBtn.classList.add('success');
-                    installBtn.textContent = 'App instalado!';
-                    setTimeout(() => {
-                        installBtn.style.display = 'none';
-                        installBtn.classList.remove('success');
-                        installBtn.textContent = 'Instalar App';
-                    }, 2000);
-                } else {
-                    installBtn.classList.add('error');
-                    installBtn.textContent = 'Instalação cancelada';
-                    setTimeout(() => {
-                        installBtn.classList.remove('error');
-                        installBtn.textContent = 'Instalar App';
-                    }, 2000);
-                }
-            } catch (err) {
-                installBtn.classList.add('error');
-                installBtn.textContent = 'Erro ao instalar';
-                setTimeout(() => {
-                    installBtn.classList.remove('error');
-                    installBtn.textContent = 'Instalar App';
-                }, 2000);
-            }
-            deferredPrompt = null;
-        }
-    });
+function notifyUser(message, type = 'info') {
+    const logMessages = document.getElementById('log-messages');
+    const prefix = type === 'error' ? '❌' : (type === 'warning' ? '⚠️' : '✅');
+    const text = `${prefix} ${String(message || '').trim()}`;
+    if (logMessages) logMessages.textContent = text;
+    if (type === 'error') console.error(text);
+    else console.log(text);
 }
 
 
@@ -107,21 +41,21 @@ function loadScript(url, callback, id = null) {
 
     script.onerror = () => {
         console.error(`Erro ao carregar o script: ${url}`);
-        alert(`Erro ao carregar a biblioteca: ${url}. Verifique a URL e tente novamente.`);
+        notifyUser(`Não foi possível carregar a biblioteca (${url}). Verifique a conexão e tente novamente.`, 'error');
     };
 
     document.head.appendChild(script);
 }
 
 // URL da biblioteca PDF.js (CDN)
-const pdfjsLibUrl = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
+const pdfjsLibUrl = "/vendor/pdfjs/3.11.174/pdf.min.js";
 
 // Carrega PDF.js e inicializa lógica principal
 loadScript(pdfjsLibUrl, () => {
     console.log("PDF.js carregado dinamicamente.");
 
     // Define worker do PDF.js
-    pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js`;
+    pdfjsLib.GlobalWorkerOptions.workerSrc = `/vendor/pdfjs/3.11.174/pdf.worker.min.js`;
 
     const fileInput = document.getElementById('pdfUpload');
     const convertPdfButton = document.getElementById('convertPdf');
@@ -160,7 +94,7 @@ loadScript(pdfjsLibUrl, () => {
         const file = fileInput.files[0];
 
         if (!file || file.type !== 'application/pdf') {
-            alert('Por favor, selecione um arquivo PDF.');
+            notifyUser('Selecione um arquivo PDF para continuar.', 'warning');
             return;
         }
 
@@ -180,7 +114,7 @@ loadScript(pdfjsLibUrl, () => {
                     displayLogMessage(`Convertendo página ${i} de ${pdfDoc.numPages}...`);
 
                     const page = await pdfDoc.getPage(i);
-                    const scale = 1.5; // Escala para qualidade
+                    const scale = 4; // Escala para qualidade
                     const viewport = page.getViewport({ scale });
 
                     // Canvas para renderizar página
@@ -197,7 +131,7 @@ loadScript(pdfjsLibUrl, () => {
                     await page.render(renderContext).promise;
 
                     // Canvas → JPG
-                    const jpgUrl = canvas.toDataURL('image/jpeg', 0.9); // 0.9 é a qualidade
+                    const jpgUrl = canvas.toDataURL('image/jpeg', 1.0); // 1.0 é a qualidade máxima
 
                     // Miniatura JPG
                     const img = document.createElement('img');
@@ -210,28 +144,28 @@ loadScript(pdfjsLibUrl, () => {
                     downloadLink.download = `pagina_${i}.jpg`;
                     downloadLink.textContent = `Baixar Página ${i} (JPG)`;
                     downloadLink.classList.add('custom-download-link');
-                    jpgDownloadContainer.appendChild(downloadLink);
 
-                    // Quebra de linha para organização
-                    jpgDownloadContainer.appendChild(document.createElement('br'));
+                    const downloadCard = document.createElement('div');
+                    downloadCard.classList.add('custom-download-card');
+                    downloadCard.appendChild(downloadLink);
+                    jpgDownloadContainer.appendChild(downloadCard);
                 }
 
-                displayLogMessage('Conversão concluída! Baixe suas imagens abaixo.');
+                notifyUser('Processamento concluído. Arquivos prontos para download.', 'success');
                 jpgDownloadContainer.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
             };
 
             reader.onerror = function (error) {
                 console.error('Erro ao ler o arquivo PDF:', error);
-                displayLogMessage('Erro ao ler o arquivo PDF.');
+                notifyUser('Não foi possível ler o arquivo PDF selecionado.', 'error');
             };
 
             reader.readAsArrayBuffer(file);
 
         } catch (error) {
             console.error('Erro ao converter PDF para JPG:', error);
-            displayLogMessage(`Erro ao converter PDF: ${error.message || 'Erro desconhecido'}`);
-            alert('Ocorreu um erro ao converter o PDF. Veja o console para mais detalhes.');
+            notifyUser(`Não foi possível concluir a conversão do PDF: ${error.message || 'erro desconhecido'}`, 'error');
         } finally {
             convertPdfButton.disabled = false;
         }

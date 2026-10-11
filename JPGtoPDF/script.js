@@ -1,86 +1,20 @@
-// Menu lateral (Sidenav)
 function openNav() {
-    document.getElementById("mySidenav").style.width = "250px";
-    if (typeof isAppInstalled === 'function' && typeof hideInstallBtn === 'function') {
-        if (isAppInstalled()) hideInstallBtn();
-    }
+    const sidenav = document.getElementById('mySidenav');
+    if (sidenav) sidenav.style.width = '250px';
 }
 
 function closeNav() {
-    document.getElementById("mySidenav").style.width = "0";
+    const sidenav = document.getElementById('mySidenav');
+    if (sidenav) sidenav.style.width = '0';
 }
 
-// --- PWA: Instalar App (com feedback visual) ---
-let deferredPrompt = null;
-const installBtn = document.getElementById('installPwaBtn');
-function hideInstallBtn() {
-    if (installBtn) installBtn.style.display = 'none';
-}
-function isAppInstalled() {
-    // Checa standalone (PWA instalado) e display-mode
-    if (window.matchMedia('(display-mode: standalone)').matches) return true;
-    if (window.navigator.standalone === true) return true;
-    // Checa se já existe service worker controlando e não há prompt
-    if (window.matchMedia('(display-mode: minimal-ui)').matches) return true;
-    // iOS: verifica se está rodando como app
-    if (window.navigator && window.navigator.standalone) return true;
-    // Android Chrome: verifica se não há prompt e já está instalado
-    if (window.matchMedia('(display-mode: fullscreen)').matches) return true;
-    return false;
-}
-if (isAppInstalled()) {
-    hideInstallBtn();
-}
-window.addEventListener('appinstalled', hideInstallBtn);
-window.addEventListener('DOMContentLoaded', function() {
-    if (isAppInstalled()) hideInstallBtn();
-});
-window.addEventListener('beforeinstallprompt', (e) => {
-    if (isAppInstalled()) {
-        hideInstallBtn();
-        return;
-    }
-    e.preventDefault();
-    deferredPrompt = e;
-    if (installBtn) {
-        installBtn.style.display = 'block';
-        installBtn.classList.remove('success', 'error');
-        installBtn.textContent = 'Instalar App';
-    }
-});
-if (installBtn) {
-    installBtn.addEventListener('click', async () => {
-        if (deferredPrompt) {
-            try {
-                deferredPrompt.prompt();
-                const { outcome } = await deferredPrompt.userChoice;
-                if (outcome === 'accepted') {
-                    installBtn.classList.add('success');
-                    installBtn.textContent = 'App instalado!';
-                    setTimeout(() => {
-                        installBtn.style.display = 'none';
-                        installBtn.classList.remove('success');
-                        installBtn.textContent = 'Instalar App';
-                    }, 2000);
-                } else {
-                    installBtn.classList.add('error');
-                    installBtn.textContent = 'Instalação cancelada';
-                    setTimeout(() => {
-                        installBtn.classList.remove('error');
-                        installBtn.textContent = 'Instalar App';
-                    }, 2000);
-                }
-            } catch (err) {
-                installBtn.classList.add('error');
-                installBtn.textContent = 'Erro ao instalar';
-                setTimeout(() => {
-                    installBtn.classList.remove('error');
-                    installBtn.textContent = 'Instalar App';
-                }, 2000);
-            }
-            deferredPrompt = null;
-        }
-    });
+function notifyUser(message, type = 'info') {
+    const logMessages = document.getElementById('log-messages');
+    const prefix = type === 'error' ? '❌' : (type === 'warning' ? '⚠️' : '✅');
+    const text = `${prefix} ${String(message || '').trim()}`;
+    if (logMessages) logMessages.textContent = text;
+    if (type === 'error') console.error(text);
+    else console.log(text);
 }
 
 // Carrega scripts dinamicamente (evita duplicidade)
@@ -107,14 +41,14 @@ function loadScript(url, callback, id = null) {
 
     script.onerror = () => {
         console.error(`Erro ao carregar o script: ${url}`);
-        alert(`Erro ao carregar a biblioteca: ${url}. Verifique a URL e tente novamente.`);
+        notifyUser(`Não foi possível carregar a biblioteca (${url}). Verifique a conexão e tente novamente.`, 'error');
     };
 
     document.head.appendChild(script);
 }
 
 // URL do PDFLib (CDN)
-const pdfLibUrl = "https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js";
+const pdfLibUrl = "/vendor/pdf-lib/pdf-lib.min.js";
 
 // Carrega PDFLib e inicializa lógica principal
 loadScript(pdfLibUrl, () => {
@@ -191,7 +125,7 @@ loadScript(pdfLibUrl, () => {
         const files = fileInput.files;
 
         if (!files || files.length === 0) {
-            alert('Por favor, selecione pelo menos uma imagem.');
+            notifyUser('Selecione pelo menos uma imagem para continuar.', 'warning');
             return;
         }
 
@@ -267,7 +201,7 @@ loadScript(pdfLibUrl, () => {
 
             if (pageCount === 0) {
                 displayLogMessage('Nenhuma página foi adicionada ao PDF. Verifique as imagens.');
-                alert('Nenhuma página foi adicionada ao PDF. Verifique as imagens.');
+                notifyUser('Não foi possível gerar páginas no PDF. Verifique as imagens selecionadas.', 'warning');
                 return;
             }
 
@@ -285,23 +219,27 @@ loadScript(pdfLibUrl, () => {
                 downloadLink.textContent = 'Baixar Imagens em PDF';
                 downloadLink.classList.add('custom-download-link');
 
+                const downloadCard = document.createElement('div');
+                downloadCard.classList.add('custom-download-card');
+                downloadCard.appendChild(downloadLink);
+
                 // Limpa container e adiciona link
                 pdfDownloadContainer.innerHTML = '';
-                pdfDownloadContainer.appendChild(downloadLink);
+                pdfDownloadContainer.appendChild(downloadCard);
 
                 // Foco na área do link
                 downloadLink.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                displayLogMessage('Pronto! Clique no link para baixar o PDF.');
+                notifyUser('Processamento concluído. Arquivo pronto para download.', 'success');
 
             } catch (saveError) {
                 console.error('Erro ao salvar o PDF:', saveError);
-                displayLogMessage('Erro ao salvar o PDF.');
+                notifyUser('Não foi possível salvar o PDF gerado.', 'error');
             }
 
         } catch (error) {
             console.error('Erro ao gerar PDF:', error);
             displayLogMessage(`Erro ao gerar PDF: ${error.message || 'Erro desconhecido'}`);
-            alert('Ocorreu um erro ao gerar o PDF. Veja o console para mais detalhes.');
+            notifyUser('Não foi possível concluir a geração do PDF.', 'error');
         }
     });
 

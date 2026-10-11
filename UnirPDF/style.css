@@ -1,47 +1,3 @@
-/* Exibir botão de instalação apenas em telas de celular */
-/* Botão Instalar App - visual destacado e responsivo */
-#installPwaBtn {
-    display: none;
-    background: linear-gradient(90deg, #ff9800 60%, #fb8c00 100%);
-    color: #fff;
-    font-weight: bold;
-    font-size: 18px;
-    border: none;
-    border-radius: 8px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.10);
-    margin: 18px 32px 0 32px;
-    width: 80%;
-    padding: 14px 0;
-    transition: background 0.3s, box-shadow 0.3s;
-    letter-spacing: 0.5px;
-    cursor: pointer;
-}
-
-#installPwaBtn:active {
-    background: #fb8c00;
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
-}
-
-#installPwaBtn.success {
-    background: #43a047;
-    color: #fff;
-}
-
-#installPwaBtn.error {
-    background: #e53935;
-    color: #fff;
-}
-
-@media (max-width: 600px) {
-    #installPwaBtn {
-        display: block !important;
-        font-size: 17px;
-        padding: 12px 0;
-        margin: 14px 10% 0 10%;
-        width: 80%;
-    }
-}
-
 /* Footer*/
 .app-footer {
     width: 100%;
@@ -162,6 +118,13 @@ body {
 .sidenav a:hover {
     color: #f1f1f1;
     background-color: #fb8c00;
+}
+
+.sidenav a.active-nav-link {
+    background-color: #fff3e0;
+    border-left: 4px solid #ffb74d;
+    color: #e65100;
+    font-weight: 700;
 }
 
 /* Estilo para o botão de fechar (X) */
@@ -356,4 +319,35 @@ span {
 
 .custom-download-link:hover {
     background-color: #fb8c00;
+}
+
+#pdf-pages-container,
+#pdf-download-container,
+#jpg-download-container {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px;
+    margin-top: 12px;
+}
+
+.custom-pdf-page-item,
+.custom-download-card {
+    width: 100%;
+    min-height: 56px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #fff3e0;
+    border: 1px solid #ffe0b2;
+    border-radius: 10px;
+    padding: 10px;
+    box-sizing: border-box;
+}
+
+.custom-pdf-page-item .custom-download-link,
+.custom-download-card .custom-download-link {
+    width: 100%;
+    text-align: center;
+    margin-top: 0;
 }

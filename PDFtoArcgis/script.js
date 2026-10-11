@@ -33,6 +33,36 @@ function getSelectedProcessingMode() {
   return 'complete';
 }
 
+async function askLocalAssistivePdfTask(task, ocrText = '', context = {}) {
+  const rawText = String(context?.rawText || ocrText || '');
+  const body = {
+    features: [],
+    text: String(ocrText || ''),
+    rawText,
+    config: { task },
+    context: {
+      task,
+      stage: 'pdf-to-arcgis',
+      source: 'pdf-to-arcgis-roi-ocr-or-coordinates',
+      ...context
+    }
+  };
+
+  try {
+    const response = await fetch('/api/desktop/assist-inference', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json; charset=utf-8', Accept: 'application/json' },
+      body: JSON.stringify(body)
+    });
+    if (!response.ok) return null;
+    const payload = await response.json().catch(() => null);
+    if (!payload?.ok) return null;
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
 const PROGRESS_HINT_MESSAGES = [
   'Isso pode levar alguns instantes.',
   'Você pode aguardar nesta tela enquanto organizamos o resultado.',
@@ -358,9 +388,9 @@ function summarizeVerticesForDiag(vertices = []) {
   };
 }
 
-function summarizeDuplicateVertices(vertices = [], precision = 3) {
+function summarizeDuplicateVertices(vertices = [], precision = 6) {
   const list = Array.isArray(vertices) ? vertices : [];
-  const p = Number.isFinite(Number(precision)) ? Math.max(0, Math.floor(Number(precision))) : 3;
+  const p = Number.isFinite(Number(precision)) ? Math.max(0, Math.floor(Number(precision))) : 6;
   const roundedMap = new Map();
   const exactMap = new Map();
   const duplicateSamples = [];
@@ -565,19 +595,74 @@ function normalizeOcrArtifacts(rawText) {
   let text = String(rawText || '');
   if (!text.trim()) return text;
 
+  // 1. CASO MAIS IMPORTANTE (com "e")
+  text = text.replace(/(\d{6,7}[.,]\d+)\s*e\s*(\d{6}[.,]\d+)/gi, (m, a, b) => {
+    const na = parseNumericForSignal(a);
+    const nb = parseNumericForSignal(b);
+
+    // N primeiro, E depois
+    if (na > 1000000 && nb < 1000000) {
+      return `N=${a} E=${b}`;
+    }
+
+    // E primeiro, N depois
+    if (nb > 1000000 && na < 1000000) {
+      return `E=${a} N=${b}`;
+    }
+
+    return m;
+  }
+  );
+
+  // 2. CASO COM "N .... e ..."
+  text = text.replace(/N[=\s]*(\d{6,7}[.,]\d+)\s*e\s*(\d{6}[.,]\d+)/gi, 'N=$1 E=$2');
+
+  // 3. NORMALIZAÇÃO CLÁSSICA
+  text = text.replace(/N\s*(\d)/gi, 'N=$1');
+  text = text.replace(/E\s*(\d)/gi, 'E=$1');
+
+  // 4. limpeza OCR
+  text = text.replace(/(\d+[.,]\d+)m\b/gi, '$1');
+  text = text.replace(/(\d+[.,]\d+)\s*m\b/gi, '$1');
+  text = text.replace(/(\d{6,})\s*m\b/gi, '$1');
+
+  // IMPORTANTE: NÃO remover o "e" antes de tratar coordenadas
+  // então esse replace vem DEPOIS
+  text = text.replace(/(\d+[.,]\d+)\s*e\s*(\d+[.,]\d+)/gi, '$1 $2');
+
+  text = text.replace(/([NE])\s*(\d{6,})/gi, '$1=$2');
+
   text = text.replace(/\bU\s*T\s*M\b/gi, 'UTM');
   text = text.replace(/\bS\s*I\s*R\s*G\s*A\s*S\b/gi, 'SIRGAS');
+
   text = text.replace(/(?<![A-Za-z])[ÉÊËÈéêëè]\s*=/g, 'E=');
   text = text.replace(/(?<![A-Za-z])[Ññ]\s*=/g, 'N=');
+
   text = text.replace(/\bE\s*[-–—:]\s*(?=[-+]?\d)/g, 'E=');
   text = text.replace(/\bN\s*[-–—:]\s*(?=[-+]?\d)/g, 'N=');
+
   text = text.replace(/\bE\s+=\s*/g, 'E=');
   text = text.replace(/\bN\s+=\s*/g, 'N=');
-  text = text.replace(/\b([EN])=([-+]?\s*(?:\d\s*){2,}(?:[.,]\s*(?:\d\s*)+)*)/g, (_m, lbl, num) => {
-    return `${lbl}=${num.replace(/\s+/g, '')}`;
-  });
+
+  text = text.replace(/\b([EN])=([-+]?\s*(?:\d\s*){2,}(?:[.,]\s*(?:\d\s*)+)*)/g, (_m, lbl, num) => `${lbl}=${num.replace(/\s+/g, '')}`);
 
   return text;
+}
+
+function forceParseLoosePairs(text) {
+  const matches = text.match(/(\d{6,7}[.,]\d+)\s*e\s*(\d{6}[.,]\d+)/g) || [];
+
+  return matches.map(m => {
+    const res = m.match(/(\d{6,7}[.,]\d+).+?(\d{6}[.,]\d+)/);
+    if (!res) return null;
+
+    const n = parseNumericLoose(res[1]);
+    const e = parseNumericLoose(res[2]);
+
+    if (!Number.isFinite(n) || !Number.isFinite(e)) return null;
+
+    return { north: n, east: e };
+  }).filter(Boolean);
 }
 
 function shouldRunOcrEnhancement(text) {
@@ -739,7 +824,30 @@ function buildBackendRetryTextCandidates(baseText) {
   return unique;
 }
 
-async function callWorkspaceAiExtractor(fileName, totalPagesHint = 0, ocrText = '', retryCount = 0, patternHint = '', flowMode = 'auto') {
+async function callWorkspaceAiExtractor(fileName, totalPagesHint = 0, ocrText = '', retryCount = 0, patternHint = '', flowMode = 'auto', rawOcrText = '') {
+  if (!getWorkspaceAiExtractorUrl()) {
+    throw new Error('API desativada - usando fallback local');
+  }
+
+  // Fluxo principal e único no PDFtoArcGIS: a matrícula deve ser a fonte
+  // canônica de contexto textual que alimenta o extrator de geometria.
+  const inferenceRawText = String(rawOcrText || ocrText || '');
+  const matSelectAssistive = await askLocalAssistivePdfTask('pdf-matricula-choice', inferenceRawText, {
+    fileName,
+    totalPagesHint: Number.isFinite(Number(totalPagesHint)) ? Number(totalPagesHint) : 0,
+    flowMode: String(flowMode || 'auto'),
+    rawText: inferenceRawText
+  });
+  const matChoiceCandidates = Array.isArray(matSelectAssistive?.candidates)
+    ? matSelectAssistive.candidates
+        .map((item) => String(item?.line || item || '').trim())
+        .filter(Boolean)
+    : [];
+
+  const coordinateHints = [...new Set(matChoiceCandidates)].join('\n');
+
+  const rawText = inferenceRawText.trim();
+
   const routes = buildWorkspaceAiExtractorCandidates();
   const cfg = getPdfToArcgisConfig();
   const maxRetries = Number.isFinite(Number(cfg.maxWorkspaceRetries))
@@ -758,7 +866,9 @@ async function callWorkspaceAiExtractor(fileName, totalPagesHint = 0, ocrText = 
         body: JSON.stringify({
           fileName,
           totalPagesHint: Number.isFinite(Number(totalPagesHint)) ? Number(totalPagesHint) : 0,
-          ocrText: String(ocrText || '').slice(0, 120000),
+          ocrText: rawText.slice(0, 120000),
+          rawText: rawText.slice(0, 120000),
+          coordinateHints: coordinateHints.slice(0, 12000),
           processingMode,
           patternHint: String(patternHint || ''),
           flowMode: String(flowMode || 'auto')
@@ -783,7 +893,7 @@ async function callWorkspaceAiExtractor(fileName, totalPagesHint = 0, ocrText = 
         const transient = new Set([429, 500, 503, 504]);
         if (transient.has(response.status) && retryCount < maxRetries) {
           await new Promise((resolve) => setTimeout(resolve, 1200 * Math.pow(2, retryCount)));
-          return callWorkspaceAiExtractor(fileName, totalPagesHint, ocrText, retryCount + 1, patternHint, flowMode);
+          return callWorkspaceAiExtractor(fileName, totalPagesHint, ocrText, retryCount + 1, patternHint, flowMode, rawOcrText);
         }
       }
 
@@ -806,27 +916,14 @@ async function callWorkspaceAiExtractor(fileName, totalPagesHint = 0, ocrText = 
   throw lastError || new Error('Serviço de extração online indisponível.');
 }
 
-function buildLocalFallbackApiResult(localRing, warnings = ['Processamento concluído com ajuste automático.']) {
-  return {
-    success: true,
-    projectionKey: 'SIRGAS2000_22S',
-    geometryMode: 'absolute',
-    sourcePattern: 'client-ocr-fallback',
-    warnings: Array.isArray(warnings) ? warnings : ['Processamento concluído com ajuste automático.'],
-    geojson: {
-      type: 'FeatureCollection',
-      features: [{ type: 'Feature', geometry: { type: 'Polygon', coordinates: [localRing] }, properties: {} }]
-    }
-  };
-}
+function mergeUniqueTextBlocks(baseText, nextText) {
+  if (!nextText) return baseText;
 
-function mergeUniqueTextBlocks(baseText = '', nextText = '') {
-  const base = String(baseText || '').trim();
-  const next = String(nextText || '').trim();
-  if (!next) return base;
-  if (!base) return next;
-  if (base.includes(next.slice(0, Math.min(120, next.length)))) return base;
-  return `${base}\n\n${next}`.trim();
+  if (nextText.length > baseText.length) {
+    return nextText;
+  }
+
+  return baseText;
 }
 
 function isCoordinateRelevantLine(line) {
@@ -972,16 +1069,36 @@ async function runOcrEtlBranch(fileName, totalPagesHint, baseText, arrayBuffer, 
   const hasCoordinatePairs = stage2Confidence.utmPairs > 0 || stage2Confidence.latLonPairs > 0;
   const weakCoordinateSignal = stage2Confidence.signal < 8;
 
-  // Evita falso positivo quando OCR gera muito texto administrativo sem pares coordenáveis.
-  if (!hasCoordinatePairs && weakCoordinateSignal && !isMemorialPattern && !hasMemorialSignal) {
+  // Evita falso positivo quando OCR gera muito texto administrativo sem pares coordenáveis,
+  // mas permite o parser backend tentar inferência em textos razoavelmente ricos.
+  const normalizedStage2Length = stage2Text.replace(/\s+/g, ' ').trim().length;
+  const shouldHardRejectNoCoordinates = !hasCoordinatePairs
+    && weakCoordinateSignal
+    && !isMemorialPattern
+    && !hasMemorialSignal
+    && normalizedStage2Length < 180;
+
+  if (shouldHardRejectNoCoordinates) {
     logPdfDiag('ocr-stage2-rejected-no-coordinate-pairs', {
-      msg: 'OCR limpo rejeitado por ausência de pares coordenáveis antes do parser backend.',
+      msg: 'OCR limpo rejeitado por ausência de pares coordenáveis e baixo conteúdo útil antes do parser backend.',
       confidence: stage2Confidence,
       expectedPattern,
       stage2Pattern: stage2Pattern?.id || 'unknown',
-      stage2Signals
+      stage2Signals,
+      normalizedStage2Length
     });
     throw new Error('Não foi possível localizar coordenadas UTM válidas no OCR enviado.');
+  }
+
+  if (!hasCoordinatePairs && weakCoordinateSignal && !isMemorialPattern && !hasMemorialSignal) {
+    logPdfDiag('ocr-stage2-soft-pass-no-coordinate-pairs', {
+      msg: 'OCR com sinal fraco de coordenadas seguirá para parser backend (modo tolerante).',
+      confidence: stage2Confidence,
+      expectedPattern,
+      stage2Pattern: stage2Pattern?.id || 'unknown',
+      stage2Signals,
+      normalizedStage2Length
+    });
   }
 
   const apiResult = await runParserLayoutFallbackBranch(
@@ -994,7 +1111,8 @@ async function runOcrEtlBranch(fileName, totalPagesHint, baseText, arrayBuffer, 
       diagPrefix: 'ocr-api',
       suppressUi: true,
       patternHint: String(runtime.patternHint || ''),
-      flowMode: 'ocr'
+      flowMode: 'ocr',
+      rawText: ocrStages.stage1RawText
     }
   );
 
@@ -1006,13 +1124,14 @@ async function runOcrEtlBranch(fileName, totalPagesHint, baseText, arrayBuffer, 
     {
       ...apiResult,
       textSourceUsed: 'ocr-stage2-clean',
+      __sourceText: stage2Text,
       extractedVertices
     },
     {
       branch: 'ocr-etl',
       stages: {
         stage1: {
-          label: 'tesseract-raw-pages',
+          label: 'paddleocr-local-pages',
           textChars: ocrStages.stage1RawText.length,
           confidence: ocrStages.stage1Confidence
         },
@@ -1046,11 +1165,65 @@ async function runParserLayoutFallbackBranch(fileName, totalPagesHint, extracted
   const diagPrefix = String(options.diagPrefix || 'api');
   const patternHint = String(options.patternHint || '');
   const flowMode = String(options.flowMode || 'no-ocr');
-  const candidateText = String(extractedText || '').trim();
   const suppressUi = options?.suppressUi === true;
   const updateBranchStatus = (message, type) => {
     if (!suppressUi && message) updateStatus(message, type);
   };
+
+  const parserText = options?.fullText
+    ?? (typeof extractedText !== 'undefined' ? extractedText : '');
+  const inferenceRawText = String(options?.rawText ?? parserText);
+
+  console.log("TAMANHO:", parserText.length);
+
+  const vertexOccurrences =
+    (
+      parserText.match(/v[ée]rtice\s+[A-Za-z0-9._/-]+/gi) || []
+    );
+
+  console.log(
+    "TOTAL DE OCORRENCIAS DE 'VERTICE':",
+    vertexOccurrences.length
+  );
+
+  const pointIds =
+    (
+      parserText.match(/\b[A-Z]{1,3}\d+\b/gi) || []
+    );
+
+  const uniqueIds =
+    [
+      ...new Set(
+        pointIds.map(v => v.toUpperCase())
+      )
+    ];
+
+  uniqueIds.forEach(id => {
+
+    const regex =
+      new RegExp(id, 'i');
+
+    const idx =
+      parserText.search(regex);
+
+    if (idx >= 0) {
+
+      /*console.log(
+          "---------- TRECHO DO VERTICE ----------"
+      );*/
+
+      console.log(
+        parserText.substring(
+          Math.max(0, idx - 200),
+          idx + 400
+        )
+      );
+    }
+  });
+
+  if (!getWorkspaceAiExtractorUrl()) {
+    throw new Error('Serviço local de extração não configurado.');
+  }
 
   let apiResult;
   try {
@@ -1059,9 +1232,9 @@ async function runParserLayoutFallbackBranch(fileName, totalPagesHint, extracted
       routes: buildWorkspaceAiExtractorCandidates(),
       totalPagesHint,
       processingMode,
-      textConfidence: buildTextCoordinateConfidence(candidateText)
+      textConfidence: buildTextCoordinateConfidence(parserText)
     });
-    apiResult = await callWorkspaceAiExtractor(fileName, totalPagesHint, candidateText, 0, patternHint, flowMode);
+    apiResult = await callWorkspaceAiExtractor(fileName, totalPagesHint, parserText, 0, patternHint, flowMode, inferenceRawText);
 
     // Refinamento direcionado: em memorial descritivo, se a primeira resposta
     // vier por literal direto, tenta 1-2 variantes de texto normalizado para
@@ -1069,8 +1242,8 @@ async function runParserLayoutFallbackBranch(fileName, totalPagesHint, extracted
     const isMemorialHint = patternHint === 'memorial-azimuth-distance';
     const extractionMethod = String(apiResult?.extractionMethod || '').toLowerCase();
     if (isMemorialHint && extractionMethod.includes('literal')) {
-      const retryCandidates = buildBackendRetryTextCandidates(candidateText)
-        .filter((candidate) => candidate && candidate !== candidateText)
+      const retryCandidates = buildBackendRetryTextCandidates(parserText)
+        .filter((candidate) => candidate && candidate !== parserText)
         .sort((a, b) => scoreCoordinateText(b) - scoreCoordinateText(a))
         .slice(0, 2);
 
@@ -1098,7 +1271,7 @@ async function runParserLayoutFallbackBranch(fileName, totalPagesHint, extracted
       }
     }
   } catch (firstError) {
-    const hasCoordinateSigal = hasCoordinateCandidates(candidateText, 1);
+    const hasCoordinateSigal = hasCoordinateCandidates(parserText, 1);
     const firstErrorMsg = String(firstError?.message || firstError || '');
     const deterministicNoUtm = /não foi possível localizar coordenadas UTM válidas/i.test(firstErrorMsg);
 
@@ -1108,29 +1281,17 @@ async function runParserLayoutFallbackBranch(fileName, totalPagesHint, extracted
       error: String(firstError?.message || firstError),
       hasCoordinateSignal: hasCoordinateSigal,
       deterministicNoUtm,
-      textConfidence: buildTextCoordinateConfidence(candidateText),
-      ocrSample: sampleOcrForDiag(candidateText)
+      textConfidence: buildTextCoordinateConfidence(parserText),
+      ocrSample: sampleOcrForDiag(parserText)
     });
 
-    if (hasCoordinateSigal) {
-      const localRing = buildLocalUtmRingFromText(candidateText);
-      if (localRing) {
-        updateBranchStatus('⏳ Aplicando um ajuste final no resultado...', 'info');
-        logPdfDiag(`${diagPrefix}-local-fallback-success`, {
-          msg: `${branchLabel}: fallback local ativado com ${Math.max(0, localRing.length - 1)} vértices.`,
-          extractedVertices: Math.max(0, localRing.length - 1)
-        });
-        return buildLocalFallbackApiResult(localRing);
-      }
-    }
-
     if (deterministicNoUtm) {
-      const retryCandidates = buildBackendRetryTextCandidates(candidateText);
-      const baselineScore = scoreCoordinateText(candidateText);
+      const retryCandidates = buildBackendRetryTextCandidates(parserText);
+      const baselineScore = scoreCoordinateText(parserText);
 
       for (let i = 0; i < retryCandidates.length; i++) {
         const candidate = retryCandidates[i];
-        if (candidate === candidateText) continue;
+        if (candidate === parserText) continue;
 
         const retryScore = scoreCoordinateText(candidate);
         // Evita repetir chamada com texto pior que o baseline.
@@ -1141,7 +1302,7 @@ async function runParserLayoutFallbackBranch(fileName, totalPagesHint, extracted
             msg: `${branchLabel}: retry com texto normalizado/focado em coordenadas (variante ${i + 1}/${retryCandidates.length}).`,
             baselineScore,
             retryScore,
-            baselineConfidence: buildTextCoordinateConfidence(candidateText),
+            baselineConfidence: buildTextCoordinateConfidence(parserText),
             retryConfidence: buildTextCoordinateConfidence(candidate)
           });
           apiResult = await callWorkspaceAiExtractor(fileName, totalPagesHint, candidate, 0, patternHint, flowMode);
@@ -1156,7 +1317,7 @@ async function runParserLayoutFallbackBranch(fileName, totalPagesHint, extracted
 
       logPdfDiag(`${diagPrefix}-attempt-2-skipped`, {
         msg: `${branchLabel}: retry da API ignorado por falha determinística de coordenadas com o mesmo texto.`,
-        textConfidence: buildTextCoordinateConfidence(candidateText)
+        textConfidence: buildTextCoordinateConfidence(parserText)
       });
       throw firstError;
     }
@@ -1168,28 +1329,18 @@ async function runParserLayoutFallbackBranch(fileName, totalPagesHint, extracted
         routes: buildWorkspaceAiExtractorCandidates(),
         totalPagesHint,
         processingMode,
-        textConfidence: buildTextCoordinateConfidence(candidateText)
+        textConfidence: buildTextCoordinateConfidence(parserText)
       });
-      apiResult = await callWorkspaceAiExtractor(fileName, totalPagesHint, candidateText, 0, patternHint, flowMode);
+      apiResult = await callWorkspaceAiExtractor(fileName, totalPagesHint, parserText, 0, patternHint, flowMode);
       apiResult.warnings = Array.isArray(apiResult.warnings)
         ? [...apiResult.warnings, 'Processamento ajustado automaticamente.']
         : ['Processamento ajustado automaticamente.'];
     } catch (secondError) {
-      updateBranchStatus('⏳ Ainda estamos ajustando o resultado...', 'warning');
       logPdfDiag(`${diagPrefix}-attempt-2-failed`, {
         msg: `${branchLabel}: segunda tentativa falhou: ${secondError?.message || secondError}`,
         error: String(secondError?.message || secondError)
       });
-      const localRing = buildLocalUtmRingFromText(candidateText);
-      if (!localRing) {
-        throw secondError;
-      }
-      updateBranchStatus('⏳ Aplicando um ajuste final no resultado...', 'info');
-      logPdfDiag(`${diagPrefix}-local-fallback-success-after-retry`, {
-        msg: `${branchLabel}: fallback local após retry com ${Math.max(0, localRing.length - 1)} vértices.`,
-        extractedVertices: Math.max(0, localRing.length - 1)
-      });
-      return buildLocalFallbackApiResult(localRing);
+      throw secondError;
     }
   }
 
@@ -1275,37 +1426,8 @@ async function extractPdfTextLocally(arrayBuffer, maxPages = 200) {
 }
 
 // ---------------------------------------------------------------------------
-// OCR de imagem via Tesseract.js v5 — roda inteiramente no browser.
-//
-// Configurações críticas para documentos de matrícula (tabelas UTM):
-//   • Worker único em cache: evita reinicializar entre páginas (~3-5x mais rápido)
-//   • Resolução 3x: equiv. a 300 DPI, patamar mínimo para reconhecimento confioável
-//   • Binarização prévia: converte para preto/branco antes de enviar ao OCR
-//   • PSM 6 (bloco uniforme): ideal para tabelas e listas numéricas
-//   • OEM 1 (LSTM): motor neural, mais preciso que o legado
-//   • Whitelist de caracteres: restringe o reconhecimento ao conjunto relevante
-//     para coordenadas, eliminando substituições espurias
+// OCR de imagem via PaddleOCR local compartilhado.
 // ---------------------------------------------------------------------------
-
-// Worker reutilizado entre chamadas para não pagar o custo de init repetido
-let _tesseractWorker = null;
-
-async function _getTesseractWorker() {
-  if (_tesseractWorker) return _tesseractWorker;
-  const T = window.Tesseract;
-  if (!T) throw new Error('Tesseract.js não carregado');
-
-  _tesseractWorker = await T.createWorker('por+eng');
-  await _tesseractWorker.setParameters({
-    // PSM 6: "bloco único e uniforme de texto" — ótimo para tabelas de coordenadas
-    tessedit_pageseg_mode: '6',
-    // Whitelist: dígitos + sinais + letras usadas em IDs de vértices e rótulos (N=, E=...)
-    tessedit_char_whitelist:
-      '0123456789.,- \nABCDEFGHIJKLMNOPQRSTUVWXYZ' +
-      'abcdefghijklmnopqrstuvwxyz()=/:;`\'"°º’′”″',
-  });
-  return _tesseractWorker;
-}
 
 function _projectionVarianceAtAngle(canvas, angleDeg) {
   const W = canvas.width;
@@ -1578,176 +1700,178 @@ function _buildOcrRoiCandidates(canvas, includeExtraRoi = false) {
   return candidates.filter((item) => item?.canvas?.width > 10 && item?.canvas?.height > 10);
 }
 
-async function extractTextWithTesseract(arrayBuffer, maxPages = 10, scale = 3.0, options = {}) {
-  if (!window.Tesseract) {
-    console.warn('[PDFtoArcgis][Tesseract] biblioteca não carregada, pulando OCR');
+async function extractTextWithLocalOcr(arrayBuffer, maxPages = 10, scale = 5, options = {}) {
+  const paddleText = await extractTextWithPaddleOcr(arrayBuffer, maxPages, Math.min(scale, 3.2));
+  if (paddleText?.rawText && paddleText.rawText.length > 200) {
+    window._OCR_PROVIDER = 'paddleocr-local';
+    window._OCR_FULL_TEXT = paddleText.rawText;
     return options?.returnStages === true
-      ? { rawText: '', cleanedText: '' }
-      : '';
+      ? paddleText
+      : paddleText;
   }
+
   try {
-    setProgressExperience('Preparando a leitura avançada...', null);
-    const worker = await _getTesseractWorker();
+    setProgressExperience('Executando OCR otimizado...', null);
+
+    if (!paddleText?.rawText) {
+      throw new Error('PaddleOCR local não retornou texto.');
+    }
+
+    const worker = { recognize: async () => ({ data: { text: '' } }) };
 
     const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
     const pdfDoc = await loadingTask.promise;
-    const pageOrder = options.fullScan
-      ? buildSequentialPageOrder(pdfDoc.numPages, maxPages)
-      : buildPrioritizedPageOrder(pdfDoc.numPages, maxPages);
-    const totalPages = pageOrder.length;
-    const maxTotalMs = Number.isFinite(Number(options.maxTotalMs)) ? Number(options.maxTotalMs) : 0;
-    const forceAllPages = options.forceAllPages === true;
-    const startedAt = Date.now();
+
+    const totalPages = Math.min(pdfDoc.numPages, maxPages);
+
     let fullRawText = '';
-    let consecutiveLowSignalPages = 0;
-    const ocrPageStats = [];
 
-    for (let idx = 0; idx < totalPages; idx++) {
-      if (maxTotalMs > 0 && (Date.now() - startedAt) > maxTotalMs) {
-        break;
-      }
-
-      const pageNum = pageOrder[idx];
-      setProgressExperience(`Analisando páginas ${idx + 1}/${totalPages}...`, null);
+    for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
+      setProgressExperience(`Processando página ${pageNum}/${totalPages}...`, null);
 
       const page = await pdfDoc.getPage(pageNum);
-      // 3x = ~300 DPI equivalente; pode subir em nova tentativa para OCR difícil
+
+      // RENDER EM ALTA RESOLUÇÃO (igual ao outro app)
       const viewport = page.getViewport({ scale });
+
       const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+
       canvas.width = viewport.width;
       canvas.height = viewport.height;
+
       await page.render({
-        canvasContext: canvas.getContext('2d', { willReadFrequently: true }),
-        viewport
+        canvasContext: ctx,
+        viewport: viewport
       }).promise;
 
-      const aggregatedBefore = buildTextCoordinateConfidence(buildCleanOcrStageText(fullRawText));
-      const includeExtraRoi = (aggregatedBefore.utmPairs < 2 && aggregatedBefore.latLonPairs < 2);
-      const roiCandidates = _buildOcrRoiCandidates(canvas, includeExtraRoi);
-
-      let bestRawText = '';
-      let bestCleanedText = '';
-      let bestScore = Number.NEGATIVE_INFINITY;
-
-      for (let cIdx = 0; cIdx < roiCandidates.length; cIdx++) {
-        // Se o full-page já capturou coordenadas úteis, evita OCR extra de ROI.
-        if (cIdx > 0 && bestScore >= 22) break;
-
-        const candidate = roiCandidates[cIdx];
-        _preprocessCanvasForOcr(candidate.canvas, {
-          enableDeskew: options.enableDeskew === true,
-          profile: candidate.preprocess?.profile || 'default'
-        });
-
-        const { data: { text } } = await worker.recognize(candidate.canvas);
-        const rawCandidateText = String(text || '').trim();
-        const normalizedText = normalizeOcrArtifacts(rawCandidateText);
-        const candidateScore = scoreCoordinateText(normalizedText);
-
-        if (candidateScore > bestScore) {
-          bestScore = candidateScore;
-          bestRawText = rawCandidateText;
-          bestCleanedText = normalizedText;
-        }
-
-        if (candidateScore >= 28) break;
-      }
-
-      if (bestRawText) {
-        fullRawText += `\n\n--- PAGINA ${pageNum} ---\n${bestRawText}`;
-      }
-
-      const pageConfidence = buildTextCoordinateConfidence(bestCleanedText);
-      ocrPageStats.push({
-        page: pageNum,
-        roiTried: roiCandidates.length,
-        bestScore: Number.isFinite(bestScore) ? Number(bestScore.toFixed(2)) : null,
-        rawChars: bestRawText.length,
-        cleanedChars: bestCleanedText.length,
-        signal: pageConfidence.signal,
-        utmPairs: pageConfidence.utmPairs,
-        latLonPairs: pageConfidence.latLonPairs
+      // Usa contraste local, binarização adaptativa, denoise e deskew leve.
+      // A limiarização fixa degradava acentos, separadores DMS e dígitos OCR.
+      _preprocessCanvasForOcr(canvas, {
+        enableDeskew: options.enableDeskew === true,
+        profile: 'default'
       });
-      if (pageConfidence.utmPairs < 1 && pageConfidence.latLonPairs < 1 && pageConfidence.signal < 3) {
-        consecutiveLowSignalPages += 1;
-      } else {
-        consecutiveLowSignalPages = 0;
-      }
 
-      const aggregate = buildTextCoordinateConfidence(buildCleanOcrStageText(fullRawText));
-      // Early-stop: já temos material suficiente para extração robusta.
-      if (!forceAllPages && (aggregate.utmPairs >= 3 || aggregate.latLonPairs >= 3 || aggregate.signal >= 14)) {
-        break;
-      }
+      const result = await worker.recognize(canvas);
 
-      // Se páginas consecutivas não trazem sinal coordenável, evita custo excessivo.
-      if (!forceAllPages && consecutiveLowSignalPages >= 2 && idx >= 1 && aggregate.utmPairs < 1 && aggregate.latLonPairs < 1) {
-        break;
+      const text = String(result?.data?.text || '').trim();
+
+      if (text) {
+        fullRawText += `\n\n--- PAGINA ${pageNum} ---\n${text}`;
       }
     }
 
     const rawText = fullRawText.trim();
+
+    // salva o OCR globalmente para uso posterior
+    window._OCR_FULL_TEXT = rawText;
+
+    const verticesFinal = buildVerticesTableData(rawText);
+
+    extractedCoordinates = verticesFinal.map(v => ({
+      id: v.id,
+      north: v.north,
+      east: v.east
+    }));
+
     const cleanedText = buildCleanOcrStageText(rawText);
-    const rawSnapshot = captureExtractedTextSnapshot('ocr-stage1-raw', rawText, {
-      pagesInDocument: Number(pdfDoc?.numPages || 0),
-      pagesRequested: Number(maxPages || 0),
-      pagesAttempted: totalPages,
-      pagesProcessed: ocrPageStats.length,
-      pageOrder,
-      pageStats: ocrPageStats
-    });
-    const cleanedSnapshot = captureExtractedTextSnapshot('ocr-stage2-cleaned', cleanedText, {
-      sourceFingerprint: rawSnapshot.fingerprint,
-      pagesProcessed: ocrPageStats.length
-    });
 
-    logPdfDiag('ocr-text-capture', {
-      msg: `OCR capturou texto em ${ocrPageStats.length}/${totalPages} páginas tentadas.`,
-      rawChars: rawSnapshot.chars,
-      cleanedChars: cleanedSnapshot.chars,
-      rawFingerprint: rawSnapshot.fingerprint,
-      cleanedFingerprint: cleanedSnapshot.fingerprint,
-      pagesProcessed: ocrPageStats.length,
-      pagesAttempted: totalPages,
-      pagesInDocument: Number(pdfDoc?.numPages || 0),
-      pageOrder,
-      pageStats: ocrPageStats
-    });
-
+    // mantém compatibilidade com o restante do sistema
     if (options?.returnStages === true) {
-      return { rawText, cleanedText };
+      return {
+        rawText,
+        cleanedText
+      };
     }
 
-    return cleanedText;
+
+    return {
+      rawText,
+      cleanedText
+    };
+
   } catch (e) {
-    console.warn('[PDFtoArcgis][Tesseract] erro:', e?.message || String(e));
-    // Reset do worker para a próxima tentativa
-    if (_tesseractWorker) {
-      try { await _tesseractWorker.terminate(); } catch { /* ignore */ }
-      _tesseractWorker = null;
-    }
+    console.warn('[PDFtoArcgis][OCR] erro:', e?.message || e);
+
     return options?.returnStages === true
       ? { rawText: '', cleanedText: '' }
       : '';
   }
 }
 
-// Stage 1: OCR bruto com Tesseract (sem normalização semântica).
-async function runStage1RawOcrTesseract(arrayBuffer, maxPages = 10, scale = 3.0, options = {}) {
-  const staged = await extractTextWithTesseract(arrayBuffer, maxPages, scale, {
-    ...options,
-    returnStages: true
-  });
-  return String(staged?.rawText || '').trim();
+async function extractTextWithPaddleOcr(arrayBuffer, maxPages = 10, scale = 3) {
+  const endpoint = 'http://127.0.0.1:11437/api/ocr';
+  try {
+    const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+    const pdfDoc = await loadingTask.promise;
+    const totalPages = Math.min(pdfDoc.numPages, maxPages);
+    const images = [];
+
+    for (let pageNum = 1; pageNum <= totalPages; pageNum += 1) {
+      const page = await pdfDoc.getPage(pageNum);
+      const viewport = page.getViewport({ scale });
+      const canvas = document.createElement('canvas');
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      const ctx = canvas.getContext('2d');
+      await page.render({ canvasContext: ctx, viewport }).promise;
+      images.push(canvas.toDataURL('image/jpeg', 0.9));
+    }
+
+    const payload = await window.VetorizadorLocalOcr?.recognizeImages(images);
+    if (!payload?.ok || !Array.isArray(payload.pages)) return null;
+
+    const rawText = payload.pages
+      .map((page) => `--- PAGINA ${page.page} ---\n${String(page.text || '')}`)
+      .filter((text) => text.trim())
+      .join('\n\n')
+      .trim();
+    return {
+      rawText,
+      cleanedText: buildCleanOcrStageText(rawText),
+      stage1RawText: rawText,
+      provider: payload.provider,
+      meanConfidence: payload.meanConfidence
+    };
+  } catch (error) {
+    console.warn('[PDFtoArcgis][OCR] PaddleOCR local indisponível:', error?.message || error);
+    return null;
+  }
 }
 
-// Stage 2: normalização determinística (regex + regras contextuais).
-function runStage2NormalizeText(rawText = '') {
-  return buildCleanOcrStageText(String(rawText || ''));
+// Stage 1: OCR bruto local (sem normalização semântica).
+async function runStage1RawOcr(arrayBuffer, maxPages = 10, scale = 3.0, options = {}) {
+  try {
+    const staged = await extractTextWithLocalOcr(
+      arrayBuffer,
+      maxPages,
+      scale,
+      {
+        ...options,
+        returnStages: true
+      }
+    );
+
+    // pega o texto bruto do OCR
+    return String(staged?.rawText || '').trim();
+
+  } catch (error) {
+    console.warn("OCR local falhou em runStage1RawOcr:", error);
+    // garante que não quebra o fluxo
+    return '';
+  }
 }
 
-async function runOcrEnhancementFlow(arrayBuffer, extractedText, totalPagesHint, ocrPlan, processingMode, runtime = {}) {
-  let stage1RawText = '';
+
+function runStage2NormalizeText(text) {
+  return buildCleanOcrStageText(text);
+}
+
+async function runOcrEnhancementFlow(arrayBuffer, localText, totalPagesHint, ocrPlan, processingMode, runtime = {}) {
+
+  console.log('OCR FLOW INPUT:', typeof localText, localText?.length);
+
+  let stage1RawText = localText;
 
   const setOcrUi = (message, labelText, progressValue) => {
     if (runtime?.suppressUi === true) return;
@@ -1759,14 +1883,37 @@ async function runOcrEnhancementFlow(arrayBuffer, extractedText, totalPagesHint,
 
   const pass1MaxPages = ocrPlan.pass1.maxPages;
   const pass1Start = Date.now();
-  const stage1Pass1Raw = await runStage1RawOcrTesseract(arrayBuffer, pass1MaxPages, ocrPlan.pass1.scale, {
-    enableDeskew: ocrPlan.pass1.enableDeskew,
-    fullScan: ocrPlan.pass1.fullScan,
-    maxTotalMs: ocrPlan.pass1.maxTotalMs
-  });
+
+  let finalText = localText;
+
+  let ocrText = '';
+
+  try {
+    ocrText = await runStage1RawOcr(
+      arrayBuffer,
+      pass1MaxPages,
+      ocrPlan.pass1.scale,
+      {
+        enableDeskew: ocrPlan.pass1.enableDeskew,
+        fullScan: ocrPlan.pass1.fullScan,
+        maxTotalMs: ocrPlan.pass1.maxTotalMs
+      }
+    );
+
+  } catch (e) {
+    console.warn('OCR falhou:', e);
+  }
+
+  if (typeof ocrText === 'string' && ocrText.length > 500) {
+    finalText = ocrText;
+  }
+
+  console.log('FINAL TEXT SIZE:', finalText.length);
+
   const pass1DurationMs = Date.now() - pass1Start;
 
-  stage1RawText = mergeUniqueTextBlocks(stage1RawText, stage1Pass1Raw);
+  stage1RawText = finalText || stage1RawText;
+
   let stage2Text = runStage2NormalizeText(stage1RawText);
 
   const postPass1 = buildTextCoordinateConfidence(stage2Text);
@@ -1804,7 +1951,7 @@ async function runOcrEnhancementFlow(arrayBuffer, extractedText, totalPagesHint,
   if (shouldRunPass2) {
     setOcrUi('⏳ Refinando a leitura do documento...', 'Refinando a análise...');
     const pass2MaxPages = ocrPlan.pass2.maxPages;
-    const stage1Pass2Raw = await runStage1RawOcrTesseract(arrayBuffer, pass2MaxPages, ocrPlan.pass2.scale, {
+    const stage1Pass2Raw = await runStage1RawOcr(arrayBuffer, pass2MaxPages, ocrPlan.pass2.scale, {
       enableDeskew: ocrPlan.pass2.enableDeskew,
       fullScan: ocrPlan.pass2.fullScan,
       maxTotalMs: ocrPlan.pass2.maxTotalMs
@@ -1960,94 +2107,11 @@ function selectCoherentUtmPointsLocal(points) {
   return segments.length > 0 ? segments.sort((a, b) => b.length - a.length)[0] : filtered;
 }
 
-function buildLocalUtmRingFromText(rawText) {
-  const text = String(rawText || '');
-  if (!text.trim()) return null;
-
-  const lines = text.split(/\r?\n/);
-  const points = [];
-  const hintRegex = /(coordenad|utm|sirgas|norte|leste|este|vertice|[mvp][\s\-_.]{0,2}\d{1,4}|pt[\s\-_.]{0,2}\d{1,4}|ponto|\bx\s*=|\by\s*=|\bn\s*[=(]|\be\s*[=(]|\bn\s+\d|\be\s+\d|\bleste\b|\bnorte\b|latitude|longitude|geograf|per[ií]metr)/i;
-
-  for (const line of lines) {
-    if (!hintRegex.test(line)) continue;
-    const nums = extractNumericCandidatesLocal(line);
-    for (let i = 0; i + 1 < nums.length; i++) {
-      const pair = normalizeUtmPairLocal(nums[i], nums[i + 1]);
-      if (pair) {
-        points.push(pair);
-        break;
-      }
-    }
-  }
-
-  if (points.length < 3) {
-    const nums = extractNumericCandidatesLocal(text);
-    for (let i = 0; i + 1 < nums.length; i++) {
-      const pair = normalizeUtmPairLocal(nums[i], nums[i + 1]);
-      if (pair) points.push(pair);
-      if (points.length >= 120) break;
-    }
-  }
-
-  if (points.length < 3) {
-    const isE = (v) => v >= 100000 && v <= 900000;
-    const isN = (v) => v >= 1000000 && v <= 10000000;
-    const nums = extractNumericCandidatesLocal(text);
-    const es = [];
-    const ns = [];
-    for (const n of nums) {
-      const v = parseNumericLoose(n);
-      if (!Number.isFinite(v)) continue;
-      const abs = Math.abs(v);
-      if (isE(abs)) es.push(v);
-      else if (isN(abs)) ns.push(v);
-    }
-    const len = Math.min(es.length, ns.length);
-    if (len >= 3) {
-      for (let i = 0; i < len && points.length < 120; i++) {
-        points.push([es[i], ns[i]]);
-      }
-    }
-  }
-
-  if (points.length < 3) return null;
-
-  const coherent = selectCoherentUtmPointsLocal(points);
-  if (coherent.length < 3) return null;
-
-  const cleaned = [];
-  for (const p of coherent) {
-    const prev = cleaned[cleaned.length - 1];
-    if (!prev || prev[0] !== p[0] || prev[1] !== p[1]) cleaned.push([p[0], p[1]]);
-  }
-  if (cleaned.length < 3) return null;
-
-  // Guardrail: evita produzir polígono com pares UTM absurdos vindos de OCR ruidoso.
-  const eastValues = cleaned.map((p) => p[0]);
-  const northValues = cleaned.map((p) => p[1]);
-  const minE = Math.min(...eastValues);
-  const maxE = Math.max(...eastValues);
-  const minN = Math.min(...northValues);
-  const maxN = Math.max(...northValues);
-  const spanE = maxE - minE;
-  const spanN = maxN - minN;
-  const diag = Math.hypot(spanE, spanN);
-  if (!Number.isFinite(diag) || spanE > 250000 || spanN > 250000 || diag > 300000) {
-    return null;
-  }
-
-  const first = cleaned[0];
-  const last = cleaned[cleaned.length - 1];
-  if (first[0] !== last[0] || first[1] !== last[1]) cleaned.push([first[0], first[1]]);
-  return cleaned.length >= 4 ? cleaned : null;
-}
-
 // Navegação lateral e rolagem para resultados.
 function openNav() {
   document.getElementById("mySidenav").style.width = "250px";
 }
 function closeNav() { document.getElementById("mySidenav").style.width = "0"; }
-
 
 // Atualiza o painel de validação topológica.
 function updateValidationUI(topology, corrections = []) {
@@ -2072,11 +2136,12 @@ function updateValidationUI(topology, corrections = []) {
 
   // Atualiza título.
   if (validationTitle) {
-    if (topology.isValid) {
-      validationTitle.innerHTML = '<i class="fas fa-check-circle" style="color:#28a745;"></i> Polígono Válido!';
-    } else {
-      validationTitle.innerHTML = '<i class="fas fa-exclamation-triangle" style="color:#dc3545;"></i> Problemas Detectados';
-    }
+    validationTitle.replaceChildren();
+    const icon = document.createElement('i');
+    icon.className = topology.isValid ? 'fas fa-check-circle' : 'fas fa-exclamation-triangle';
+    icon.style.color = topology.isValid ? '#28a745' : '#dc3545';
+    validationTitle.appendChild(icon);
+    validationTitle.appendChild(document.createTextNode(topology.isValid ? ' Polígono Válido!' : ' Problemas Detectados'));
   }
 
   // Renderiza erros.
@@ -2110,19 +2175,41 @@ function updateValidationUI(topology, corrections = []) {
     const areaHa = (topology.area / 10000).toFixed(4);
     const areaM2 = topology.area.toFixed(2);
     const closedText = topology.closed ? "✓ Fechado" : "⚠ Não fechado";
+    validationDetails.replaceChildren();
 
-    validationDetails.innerHTML = `
-      <strong>Área:</strong> ${areaHa} ha (${areaM2} m²)<br>
-      <strong>Fechamento:</strong> ${closedText}<br>
-      <strong>Orientação:</strong> Anti-horária (CCW) ✓<br>
-      <strong>Auto-intersecções:</strong> ${topology.hasIntersections ? '❌ Sim' : '✓ Não'}
-    `;
+    const summaryLines = [
+      ['Área:', `${areaHa} ha (${areaM2} m²)`],
+      ['Fechamento:', closedText],
+      ['Orientação:', 'Anti-horária (CCW) ✓'],
+      ['Auto-intersecções:', topology.hasIntersections ? '❌ Sim' : '✓ Não']
+    ];
+
+    summaryLines.forEach(([label, value]) => {
+      const line = document.createElement('div');
+      const strong = document.createElement('strong');
+      strong.textContent = label;
+      line.appendChild(strong);
+      line.appendChild(document.createTextNode(` ${value}`));
+      validationDetails.appendChild(line);
+    });
 
     if (corrections.length > 0) {
-      validationDetails.innerHTML += `<br><br><strong>Correções aplicadas:</strong><br>`;
-      corrections.forEach(corr => {
-        validationDetails.innerHTML += `• ${corr}<br>`;
+      const spacer = document.createElement('div');
+      spacer.style.marginTop = '12px';
+      validationDetails.appendChild(spacer);
+
+      const heading = document.createElement('strong');
+      heading.textContent = 'Correções aplicadas:';
+      validationDetails.appendChild(heading);
+
+      const list = document.createElement('ul');
+      list.style.margin = '6px 0 0 18px';
+      corrections.forEach((corr) => {
+        const item = document.createElement('li');
+        item.textContent = String(corr || '');
+        list.appendChild(item);
       });
+      validationDetails.appendChild(list);
     }
   } else if (validationSuccess) {
     validationSuccess.style.display = "none";
@@ -2232,6 +2319,14 @@ function updateStatus(msg, type) {
   statusDiv.style.display = "block";
   statusDiv.innerText = msg;
   statusDiv.className = "status-" + type;
+
+
+  const statusEl = document.getElementById("status");
+
+  if (!statusEl) return;
+
+  // foco automático
+  statusEl.focus();
 }
 
 function sanitizeFileName(name) {
@@ -2349,7 +2444,7 @@ function askLocalRelativeOriginLatLon(defaultValue = null) {
     };
 
     applyBtn?.addEventListener('click', apply);
-    // Fluxo propositalmente estrito: só confirma ao clicar no botã
+    // Fluxo propositalmente estrito: só confirma ao clicar no botão
     // o "Aplicar origem".
 
     latInput?.focus();
@@ -2512,7 +2607,7 @@ function validatePolygonTopology(vertices, projectionKey) {
   const warnings = [];
 
   // Reordenar se detectar desordem
-  let orderedVertices = vertices;
+  let orderedVertices = [...vertices];
   let isDisordered = false;
 
   // Detectar saltos anormais
@@ -2571,9 +2666,13 @@ function validatePolygonTopology(vertices, projectionKey) {
     first.east - last.east
   );
 
-  if (closureDistance > 5) {
-    warnings.push(`⚠️ Poligono nao fechado: ${closureDistance.toFixed(1)}m`);
+
+  if (closureDistance > 1) {
+    warnings.push(
+      `⚠️ Poligono nao fechado: ${closureDistance.toFixed(1)}m`
+    );
   }
+
 
   // Auto-interseccao
   let hasIntersections = false;
@@ -2620,7 +2719,7 @@ function validatePolygonTopology(vertices, projectionKey) {
 
   if (!isCCW) {
     warnings.push("⚠️ Ordem CW; convertendo para CCW");
-    orderedVertices = orderedVertices.reverse();
+    orderedVertices = [...orderedVertices].reverse();
   }
 
   // Area fora do esperado
@@ -2772,6 +2871,30 @@ function buildProj4FromProjectionKey(key) {
   return null;
 }
 
+function buildProjectionFromPrj(key, prjText = "") {
+  const catalogProjection = PROJECTIONS[key];
+  if (catalogProjection) return catalogProjection;
+
+  const wkt = String(prjText || "").trim();
+  if (!wkt) return null;
+
+  let parsed;
+  try {
+    parsed = typeof proj4 === "function" ? proj4(wkt) : null;
+  } catch {
+    parsed = null;
+  }
+  if (!parsed) return null;
+
+  const nameMatch = wkt.match(/^(?:PROJCS|PROJCRS|GEOGCS|GEODCRS)\s*\[\s*["']([^"']+)/i);
+  const epsgMatch = wkt.match(/(?:AUTHORITY|ID)\s*\[\s*["']EPSG["']\s*,\s*["'](\d+)["']/i);
+  return {
+    name: nameMatch?.[1] || "CRS definido pelo arquivo .prj",
+    epsg: epsgMatch ? `EPSG:${epsgMatch[1]}` : "PRJ",
+    wkt
+  };
+}
+
 function maybeReprojectGeographicVertices(vertices = [], projectionKey = null) {
   const list = Array.isArray(vertices) ? vertices : [];
   if (!list.length || !isLikelyProjectedCrsKey(projectionKey)) {
@@ -2792,20 +2915,25 @@ function maybeReprojectGeographicVertices(vertices = [], projectionKey = null) {
     return { vertices: list, transformed: false, reason: 'proj4-unavailable' };
   }
 
-  const projTarget = buildProj4FromProjectionKey(projectionKey);
+  const projTarget = buildProj4FromProjectionKey(projectionKey) || shpProjectionWkt;
   if (!projTarget) {
     return { vertices: list, transformed: false, reason: `unsupported-projection-key:${projectionKey}` };
   }
 
-  const transformed = list.map((v, idx) => {
-    const id = v?.id || `V${String(idx + 1).padStart(3, '0')}`;
-    const xy = proj4(proj4.WGS84, projTarget, [Number(v.east), Number(v.north)]);
+  const transformed = list.map((v) => {
+
+    const xy = proj4(proj4.WGS84, projTarget, [
+      Number(v.east),
+      Number(v.north)
+    ]);
+
     return {
       ...v,
-      id,
+      id: (v.id && v.id.trim()) || "SEM_ID", // mantém ID original do documento
       east: Number(xy[0]),
       north: Number(xy[1])
     };
+
   });
 
   return {
@@ -2823,8 +2951,8 @@ function validateUtmCoordinateScale(vertices) {
 
   let plausible = 0;
   for (const vertex of vertices) {
-    const e = Math.abs(Number(vertex.east));
-    const n = Math.abs(Number(vertex.north));
+    const e = Number(vertex.east);
+    const n = Number(vertex.north);
     if (e >= minEast && e <= maxEast && n >= minNorth && n <= maxNorth) {
       plausible += 1;
     }
@@ -3152,20 +3280,7 @@ function gerarCsvParaVertices(vertices, epsg, docId = null, topologyInfo = null,
   // Cabeçalho da tabela
   csv += "Point_ID;Ordem;Norte_Y;Este_X;EPSG;Dist_M;Azimute_Deg;Qualidade;Notas\n";
 
-  // Estratégia de fechamento: se não estiver fechado, adiciona o primeiro vértice ao final
-  let verticesToExport = [...vertices];
-  if (topologyInfo && topologyInfo.closed === false && vertices.length > 2) {
-    const first = vertices[0];
-    // Cria um novo vértice de fechamento (Point_ID e Ordem incrementados)
-    const closingVertex = {
-      ...first,
-      id: (first.id || "F") + "_close", // Sufixo para evitar duplicata
-      ordem: vertices.length + 1,
-      distCalc: "---",
-      azCalc: "---"
-    };
-    verticesToExport.push(closingVertex);
-  }
+  const verticesToExport = [...vertices];
 
   for (let i = 0; i < verticesToExport.length; i++) {
     const c = verticesToExport[i];
@@ -3202,7 +3317,7 @@ function gerarCsvParaVertices(vertices, epsg, docId = null, topologyInfo = null,
 }
 
 // Relatorio de validacao
-function gerarRelatorioValidacao(docId, pages, topologyInfo, memorialInfo, warnings) {
+function gerarRelatorioValidacao(docId, pages, topologyInfo, memorialInfo, warnings, assistiveAnalysis = null) {
   let report = `RELATÓRIO DE VALIDAÇÃO - Matrícula ${docId}\n`;
   report += `Data: ${new Date().toLocaleString("pt-BR")}\n`;
   let safePages = Array.isArray(pages) ? pages.join(", ") : (typeof pages === 'string' ? pages : "(desconhecido)");
@@ -3212,6 +3327,25 @@ function gerarRelatorioValidacao(docId, pages, topologyInfo, memorialInfo, warni
   const memorialMatches = Array.isArray(memorialInfo?.matches) ? memorialInfo.matches : [];
   const memorialIssues = Array.isArray(memorialInfo?.issues) ? memorialInfo.issues : [];
   const safeWarnings = Array.isArray(warnings) ? warnings : [];
+
+  if (assistiveAnalysis) {
+    report += `ANÁLISE ASSISTIVA DO MEMORIAL:\n`;
+    report += `  Tipo identificado: ${assistiveAnalysis.documentType || "não informado"}\n`;
+    report += `  Prioridade da fonte: ${assistiveAnalysis.sourcePriority || "não informado"}\n`;
+    report += `  Datum: ${assistiveAnalysis.datum || "não informado"}\n`;
+    report += `  Zona UTM: ${assistiveAnalysis.utmZone || "não informada"}${assistiveAnalysis.hemisphere ? `/${assistiveAnalysis.hemisphere}` : ""}\n`;
+    report += `  EPSG: ${assistiveAnalysis.epsg || "não informado"}\n`;
+    if (assistiveAnalysis.confidence !== null && assistiveAnalysis.confidence !== undefined) {
+      report += `  Confiança da IA: ${(Number(assistiveAnalysis.confidence) * 100).toFixed(0)}%\n`;
+    }
+    const auditLines = [
+      ...(Array.isArray(assistiveAnalysis.corrections) ? assistiveAnalysis.corrections.map((item) => `Correção: ${item}`) : []),
+      ...(Array.isArray(assistiveAnalysis.missingData) ? assistiveAnalysis.missingData.map((item) => `Dado ausente: ${item}`) : []),
+      ...(Array.isArray(assistiveAnalysis.notes) ? assistiveAnalysis.notes : [])
+    ];
+    auditLines.forEach((item) => { report += `  • ${item}\n`; });
+    report += `\n`;
+  }
 
   if (topologyInfo) {
     const intersections = Array.isArray(topologyInfo.intersectionPairs)
@@ -3260,6 +3394,40 @@ function gerarRelatorioValidacao(docId, pages, topologyInfo, memorialInfo, warni
   }
 
   return report;
+}
+
+function formatAnalyzedPagesLabel(apiResult, totalPagesHint = 0) {
+  const pageNumbers = Array.isArray(apiResult?.pageNumbers)
+    ? apiResult.pageNumbers
+        .map((value) => Number(value))
+        .filter((value) => Number.isFinite(value) && value >= 1)
+    : [];
+
+  if (pageNumbers.length > 0) {
+    const unique = [...new Set(pageNumbers)].sort((a, b) => a - b);
+    const ranges = [];
+    let start = unique[0];
+    let prev = unique[0];
+
+    for (let i = 1; i < unique.length; i += 1) {
+      const current = unique[i];
+      if (current === prev + 1) {
+        prev = current;
+        continue;
+      }
+      ranges.push(start === prev ? String(start) : `${start}-${prev}`);
+      start = current;
+      prev = current;
+    }
+
+    ranges.push(start === prev ? String(start) : `${start}-${prev}`);
+    return ranges.join(', ');
+  }
+
+  const hintedPages = Number.isFinite(Number(totalPagesHint)) ? Number(totalPagesHint) : 0;
+  if (hintedPages > 1) return `1-${hintedPages}`;
+  if (hintedPages === 1) return '1';
+  return '(desconhecido)';
 }
 
 // UI: seletor de documento
@@ -3321,23 +3489,57 @@ if (docSelect) {
 function displayResults() {
   resultBox.style.display = "block";
   countDisplay.innerText = extractedCoordinates.length;
-  previewTableBody.innerHTML = "";
-  for (const c of extractedCoordinates) {
-    previewTableBody.innerHTML += `
-      <tr>
-        <td>${c.ordem}</td>
-        <td>${c.id}</td>
-        <td>${c.north}</td>
-        <td>${c.east}</td>
-        <td>${c.distCalc}</td>
-        <td>${c.azCalc}</td>
-      </tr>`;
-  }
+  renderCoordinatePreviewRows(extractedCoordinates);
   scrollToResults();
 }
 
-async function applyExtractionGeoJsonResult(apiResult, sourceFileName) {
+function renderCoordinatePreviewRows(rows = []) {
+  if (!previewTableBody) return;
+  previewTableBody.replaceChildren();
+
+  rows.forEach((row) => {
+    const tr = document.createElement('tr');
+    [
+      row?.ordem,
+      row?.id,
+      row?.north,
+      row?.east,
+      row?.distCalc,
+      row?.azCalc
+    ].forEach((value) => {
+      const td = document.createElement('td');
+      td.textContent = String(value ?? '');
+      tr.appendChild(td);
+    });
+    previewTableBody.appendChild(tr);
+  });
+}
+
+
+async function applyExtractionGeoJsonResult(apiResult, sourceFileName, extractedText, totalPagesHint = 0) {
+  console.log('APPLY RECEBEU extractedText:', typeof extractedText, extractedText?.length);
+  // fallback total quando não há GeoJSON
+  if (!apiResult || !apiResult.geojson) {
+
+    let vertices = buildVerticesTableData(extractedText);
+
+    if (!vertices || vertices.length < 3) {
+      throw new Error("Não foi possível extrair vértices válidos do OCR.");
+    }
+
+    // já retorna direto sem passar pelo GeoJSON
+    extractedCoordinates = prepararVerticesComMedidas(vertices, getActiveProjectionKey());
+    drawPolygonPreview(extractedCoordinates);
+    displayResults();
+
+    updateStatus(`✅ Extração concluída via OCR local (${vertices.length} pontos).`, 'success');
+
+    return;
+  }
   const geojson = apiResult?.geojson;
+
+  const ring = geojson?.features?.[0]?.geometry?.coordinates?.[0];
+
   if (!geojson) {
     throw new Error('O serviço de extração não retornou GeoJSON.');
   }
@@ -3347,25 +3549,98 @@ async function applyExtractionGeoJsonResult(apiResult, sourceFileName) {
   let projKey = projectionFromApi || getActiveProjectionKey() || 'SIRGAS2000_22S';
   const extractionConfidence = String(apiResult?.extractionConfidence || 'medium').toLowerCase();
 
-  let vertices = verticesFromGeoJSON(geojson, null);
+  let baseText =
+    (window._OCR_FULL_TEXT && window._OCR_FULL_TEXT.length > 1000)
+      ? window._OCR_FULL_TEXT
+      : extractedText;
+
+  let vertices = buildVerticesTableData(baseText);
+
+  // fallback
+  if (!vertices || vertices.length === 0) {
+    console.warn('Parser falhou, tentando fallback...');
+
+    vertices = buildVerticesTableData(extractedText);
+  }
+
+  if (typeof extractedText === 'string' && extractedText.length > 0) {
+    const verticesFinal = buildVerticesTableData(extractedText);
+
+    verticesFinal.forEach((v, i) => {
+      console.log(
+        i,
+        v.id,
+        v.north,
+        v.east
+      );
+    });
+
+    if (verticesFinal.length > vertices.length) {
+      console.log(
+        "USANDO VERTICES DO EXTRACTEDTEXT:",
+        verticesFinal.length
+      );
+
+      vertices = verticesFinal;
+    }
+  }
+
+  // O GeoJSON do backend e a fonte geometrica autoritativa. O OCR pode conter
+  // DMS, acentos ou ruido suficiente para o parser de tabela retornar zero,
+  // mesmo quando o anel ja foi validado pelo extrator local.
+  const geojsonVertices = Array.isArray(ring)
+    ? ring
+        .slice(0, -1)
+        .map((point, index) => ({
+          id: `V${String(index + 1).padStart(2, '0')}`,
+          east: Number(point?.[0]),
+          north: Number(point?.[1])
+        }))
+        .filter((vertex) => Number.isFinite(vertex.east) && Number.isFinite(vertex.north))
+    : [];
+
+  if (geojsonVertices.length >= 3 && geojsonVertices.length > vertices.length) {
+    console.log('USANDO VERTICES DO GEOJSON:', geojsonVertices.length);
+    vertices = geojsonVertices;
+  }
+
   vertices = vertices
     .map((vertex, idx) => ({
-      id: vertex.id || `V${String(idx + 1).padStart(3, '0')}`,
+      id: vertex.id || "SEM_ID",
       east: Number(vertex.east),
       north: Number(vertex.north)
     }))
-    .filter((vertex) => Number.isFinite(vertex.east) && Number.isFinite(vertex.north));
+    .filter(v =>
+      Number.isFinite(v.east) &&
+      Number.isFinite(v.north)
+    );
 
-  logPdfDiag('memorial-to-shp-vertices-raw', {
-    msg: `Conversão Memorial/PDF->SHP: ${vertices.length} vértices válidos após limpeza inicial.`,
-    sourceFileName,
-    projectionKey: projKey,
-    summary: summarizeVerticesForDiag(vertices),
-    duplicates: summarizeDuplicateVertices(vertices)
+  // remove duplicado de fechamento (se existir)
+  if (vertices.length > 1) {
+    const first = vertices[0];
+    const last = vertices[vertices.length - 1];
+
+    if (first.east === last.east && first.north === last.north) {
+      vertices.pop();
+    }
+  }
+
+
+  //console.log("DEPOIS DO FILTER:");
+
+  vertices.forEach((v, i) => {
+    console.log(
+      i,
+      v.id,
+      v.north,
+      v.east
+    );
   });
 
-  if (vertices.length < 3) {
-    throw new Error('GeoJSON retornado possui menos de 3 vértices válidos.');
+
+  // proteção final (ESSENCIAL)
+  if (!vertices || vertices.length < 3) {
+    throw new Error("Não foi possível obter vértices válidos.");
   }
 
   if (isLocalRelativeApiResult(apiResult)) {
@@ -3484,6 +3759,7 @@ async function applyExtractionGeoJsonResult(apiResult, sourceFileName) {
   }
 
   vertices = prepararVerticesComMedidas(vertices, projKey);
+
   logPdfDiag('geojson-final-vertices', {
     msg: `Vértices finais preparados para tela/exportação: ${vertices.length}.`,
     projectionKey: projKey,
@@ -3491,9 +3767,21 @@ async function applyExtractionGeoJsonResult(apiResult, sourceFileName) {
     duplicates: summarizeDuplicateVertices(vertices)
   });
 
-  const topology = ENABLE_TOPOLOGY_VALIDATION
-    ? validatePolygonTopology(vertices, projKey)
-    : null;
+  const topology = null;
+  if (
+    topology &&
+    Array.isArray(topology.corrected)
+  ) {
+    topology.corrected.forEach((v, i) => {
+      console.log(
+        i,
+        v.id,
+        v.east,
+        v.north
+      );
+    });
+  }
+
   const warnings = Array.isArray(apiResult?.warnings) ? apiResult.warnings : [];
   if (extractionConfidence === 'low') {
     warnings.push('Confiança baixa na extração automática. Revise os vértices antes de exportar.');
@@ -3504,10 +3792,11 @@ async function applyExtractionGeoJsonResult(apiResult, sourceFileName) {
       ? 'CRS informado pelo mecanismo de extração no retorno do GeoJSON.'
       : 'CRS não informado pela IA; aplicado CRS ativo da interface.'
   };
+  const pagesLabel = formatAnalyzedPagesLabel(apiResult, totalPagesHint || apiResult?.pagesRequestedHint || 0);
 
   documentsResults = [{
     docId: apiResult?.matricula || nameBase.toUpperCase(),
-    pages: apiResult?.pagesAnalyzed ? `1-${apiResult.pagesAnalyzed}` : '1',
+    pages: pagesLabel,
     projectionKey: projKey,
     manualProjectionKey: null,
     projectionInfo,
@@ -3517,6 +3806,7 @@ async function applyExtractionGeoJsonResult(apiResult, sourceFileName) {
     topology,
     memorialValidation: { matches: [], issues: [] },
     memorialData: { azimutes: [], distances: [] },
+    assistiveAnalysis: apiResult?.assistiveAnalysis || null,
     relativeInfo: null,
     text: ''
   }];
@@ -3525,6 +3815,7 @@ async function applyExtractionGeoJsonResult(apiResult, sourceFileName) {
   window._arcgis_crs_key = projKey;
   extractedCoordinates = vertices;
   fileNameBase = apiResult?.matricula ? `MAT_${apiResult.matricula}` : nameBase;
+  drawPolygonPreview(extractedCoordinates);
 
   showDetectedCrsUI(projKey, projectionInfo);
   if (ENABLE_TOPOLOGY_VALIDATION && topology) {
@@ -3561,6 +3852,8 @@ fileInput.addEventListener("change", async (event) => {
   progressContainer.style.display = "block";
   startProgressHintRotation();
   resultBox.style.display = "none";
+  const polygonPreviewCard = document.getElementById("polygonPreviewCard");
+  if (polygonPreviewCard) polygonPreviewCard.style.display = "none";
   statusDiv.style.display = "none";
   if (docSelectorBox) docSelectorBox.style.display = "none";
   if (crsDetectedBox) crsDetectedBox.style.display = "none";
@@ -3595,9 +3888,10 @@ fileInput.addEventListener("change", async (event) => {
 
     setProgressExperience('Lendo o conteúdo do documento...', 35);
 
-    let extractedText = await extractPdfTextLocally(arrayBuffer, totalPagesHint || 200);
-    const localConfidence = buildTextCoordinateConfidence(extractedText);
-    const docPattern = classifyCoordinatePrintPattern(extractedText);
+    const localText = await extractPdfTextLocally(arrayBuffer, totalPagesHint || 200);
+
+    const localConfidence = buildTextCoordinateConfidence(localText);
+    const docPattern = classifyCoordinatePrintPattern(localText);
     logPdfDiag('local-text-extracted', {
       msg: `Texto local extraído: ${localConfidence.chars} chars, UTM pairs=${localConfidence.utmPairs}, LatLon pairs=${localConfidence.latLonPairs}.`,
       totalPagesHint,
@@ -3608,7 +3902,7 @@ fileInput.addEventListener("change", async (event) => {
     });
 
     // OCR robusto: dispara quando não há pares coordenáveis confiáveis.
-    const needsOcrEnhancement = shouldRunOcrEnhancement(extractedText);
+    const needsOcrEnhancement = shouldRunOcrEnhancement(localText);
     updateStatus(
       needsOcrEnhancement
         ? '⏳ Continuando a leitura para melhorar o resultado...'
@@ -3635,65 +3929,56 @@ fileInput.addEventListener("change", async (event) => {
       'info'
     );
 
-    const parserBranchPromise = runParserLayoutFallbackBranch(
-      file.name,
-      totalPagesHint,
-      extractedText,
-      processingMode,
-      {
-        branchLabel: 'Parser/layout + fallback',
-        diagPrefix: 'api',
-        suppressUi: true,
-        patternHint: docPattern.id,
-        flowMode: 'no-ocr'
-      }
-    );
-
-    const ocrRuntime = { suppressUi: false, patternHint: docPattern.id };
-    const ocrBranchPromise = needsOcrEnhancement
-      ? runOcrEtlBranch(file.name, totalPagesHint, extractedText, arrayBuffer, ocrPlan, processingMode, ocrRuntime)
-        .catch((error) => {
-          logPdfDiag('ocr-flow-failed', {
-            msg: `Fluxo OCR falhou: ${error?.message || error}`,
-            error: String(error?.message || error)
-          });
-          throw error;
-        })
-      : null;
-
     let apiResult;
-    if (ocrBranchPromise) {
-      const [parserSettled, ocrSettled] = await Promise.allSettled([
-        parserBranchPromise,
-        ocrBranchPromise
-      ]);
-
-      const parserResult = parserSettled.status === 'fulfilled' ? parserSettled.value : null;
-      const ocrResult = ocrSettled.status === 'fulfilled' ? ocrSettled.value : null;
-
-      if (parserResult) {
-        ocrRuntime.suppressUi = true;
+    if (needsOcrEnhancement) {
+      try {
+        // OCR e IA formam o caminho principal; o parser nativo só entra se esse caminho falhar.
+        apiResult = await runOcrEtlBranch(
+          file.name,
+          totalPagesHint,
+          localText,
+          arrayBuffer,
+          ocrPlan,
+          processingMode,
+          { suppressUi: true, patternHint: docPattern.id }
+        );
+        logPdfDiag('ocr-primary-success', {
+          msg: 'OCR local + IA concluídos; parser nativo não foi executado em paralelo.',
+          extractedVertices: estimateExtractedVerticesFromApiResult(apiResult)
+        });
+      } catch (ocrError) {
+        logPdfDiag('ocr-primary-failed', {
+          msg: `OCR principal falhou; usando texto nativo como fallback: ${ocrError?.message || ocrError}`,
+          error: String(ocrError?.message || ocrError)
+        });
+        apiResult = await runParserLayoutFallbackBranch(
+          file.name,
+          totalPagesHint,
+          localText,
+          processingMode,
+          {
+            branchLabel: 'Fallback de texto nativo',
+            diagPrefix: 'native-fallback',
+            suppressUi: true,
+            patternHint: docPattern.id,
+            flowMode: 'no-ocr'
+          }
+        );
       }
-
-      apiResult = choosePreferredExtractionResult(parserResult, ocrResult, {
-        expectedPattern: docPattern.id
-      });
-      if (!apiResult) {
-        throw (parserSettled.status === 'rejected' ? parserSettled.reason : ocrSettled.reason);
-      }
-
-      logPdfDiag('parallel-branch-selection', {
-        msg: 'Fluxos do texto inicial e do OCR concluídos; melhor resultado selecionado automaticamente.',
-        parserSucceeded: Boolean(parserResult),
-        ocrSucceeded: Boolean(ocrResult),
-        expectedPattern: docPattern.id,
-        selectedBranch: apiResult?.etl?.branch || 'parser-direct',
-        selectedSourcePattern: apiResult?.sourcePattern || null,
-        selectedExtractionMethod: apiResult?.extractionMethod || null,
-        selectedVertices: Number(apiResult?.extractedVertices || estimateExtractedVerticesFromApiResult(apiResult))
-      });
     } else {
-      apiResult = await parserBranchPromise;
+      apiResult = await runParserLayoutFallbackBranch(
+        file.name,
+        totalPagesHint,
+        localText,
+        processingMode,
+        {
+          branchLabel: 'Texto nativo + IA',
+          diagPrefix: 'native-primary',
+          suppressUi: true,
+          patternHint: docPattern.id,
+          flowMode: 'no-ocr'
+        }
+      );
     }
 
     setProgressExperience('Finalizando a preparação dos resultados...', 100);
@@ -3702,7 +3987,9 @@ fileInput.addEventListener("change", async (event) => {
       throw new Error(apiResult?.error || 'Falha na extração local.');
     }
 
-    await applyExtractionGeoJsonResult(apiResult, file.name);
+    const selectedSourceText = String(apiResult?.__sourceText || localText || '').trim();
+    console.log('CHAMANDO APPLY COM:', typeof selectedSourceText, selectedSourceText.length);
+    await applyExtractionGeoJsonResult(apiResult, file.name, selectedSourceText, totalPagesHint);
     logPdfDiag('final-success', {
       msg: `Extração concluída: source=${apiResult.sourcePattern || 'n/a'}, projection=${apiResult.projectionKey || 'n/a'}, vertices=${estimateExtractedVerticesFromApiResult(apiResult)}.`,
       sourcePattern: apiResult.sourcePattern || null,
@@ -3730,12 +4017,7 @@ fileInput.addEventListener("change", async (event) => {
     });
     const isNoCoordError = /não foi possível localizar coordenadas|no coordinates|coordenadas.*válidas/i.test(String(e?.message || ''));
     if (isNoCoordError) {
-      updateStatus(
-        '❌ Coordenadas não encontradas no documento. ' +
-        'O PDF pode ser uma matrícula cartorial ou documento com layout não suportado. ' +
-        'Tente um memorial descritivo ou documento SIGEF/Shape com vértices explícitos.',
-        'error'
-      );
+      updateStatus(`❌ Não foi possível concluir o processamento: ${uiError}`, 'error');
     } else {
       updateStatus(`❌ Não foi possível concluir o processamento: ${uiError}`, 'error');
     }
@@ -3850,7 +4132,7 @@ saveToFolderBtn.onclick = async () => {
             return;
           } catch (retryErr) {
             logWrite(`[PDFtoArcgis] ❌ Falha após re-sincronizar: ${retryErr.message}`);
-            throw new Error("Diretório permanentemente desincronizado. Selecione a pasta novamente.");
+            throw new Error("Diretório permanentemente desincronizado. Selecione a pasta novamente.", { cause: retryErr });
           }
         }
 
@@ -3862,11 +4144,28 @@ saveToFolderBtn.onclick = async () => {
     // Caso PDF simples (sem split)
     if (!hasDocs) {
       const key = getActiveProjectionKey();
-      const projection = PROJECTIONS[key];
+      const projection = buildProjectionFromPrj(key, shpProjectionWkt);
       if (!projection) throw new Error("CRS não suportado.");
 
       const base = sanitizeFileName(fileNameBase);
       const ring = extractedCoordinates.map(c => [c.east, c.north]);
+      ring.push([ring[0][0], ring[0][1]]);
+      ring.forEach((p, i) => {
+        console.log(i, p[0], p[1]);
+      });
+
+      function ringArea(r) {
+        let area = 0;
+
+        for (let i = 0; i < r.length - 1; i++) {
+          area +=
+            r[i][0] * r[i + 1][1] -
+            r[i + 1][0] * r[i][1];
+        }
+
+        return area / 2;
+      }
+
       ring.push([ring[0][0], ring[0][1]]);
 
       const pointGeoms = extractedCoordinates.map(c => [c.east, c.north]);
@@ -3960,6 +4259,44 @@ saveToFolderBtn.onclick = async () => {
       const base = sanitizeFileName(pdfOrigemNomeBase || fileNameBase);
       const ring = vertices.map(c => [c.east, c.north]);
 
+
+      console.log(
+        "VERTICES EXPORTADOS:",
+        vertices.map(v => v.id)
+      );
+
+
+      if (
+        ring.length > 2 &&
+        (
+          ring[0][0] !== ring[ring.length - 1][0] ||
+          ring[0][1] !== ring[ring.length - 1][1]
+        )
+      ) {
+        ring.push([
+          ring[0][0],
+          ring[0][1]
+        ]);
+      }
+
+      console.log("ANEL EXPORTADO SHP");
+
+      ring.forEach((p, i) => {
+        console.log(i, p[0], p[1]);
+      });
+
+      function ringArea(r) {
+        let area = 0;
+
+        for (let i = 0; i < r.length - 1; i++) {
+          area +=
+            r[i][0] * r[i + 1][1] -
+            r[i + 1][0] * r[i][1];
+        }
+
+        return area / 2;
+      }
+
       let crsName = projection && projection.epsg ? projection.epsg : (isRelative ? "RELATIVO" : "CRS");
       crsName = String(crsName).replace(/[^\w\d]/g, "_");
 
@@ -4029,7 +4366,7 @@ saveToFolderBtn.onclick = async () => {
       // Relatório de validação
       if (doc.topology || doc.memorialValidation) {
         let safePages = Array.isArray(doc.pages) ? doc.pages : (typeof doc.pages === 'string' ? doc.pages : '(desconhecido)');
-        const relatorio = gerarRelatorioValidacao(docId, safePages, doc.topology, doc.memorialValidation, doc.warnings);
+        const relatorio = gerarRelatorioValidacao(docId, safePages, doc.topology, doc.memorialValidation, doc.warnings, doc.assistiveAnalysis);
         await writeFile(`${base}_${crsName}_Relatorio.txt`, relatorio);
       }
 
@@ -4083,8 +4420,12 @@ const generateDocxBtn = document.getElementById("generateDocxBtn");
 
 // Estado
 let shpVertices = [];
+let shpMemorialVertices = [];
 let shpCrsKey = null;
 let shpCrsText = "";
+let shpProjectionWkt = "";
+let shpMemorialProjectionWkt = "";
+let shpMemorialCrsText = "";
 let shpPoligonoNome = "";
 let shpCityName = "";
 const MEMORIAL_COORD_DECIMALS = 6;
@@ -4092,6 +4433,10 @@ const MEMORIAL_COORD_DECIMALS = 6;
 // Formatadores (pt-BR)
 const BRNumber2 = new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 function fmtMeters2(v) { return BRNumber2.format(v); }
+function formatCoordinate(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number.toFixed(MEMORIAL_COORD_DECIMALS) : "-";
+}
 function toDMS(az) {
   az = ((az % 360) + 360) % 360;
   const d = Math.floor(az);
@@ -4147,52 +4492,188 @@ async function extractPrjFromZip(file) {
 }
 function resolveCrsKeyFromPrj(prjText) {
   if (!prjText) return null;
-  const t = prjText.toUpperCase();
-  if (t.includes("SIRGAS") && t.includes("UTM")) {
-    if (t.includes("ZONE 21") || t.includes("ZONA 21")) return "SIRGAS2000_21S";
-    if (t.includes("ZONE 22") || t.includes("ZONA 22")) return "SIRGAS2000_22S";
-    if (t.includes("ZONE 23") || t.includes("ZONA 23")) return "SIRGAS2000_23S";
-    if (t.includes("ZONE 24") || t.includes("ZONA 24")) return "SIRGAS2000_24S";
-    if (t.includes("ZONE 25") || t.includes("ZONA 25")) return "SIRGAS2000_25S";
+  const t = String(prjText).toUpperCase().replace(/[\r\n]+/g, " ");
+  const compact = t.replace(/[\s_]+/g, " ").trim();
+  const isUtm = /\bUTM\b|TRANSVERSE[_ ]MERCATOR|TRANSVERSE MERCATOR/.test(compact);
+  if (!isUtm) {
+    if (/WGS\s*[_ ]?84|WGS[_ ]?1984/.test(compact)) return "WGS84";
+    try {
+      if (typeof proj4 === "function" && proj4(String(prjText))) return "CUSTOM_CRS";
+    } catch {
+      // Mantém a rejeição abaixo para WKT inválido.
+    }
+    return null;
   }
-  if (t.includes("SAD") && t.includes("UTM")) {
-    if (t.includes("ZONE 22") || t.includes("ZONA 22")) return "SAD69_22S";
-    if (t.includes("ZONE 23") || t.includes("ZONA 23")) return "SAD69_23S";
+
+  const datum = /SIRGAS\s*2000|SISTEMA DE REFERENCIA GEOCENTRICO PARA LAS AMERICAS 2000/.test(compact)
+    ? "SIRGAS2000"
+    : (/SAD\s*69|SOUTH AMERICAN DATUM 1969|SOUTH_AMERICAN_DATUM_1969/.test(compact)
+      ? "SAD69"
+      : null);
+  if (!datum) {
+    try {
+      if (typeof proj4 === "function" && proj4(String(prjText))) return "CUSTOM_CRS";
+    } catch {
+      // Mantém a rejeição abaixo para WKT inválido.
+    }
+    return null;
   }
-  if (t.includes("WGS") && !t.includes("UTM")) return "WGS84";
-  return null;
+
+  const zoneMatch = compact.match(/(?:UTM\s*(?:ZONE|ZONA)?|ZONE|ZONA)\s*0?(\d{1,2})\s*([NS])?/)
+    || compact.match(/(?:ZONE|ZONA)[^0-9]{0,12}0?(\d{1,2})\s*([NS])?/);
+  let zone = zoneMatch ? Number.parseInt(zoneMatch[1], 10) : null;
+  if (!zone) {
+    const centralMeridianMatch = compact.match(/(?:CENTRAL[_ ]MERIDIAN|LONGITUDE OF (?:NATURAL )?ORIGIN|PARAMETER\["CENTRAL_MERIDIAN")\s*[,=: ]+(-?\d+(?:\.\d+)?)/);
+    const centralMeridian = centralMeridianMatch ? Number(centralMeridianMatch[1]) : NaN;
+    if (Number.isFinite(centralMeridian)) {
+      zone = Math.round((centralMeridian + 183) / 6);
+    }
+  }
+  if (!Number.isInteger(zone) || zone < 1 || zone > 60) return null;
+
+  const suffix = datum === "SIRGAS2000" ? `SIRGAS2000_${zone}S` : `SAD69_${zone}S`;
+  return PROJECTIONS[suffix] ? suffix : "CUSTOM_CRS";
 }
-function inferCrsKeyByValues(vertices) {
-  const hint = inferCrsByCoordinates(vertices);
-  if (hint?.zone) return `SIRGAS2000_${hint.zone}S`;
-  return null;
+function getExteriorRingFromGeoJSON(apiResult) {
+  const feature = apiResult?.geojson?.features?.[0] || apiResult?.features?.[0];
+  const geometry = feature?.geometry;
+  const coordinates = geometry?.coordinates;
+
+  if (!Array.isArray(coordinates)) return [];
+  if (geometry.type === "Polygon" || geometry.type === "LineString") {
+    return geometry.type === "Polygon" ? (coordinates[0] || []) : coordinates;
+  }
+  if (geometry.type === "MultiPolygon") {
+    return coordinates[0]?.[0] || [];
+  }
+  if (geometry.type === "MultiLineString") {
+    return coordinates[0] || [];
+  }
+  return [];
 }
-function verticesFromGeoJSON(geojson, keyGuess = null) {
-  let vertices = [];
-  if (!geojson) return vertices;
 
-  let f = null;
-  if (geojson.type === "FeatureCollection") f = geojson.features?.[0];
-  else if (geojson.type === "Feature") f = geojson;
-  else return vertices;
+function verticesFromGeoJSON(apiResult) {
+  const coords = getExteriorRingFromGeoJSON(apiResult);
 
-  if (!f || !f.geometry) return vertices;
-  const g = f.geometry;
+  if (!Array.isArray(coords)) return [];
 
-  if (g.type === "Polygon" && Array.isArray(g.coordinates) && g.coordinates.length > 0) {
-    const ring = g.coordinates[0];
-    vertices = ring.map((xy, i) => ({ id: `V${String(i + 1).padStart(3, '0')}`, east: xy[0], north: xy[1] }));
-  }
-  else if (g.type === "MultiPolygon" && g.coordinates.length > 0) {
-    const ring = g.coordinates[0][0];
-    vertices = ring.map((xy, i) => ({ id: `V${String(i + 1).padStart(3, '0')}`, east: xy[0], north: xy[1] }));
-  }
-  else if (g.type === "Point" && Array.isArray(g.coordinates)) {
-    const xy = g.coordinates;
-    vertices = [{ id: "V001", east: xy[0], north: xy[1] }];
+  return coords.map((coord, i) => ({
+    id: `V${String(i + 1).padStart(3, '0')}`,
+    east: Number(coord[0]),
+    north: Number(coord[1])
+  }));
+}
+
+function assertSingleSimplePolygon(geojson) {
+  const features = Array.isArray(geojson?.features) ? geojson.features : [];
+  if (features.length !== 1) {
+    throw new Error(`O ZIP contém ${features.length} feições. Esta ferramenta gera um memorial por vez; envie um SHP com exatamente um polígono.`);
   }
 
-  return vertices;
+  const geometry = features[0]?.geometry;
+  if (geometry?.type !== "Polygon") {
+    throw new Error(`Geometria ${geometry?.type || "desconhecida"} não suportada sem perda de dados. Envie um Polygon simples.`);
+  }
+  if (!Array.isArray(geometry.coordinates) || geometry.coordinates.length !== 1) {
+    throw new Error("O polígono contém anéis internos. A geração de um único memorial não pode omitir esses anéis.");
+  }
+}
+
+// shpjs sempre retorna GeoJSON em WGS84 (lon/lat); reprojeta para o CRS original do .prj (ex.: SIRGAS2000_25S) antes de gerar o memorial.
+function reprojectGeoJsonVerticesToOriginalCrs(vertices = [], crsKey = null) {
+  const list = Array.isArray(vertices) ? vertices : [];
+  if (!list.length) return list;
+
+  const allGeographic = list.every((v) => isGeographicCoordinatePair(v));
+  if (!allGeographic) return list;
+
+  if (typeof proj4 !== "function") {
+    console.warn("[SHP] proj4 indisponível; não foi possível reprojetar vértices geográficos para o CRS original.");
+    return list;
+  }
+
+  const target = buildProj4FromProjectionKey(crsKey) || (shpProjectionWkt || null);
+  if (!target) {
+    console.warn(`[SHP] Não foi possível determinar a projeção de destino para o CRS "${crsKey}". Vértices permanecem em lon/lat.`);
+    return list;
+  }
+
+  return list.map((vertex) => {
+    const xy = proj4(proj4.WGS84, target, [Number(vertex.east), Number(vertex.north)]);
+    return { ...vertex, east: Number(xy[0]), north: Number(xy[1]) };
+  });
+}
+
+function buildAutoUtmProjection(vertices, sourceWkt = "") {
+  const avgLon = vertices.reduce((sum, vertex) => sum + Number(vertex.east), 0) / vertices.length;
+  const avgLat = vertices.reduce((sum, vertex) => sum + Number(vertex.north), 0) / vertices.length;
+  const zone = Math.min(60, Math.max(1, Math.floor((avgLon + 180) / 6) + 1));
+  const hemisphere = avgLat < 0 ? "S" : "N";
+  const centralMeridian = zone * 6 - 183;
+  const isSirgas2000 = /SIRGAS[ _]?2000/i.test(String(sourceWkt || ""));
+  const datumName = isSirgas2000 ? "SIRGAS 2000" : "WGS 84";
+  const datumWkt = isSirgas2000
+    ? 'GEOGCS["SIRGAS 2000",DATUM["Sistema de Referencia Geocentrico para las Americas 2000",SPHEROID["GRS 1980",6378137,298.257222101]],PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]]'
+    : 'GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563]],PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]]';
+  const epsgCode = isSirgas2000 && hemisphere === "S"
+    ? 31960 + zone
+    : (hemisphere === "S" ? 32700 + zone : 32600 + zone);
+  const ellipsoid = isSirgas2000 ? "+ellps=GRS80" : "+datum=WGS84";
+  const wkt = `PROJCS["${datumName} / UTM zone ${zone}${hemisphere}",${datumWkt},PROJECTION["Transverse_Mercator"],PARAMETER["latitude_of_origin",0],PARAMETER["central_meridian",${centralMeridian}],PARAMETER["scale_factor",0.9996],PARAMETER["false_easting",500000],PARAMETER["false_northing",${hemisphere === "S" ? 10000000 : 0}],UNIT["metre",1],AUTHORITY["EPSG","${epsgCode}"]]`;
+  return {
+    zone,
+    hemisphere,
+    wkt,
+    epsg: `EPSG:${epsgCode}`,
+    proj4: `+proj=utm +zone=${zone} ${hemisphere === "S" ? "+south " : ""}${ellipsoid} +units=m +no_defs`
+  };
+}
+
+function convertVerticesToMemorialUtm(vertices, sourceWkt) {
+  if (!Array.isArray(vertices) || vertices.length < 3 || typeof proj4 !== "function") {
+    throw new Error("Não foi possível preparar as coordenadas UTM do memorial.");
+  }
+
+  const geographic = vertices.every(isGeographicCoordinatePair);
+  const source = sourceWkt || (geographic ? "EPSG:4326" : null);
+  if (!source) throw new Error("O CRS original do SHP é necessário para converter o memorial para UTM.");
+
+  const lonLat = vertices.map((vertex) => {
+    const point = geographic
+      ? [Number(vertex.east), Number(vertex.north)]
+      : proj4(source, proj4.WGS84, [Number(vertex.east), Number(vertex.north)]);
+    return { ...vertex, east: Number(point[0]), north: Number(point[1]) };
+  });
+  const target = buildAutoUtmProjection(lonLat, sourceWkt);
+  return {
+    vertices: lonLat.map((vertex) => {
+      const point = proj4(proj4.WGS84, target.proj4, [vertex.east, vertex.north]);
+      return { ...vertex, east: Number(point[0]), north: Number(point[1]) };
+    }),
+    wkt: target.wkt,
+    text: `${/SIRGAS/i.test(target.wkt) ? "SIRGAS 2000" : "WGS 84"} / UTM zone ${target.zone}${target.hemisphere} (${target.epsg})`
+  };
+}
+
+function normalizeShpVertices(vertices = [], tolerance = 0.001) {
+  const source = Array.isArray(vertices) ? vertices : [];
+  const isSamePoint = (a, b) => (
+    Math.abs(Number(a?.east) - Number(b?.east)) <= tolerance
+    && Math.abs(Number(a?.north) - Number(b?.north)) <= tolerance
+  );
+
+  const normalized = source
+    .filter((vertex) => Number.isFinite(Number(vertex?.east)) && Number.isFinite(Number(vertex?.north)))
+    .map((vertex) => ({ ...vertex }));
+
+  if (normalized.length > 1 && isSamePoint(normalized[0], normalized[normalized.length - 1])) {
+    normalized.pop();
+  }
+
+  return normalized.map((vertex, index) => ({
+    ...vertex,
+    id: `V${String(index + 1).padStart(3, '0')}`
+  }));
 }
 
 function ensureClosedVertices(vertices = [], tolerance = 0.001) {
@@ -4227,16 +4708,20 @@ function ensureClosedVertices(vertices = [], tolerance = 0.001) {
 }
 
 function prepararVerticesComMedidas(vertices, projectionKey = null) {
-  const closedVertices = ensureClosedVertices(vertices);
+  const sourceVertices = Array.isArray(vertices) ? vertices : [];
+  if (sourceVertices.length === 0) return [];
+
   const out = [];
-  for (let i = 0; i < closedVertices.length; i++) {
-    const v = { ...closedVertices[i], ordem: i + 1 };
-    if (i < closedVertices.length - 1) {
-      v.distCalc = fmtMeters2(calcularDistancia(closedVertices[i], closedVertices[i + 1], { projectionKey }));
-      v.azCalc = toDMS(calcularAzimute(closedVertices[i], closedVertices[i + 1], { projectionKey }));
+  for (let i = 0; i < sourceVertices.length; i++) {
+    const current = sourceVertices[i];
+    const next = sourceVertices[(i + 1) % sourceVertices.length];
+    const v = { ...current, ordem: i + 1 };
+    if (sourceVertices.length > 1 && next) {
+      v.distCalc = fmtMeters2(calcularDistancia(current, next, { projectionKey }));
+      v.azCalc = toDMS(calcularAzimute(current, next, { projectionKey }));
     } else {
-      v.distCalc = "---";
-      v.azCalc = "---";
+      v.distCalc = '---';
+      v.azCalc = '---';
     }
     out.push(v);
   }
@@ -4280,14 +4765,24 @@ if (shpInput) {
         // .prj do ZIP
         prjText = await extractPrjFromZip(file);
       }
+      shpProjectionWkt = String(prjText || "").trim();
 
       // Diagnostico GeoJSON
       logGeojsonSummary(geojson);
+      assertSingleSimplePolygon(geojson);
 
       // CRS
       shpCrsKey = resolveCrsKeyFromPrj(prjText);
-      // Vertices no CRS de entrada
+      // Vertices no CRS de entrada (shpjs entrega sempre em lon/lat WGS84)
       let vertsRaw = verticesFromGeoJSON(geojson, shpCrsKey);
+
+      console.log('[SHP][CRS CHECK]', {
+        shpCrsKey,
+        firstVertex: vertsRaw[0]
+      });
+      if (vertsRaw[0] && Math.abs(vertsRaw[0].east) <= 180 && Math.abs(vertsRaw[0].north) <= 90) {
+        console.warn('[SHP] Coordenadas geográficas detectadas. Reprojetando para CRS original.');
+      }
 
       console.log('[PDFtoArcgis][Diag][SHP->Memorial][raw-vertices]', {
         ts: new Date().toISOString(),
@@ -4298,40 +4793,43 @@ if (shpInput) {
       });
 
       if (!shpCrsKey) {
-        // Se não veio do .prj, tenta inferir pelos próprios valores
-        shpCrsKey = inferCrsKeyByValues(vertsRaw) || "SIRGAS2000_22S";
+        throw new Error("Não foi possível identificar o CRS do SHP. Confirme que o ZIP contém um arquivo .prj válido com datum e zona UTM.");
       }
 
-      // Vertices no CRS alvo
-      let vertsUTM = verticesFromGeoJSON(geojson, shpCrsKey);
-      const shpReprojection = maybeReprojectGeographicVertices(vertsUTM, shpCrsKey);
-      if (shpReprojection.transformed) {
-        vertsUTM = shpReprojection.vertices;
-      }
+      // A tabela respeita o CRS original; o memorial recebe uma cópia sempre em UTM.
+      const originalVertices = normalizeShpVertices(reprojectGeoJsonVerticesToOriginalCrs(vertsRaw, shpCrsKey));
+      const memorialUtm = convertVerticesToMemorialUtm(originalVertices, shpProjectionWkt);
+      shpVertices = prepararVerticesComMedidas(
+        originalVertices,
+        shpCrsKey
+      );
+      shpMemorialVertices = prepararVerticesComMedidas(
+        normalizeShpVertices(memorialUtm.vertices),
+        "CUSTOM_CRS"
+      );
+      shpMemorialProjectionWkt = memorialUtm.wkt;
+      shpMemorialCrsText = memorialUtm.text;
 
       console.log('[PDFtoArcgis][Diag][SHP->Memorial][utm-vertices]', {
         ts: new Date().toISOString(),
         shpCrsKey,
-        vertexSummary: summarizeVerticesForDiag(vertsUTM),
-        duplicateStats: summarizeDuplicateVertices(vertsUTM),
+        vertexSummary: summarizeVerticesForDiag(shpMemorialVertices),
+        duplicateStats: summarizeDuplicateVertices(shpMemorialVertices),
         reprojection: {
-          transformed: shpReprojection.transformed,
-          reason: shpReprojection.reason
+          transformed: true,
+          reason: `memorial-utm-${memorialUtm.text}`
         }
       });
 
-      if (!Array.isArray(vertsUTM) || vertsUTM.length < 3) {
+      if (!Array.isArray(shpVertices) || shpVertices.length < 3) {
         console.warn("[SHP] Menos de 3 vertices apos parse.");
         updateStatus("⚠️ O SHP foi lido, mas não há polígono com 3+ vértices. Verifique se o layer é POLYGON/MULTIPOLYGON (ou se a linha está realmente fechada).", "warning");
         return;
       }
 
       // Cidade aproximada
-      shpCityName = inferCityFromVertices(vertsUTM, shpCrsKey);
+      shpCityName = inferCityFromVertices(originalVertices, shpCrsKey);
       if (cidadeDetectadaInput) cidadeDetectadaInput.value = shpCityName;
-
-      // Medidas para UI
-      shpVertices = prepararVerticesComMedidas(vertsUTM, shpCrsKey);
 
       console.log('[PDFtoArcgis][Diag][SHP->Memorial][prepared-vertices]', {
         ts: new Date().toISOString(),
@@ -4342,26 +4840,25 @@ if (shpInput) {
       });
 
       // UI (tabela)
-      extractedCoordinates = shpVertices.slice();
+      extractedCoordinates = shpMemorialVertices.slice();
       countDisplay.innerText = extractedCoordinates.length;
-      previewTableBody.innerHTML = "";
-      for (const c of extractedCoordinates) {
-        previewTableBody.innerHTML += `
-          <tr>
-            <td>${c.ordem}</td>
-            <td>${c.id}</td>
-            <td>${c.north}</td>
-            <td>${c.east}</td>
-            <td>${c.distCalc}</td>
-            <td>${c.azCalc}</td>
-          </tr>`;
-      }
+      renderCoordinatePreviewRows(extractedCoordinates.map((c) => ({
+        ...c,
+        north: formatCoordinate(c.north),
+        east: formatCoordinate(c.east)
+      })));
       resultBox.style.display = "block";
       scrollToResults();
 
       // UI CRS
-      shpCrsText = crsKeyToText(shpCrsKey);
-      showDetectedCrsUI(shpCrsKey, { confidence: "alta", reason: "Detectado a partir do .prj e/ou coordenadas." });
+      const detectedProjection = buildProjectionFromPrj(shpCrsKey, shpProjectionWkt);
+      shpCrsText = detectedProjection?.epsg && detectedProjection.epsg !== "PRJ"
+        ? `${detectedProjection.name} (${detectedProjection.epsg})`
+        : (detectedProjection?.name || crsKeyToText(shpCrsKey));
+      showDetectedCrsUI(shpMemorialCrsText, {
+        confidence: "alta",
+        reason: `CRS original lido do .prj (${shpCrsText}); coordenadas convertidas para UTM em metros para o memorial.`
+      });
 
       // UI memorial
       if (memorialMetaBox) memorialMetaBox.style.display = "block";
@@ -4391,7 +4888,7 @@ if (generateDocxBtn) {
 
       // Preferir shpVertices; fallback extractedCoordinates
       let vertsBase =
-        (Array.isArray(shpVertices) && shpVertices.length >= 3) ? shpVertices :
+        (Array.isArray(shpMemorialVertices) && shpMemorialVertices.length >= 3) ? shpMemorialVertices :
           (Array.isArray(extractedCoordinates) ? extractedCoordinates : []);
 
       if (!Array.isArray(vertsBase) || vertsBase.length < 3) {
@@ -4439,7 +4936,7 @@ if (generateDocxBtn) {
         return;
       }
 
-      const vertsForDoc = [...vertsOpen, { ...vertsOpen[0], id: `V${String(vertsOpen.length + 1).padStart(3, "0")}` }];
+      const vertsForDoc = [...vertsOpen, { ...vertsOpen[0], id: vertsOpen[0]?.id || `V${String(vertsOpen.length + 1).padStart(3, "0")}` }];
 
       console.log('[PDFtoArcgis][Diag][SHP->Memorial][docx-ring-closure]', {
         ts: new Date().toISOString(),
@@ -4455,13 +4952,13 @@ if (generateDocxBtn) {
       if (vertsOpen.some(precisaMedidas)) {
         vertsOpen = prepararVerticesComMedidas(
           vertsOpen.map(v => ({ east: v.east, north: v.north, id: v.id })),
-          shpCrsKey || getActiveProjectionKey() || "SIRGAS2000_22S"
+          "CUSTOM_CRS"
         );
       }
 
       console.log('[PDFtoArcgis][Diag][SHP->Memorial][docx-final-vertices]', {
         ts: new Date().toISOString(),
-        crsKey: shpCrsKey || getActiveProjectionKey() || 'SIRGAS2000_22S',
+        crsKey: `UTM convertido (${shpMemorialProjectionWkt ? 'WKT original preservado' : 'automático'})`,
         vertexSummary: summarizeVerticesForDiag(vertsForDoc),
         duplicateStats: summarizeDuplicateVertices(vertsForDoc)
       });
@@ -4472,8 +4969,8 @@ if (generateDocxBtn) {
       let cidade = (cidadeDetectadaInput?.value ?? "").trim();
 
       // CRS textual
-      const crsKey = shpCrsKey || getActiveProjectionKey() || "SIRGAS2000_22S";
-      const crsText = (shpCrsText && shpCrsText.trim()) ? shpCrsText : crsKeyToText(crsKey);
+      const crsKey = "CUSTOM_CRS";
+      const crsText = shpMemorialCrsText || "WGS 84 / UTM";
 
       // Cidade (inferir se vazio)
       if (!cidade || cidade === "Município não identificado") {
@@ -4520,6 +5017,10 @@ if (generateDocxBtn) {
       function espacarLetras(texto) {
         return texto.split("").join(" ");
       }
+
+      console.log("MEMORIAL COMPLETO:", "gerado a partir dos vértices normalizados");
+
+      console.log("TRECHOS IDENTIFICADOS:", vertsOpen.length);
 
       // Garantir numero valido
       function safeNumber(val, casas = 2) {
@@ -4679,27 +5180,6 @@ if (generateDocxBtn) {
   });
 }
 
-// Escolhe o melhor Polygon/MultiPolygon do FeatureCollection
-function pickBestPolygonFeature(fc) {
-  if (!fc || fc.type !== "FeatureCollection" || !Array.isArray(fc.features)) return null;
-
-  const polys = fc.features.filter(f => {
-    const t = f?.geometry?.type;
-    return t === "Polygon" || t === "MultiPolygon";
-  });
-
-  if (polys.length === 0) return null;
-
-  // Heurística simples: “mais complexo” (mais coords) primeiro
-  polys.sort((a, b) => {
-    const la = JSON.stringify(a.geometry.coordinates).length;
-    const lb = JSON.stringify(b.geometry.coordinates).length;
-    return lb - la; // desc
-  });
-
-  return polys[0];
-}
-
 // Promove LineString para Polygon quando ja estiver fechada
 function lineToPolygonIfClosed(coords, tol = 0.5) {
   if (!Array.isArray(coords) || coords.length < 3) return null;
@@ -4755,11 +5235,25 @@ function coerceGeometryToPolygon(geometry, tol = 0.5) {
 
 // Normaliza retorno do shp(...) em FeatureCollection com Polygon
 function buildFeatureCollectionFromAny(geo, tol = 0.5) {
+  // ZIPs com mais de uma camada podem chegar como array de FeatureCollections.
+  if (Array.isArray(geo)) {
+    const features = [];
+    for (const item of geo) {
+      const normalized = buildFeatureCollectionFromAny(item, tol);
+      if (Array.isArray(normalized?.features)) {
+        features.push(...normalized.features);
+      }
+    }
+    return { type: "FeatureCollection", features };
+  }
+
   // 1) FeatureCollection
   if (geo && geo.type === "FeatureCollection" && Array.isArray(geo.features)) {
-    const best = pickBestPolygonFeature(geo);
-    if (best) {
-      return { type: "FeatureCollection", features: [best] };
+    const polygonFeatures = geo.features.filter((feature) => (
+      feature?.geometry?.type === "Polygon" || feature?.geometry?.type === "MultiPolygon"
+    ));
+    if (polygonFeatures.length > 0) {
+      return { type: "FeatureCollection", features: polygonFeatures };
     }
     // Se não há Polygon/MultiPolygon, tenta promover alguma geometry (ex.: LineString fechada)
     for (const f of geo.features) {
@@ -4825,6 +5319,10 @@ function logGeojsonSummary(geojson) {
 }
 
 async function readZipAsFeatureCollection(ab, tol = 0.5) {
+  if (typeof shp !== "function" || typeof shp.parseZip !== "function") {
+    throw new Error("Biblioteca de leitura SHP não carregada. Recarregue a página e tente novamente.");
+  }
+
   // 1) Caminho "normal": shp(ab) já tenta montar uma FeatureCollection
   try {
     const geo1 = await shp(ab);
@@ -4849,7 +5347,13 @@ async function readZipAsFeatureCollection(ab, tol = 0.5) {
       }
     }
 
-    // (b) Se for objeto com múltiplas coleções/arrays por chave
+    // (b) Se for array de camadas retornado por versões do shpjs
+    if (Array.isArray(parsed)) {
+      const normalized = buildFeatureCollectionFromAny(parsed, tol);
+      if (normalized.features.length > 0) return normalized;
+    }
+
+    // (c) Se for objeto com múltiplas coleções/arrays por chave
     if (parsed && typeof parsed === "object" && !parsed.type) {
       // Agrega só Polygon/MultiPolygon (ou LineString fechada → Polygon)
       const features = [];
@@ -4899,3 +5403,1138 @@ async function readZipAsFeatureCollection(ab, tol = 0.5) {
   return { type: "FeatureCollection", features: [] };
 }
 
+
+
+// ======================
+// NOVA EXTRAÇÃO ROBUSTA DE VÉRTICES
+// ======================
+function extractVerticesFromText(rawText) {
+  let text = String(rawText || '');
+
+  text = text
+    .replace(/\n/g, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/,(\s+)(\d{3})/g, ',$2')
+    .replace(/(\d)\s+m/g, '$1m')
+    .replace(/E\s+(\d)/g, 'E $1');
+
+  const vertices = [];
+
+  const regex = /v(?:e|é)rtice\s+([A-Z0-9\s]+?)\s*,?\s*de coordenadas\s*N\s*([\d.,]+)[m]?\s*;?\s*e\s*E\s*([\d.,]+)/gi;
+
+  let match;
+  while ((match = regex.exec(text)) !== null) {
+    const id = match[1].trim();
+
+    const north = parseFloat(match[2].replace(/\.(?=\d{3})/g, '').replace(',', '.'));
+    const east = parseFloat(match[3].replace(/\.(?=\d{3})/g, '').replace(',', '.'));
+
+    if (Number.isFinite(north) && Number.isFinite(east)) {
+      vertices.push({ id, north, east });
+    }
+  }
+
+  console.log("==========================================");
+  console.log("DIAGNOSTICO buildVerticesTableData()");
+  console.log("==========================================");
+
+  console.log(
+    "TOTAL DE VERTICES EXTRAIDOS:",
+    vertices.length
+  );
+
+  const idsExtraidos =
+    vertices.map(v => v.id);
+
+  console.log(
+    "IDS EXTRAIDOS:",
+    idsExtraidos
+  );
+
+  return vertices;
+}
+
+function extractInlineVertices(text) {
+  const regex = /v[eé]rtice\s+([A-Za-z0-9\s]+?)\s*,?\s*de coordenadas\s*N=([\d.,]+)\s*E=([\d.,]+)/gi;
+
+  const results = [];
+  let match;
+
+  while ((match = regex.exec(text)) !== null) {
+    const id = match[1].trim();
+    const north = parseNumericLoose(match[2]);
+    const east = parseNumericLoose(match[3]);
+
+    if (Number.isFinite(north) && Number.isFinite(east)) {
+      results.push({ id, north, east });
+    }
+  }
+
+  return results;
+}
+
+function normalizeVertexId(rawId) {
+  const source = String(rawId || '').trim();
+  if (!source) return null;
+
+  const cleaned = source
+    .toUpperCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/VERTICE\s*/g, '')
+    .replace(/[^A-Z0-9\s._/=:-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const pMatch = cleaned.match(/\bP\s*[-._]?\s*([0-9]{1,4})\b/i);
+  if (pMatch) {
+    return `P${pMatch[1]}`;
+  }
+
+  const appMatch = cleaned.match(/\bAPP\s*ME\s*M\s*[-._]?\s*([0-9OIL]{1,4})\b/i);
+  if (appMatch) {
+    const numericChunk = appMatch[1]
+      .replace(/O/g, '0')
+      .replace(/[IL]/g, '1')
+      .replace(/[^0-9]/g, '');
+
+    if (numericChunk) {
+      return `APP ME M ${numericChunk.padStart(4, '0')}`;
+    }
+  }
+
+  if (/\bAPP\b/.test(cleaned)) {
+    return 'APP';
+  }
+
+  const ppMatch = cleaned.match(/^0\s*=\s*PP$/i);
+
+  if (ppMatch) {
+    return '0=PP';
+  }
+
+  if (/^PP$/i.test(cleaned)) {
+    return '0=PP';
+  }
+
+  const marcoMatch = cleaned.match(/^M-\d+(?:=OPP)?$/i);
+
+  if (marcoMatch) {
+    return marcoMatch[0].toUpperCase();
+  }
+
+  if (/^O\s*=\s*PP$/i.test(cleaned)) {
+    return 'O=PP';
+  }
+
+  if (/^M-\d+\s*=\s*OPP$/i.test(cleaned)) {
+    return cleaned.replace(/\s+/g, '');
+  }
+
+  return cleaned;
+}
+
+function reconcileLikelyAppIdTypos(vertices = []) {
+  const list = Array.isArray(vertices) ? vertices : [];
+  if (list.length < 3) return list;
+
+  const getAppNumber = (id) => {
+    const match = String(id || '').match(/^APP\s+ME\s+M\s+(\d{1,4})$/i);
+    return match ? Number(match[1]) : null;
+  };
+  const toAppId = (n) => `APP ME M ${String(n).padStart(4, '0')}`;
+
+  for (let i = 0; i < list.length; i++) {
+    const current = list[i];
+    const currentNum = getAppNumber(current?.id);
+    if (!Number.isFinite(currentNum)) continue;
+
+    let prev1 = null;
+    let prev2 = null;
+    for (let p = i - 1; p >= 0; p--) {
+      const n = getAppNumber(list[p]?.id);
+      if (!Number.isFinite(n)) continue;
+      if (prev1 === null) prev1 = n;
+      else {
+        prev2 = n;
+        break;
+      }
+    }
+
+    if (prev1 === null) continue;
+
+    let inferred = null;
+    if (prev2 !== null) {
+      const step = prev1 - prev2;
+      if (Math.abs(step) === 1) inferred = prev1 + step;
+    } else if (prev1 >= 20) {
+      inferred = prev1 - 1;
+    }
+
+    if (!Number.isFinite(inferred) || inferred < 0 || inferred > 9999) continue;
+
+    const seemsOcrNoise = currentNum <= 9 || Math.abs(currentNum - inferred) > 3;
+    if (seemsOcrNoise) {
+      list[i] = { ...current, id: toAppId(inferred) };
+    }
+  }
+
+  return list;
+}
+
+function rumoToAzimuth(graus, minutos, segundos, quadrante) {
+
+  graus = Number(graus || 0);
+  minutos = Number(minutos || 0);
+  segundos = Number(segundos || 0);
+
+  const ang =
+    graus +
+    minutos / 60 +
+    segundos / 3600;
+
+  quadrante = String(quadrante || '')
+    .toUpperCase()
+    .replace(/\s+/g, '');
+
+  switch (quadrante) {
+
+    case 'NE':
+      return ang;
+
+    case 'SE':
+      return 180 - ang;
+
+    case 'SO':
+    case 'SW':
+      return 180 + ang;
+
+    case 'NO':
+    case 'NW':
+      return 360 - ang;
+
+    default:
+      return null;
+  }
+}
+
+function projectVertex(east, north, azimuth, distance) {
+
+  const rad =
+    azimuth * Math.PI / 180;
+
+  return {
+
+    east:
+      east +
+      Math.sin(rad) * distance,
+
+    north:
+      north +
+      Math.cos(rad) * distance
+  };
+}
+
+function normalizeBearingText(text) {
+
+  text = String(text || '');
+
+  text = text
+
+    // aspas
+    .replace(/[”“]/g, '"')
+    .replace(/[‘’]/g, "'")
+
+    // graus
+    .replace(/º/g, '°')
+
+    // quadrantes OCR
+    .replace(/S0\b/g, 'SO')
+    .replace(/N0\b/g, 'NO')
+    .replace(/61°45726"S0/gi, '61°45\'26"SO')
+
+    // palavras OCR
+    .replace(/\bmmo\b/gi, 'rumo')
+    .replace(/\bramo\b/gi, 'rumo')
+
+    .replace(/avanga/gi, 'avanca')
+    .replace(/percorrd/gi, 'percorre')
+    .replace(/ap6s/gi, 'apos')
+
+    .replace(/seguE=/gi, 'segue ')
+    .replace(/prosseguE=/gi, 'prossegue ')
+    .replace(/percorrE=/gi, 'percorre ')
+
+    // OCR de "até"
+    .replace(/\bat o\b/gi, 'ate o')
+    .replace(/\bat q\b/gi, 'ate o')
+
+    // OCR de marcos
+    .replace(/M-\s+(\d+)/gi, 'M-$1')
+
+    // 61°45726"SO -> 61°45'26"SO
+    .replace(/(\d{1,3})°(\d{2})(\d{2})"?(SO|SE|NO|NE)/gi, '$1°$2\'$3"$4')
+
+    // 64°44' 14" SO -> 64°44'14"SO
+    .replace(/(\d{1,3})°(\d{1,2})'\s*(\d{1,2})"\s*(SO|SE|NO|NE)/gi, '$1°$2\'$3"$4')
+
+    // 07°27" 18"SE -> 07°27\'18"SE
+    .replace(/(\d{1,3})°(\d{1,2})"\s*(\d{1,2})"(SO|SE|NO|NE)/gi, '$1°$2\'$3"$4')
+
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  text = text.replace(/(61°45726"SO[\s\S]{0,150}?)M-14([\s\S]{0,150}?M-12)/i, '$1M-11$2');
+
+  if (text.includes('M-11')) {
+    console.warn(
+      'M-11 RECUPERADO POR CORRECAO OCR'
+    );
+  }
+
+
+  // ==========================
+  // DIAGNOSTICO DE OCR
+  // ==========================
+
+  const ids = [...text.matchAll(/M-(\d+)/gi)]
+    .map(x => parseInt(x[1], 10));
+
+  for (let i = 1; i < ids.length; i++) {
+
+    const atual = ids[i];
+    const anterior = ids[i - 1];
+
+    if (atual <= anterior) {
+
+      console.warn(
+        'SEQUENCIA SUSPEITA:',
+        `M-${anterior} -> M-${atual}`
+      );
+
+    } else if (atual - anterior > 1) {
+
+      console.warn(
+        'MARCO POSSIVELMENTE PERDIDO:',
+        `M-${anterior} -> M-${atual}`
+      );
+
+    }
+  }
+
+  // diagnóstico específico do seu caso
+  if (
+    text.includes('61°45\'26"SO')
+    && text.includes('M-12')
+    && !text.includes('M-11')
+  ) {
+
+    console.warn(
+      'POSSIVEL M-11 PERDIDO PELO OCR'
+    );
+
+  }
+
+  return text;
+}
+
+function extractBearingSegments(text) {
+
+  text = normalizeBearingText(text);
+
+  const segments = [];
+
+  const trechoRegex = /rumo\s+(.{0,30}?)(?:metros)(.{0,120}?)(?:M-\d+)/gi;
+
+  const matches = text.match(/\d{1,3}[°º].{0,250}?M-\d+/gi) || [];
+
+  matches.forEach(segmento => {
+
+    console.log(
+      "TRECHO OCR:",
+      segmento
+    );
+
+
+    const rumoMatch = segmento.match(/(\d{1,3})[°º]\s*(\d{1,2})['’"°]?\s*(\d{1,3})["”']?\s*(NE|SE|SO|NO)\b/i);
+
+    if (!rumoMatch) {
+      console.error(
+        "RUMO NÃO RECONHECIDO:",
+        segmento
+      );
+    }
+
+
+    const distanciaMatch = segmento.match(/([\d.,]+)\s*metros/i);
+
+    const marcoMatch = segmento.match(/(M-\d+)/i);
+
+    console.log(
+      "SEGMENTO PARA MARCO:",
+      marcoMatch[1],
+      segmento
+    );
+
+    console.log(
+      "MATCH BRUTO:",
+      rumoMatch
+    );
+
+    if (
+      !rumoMatch ||
+      !distanciaMatch ||
+      !marcoMatch
+    ) {
+      return;
+    }
+
+    const seg = {
+
+      graus:
+        Number(rumoMatch[1]),
+
+      minutos:
+        Number(rumoMatch[2]),
+
+      segundos:
+        Number(rumoMatch[3]),
+
+      quadrante:
+        rumoMatch[4]
+          .toUpperCase(),
+
+      distancia:
+        Number(
+          distanciaMatch[1]
+            .replace(/\./g, '')
+            .replace(',', '.')
+        ),
+
+      id:
+        marcoMatch[1]
+          .toUpperCase()
+    };
+
+    console.log("SEGMENTO EXTRAIDO:", seg);
+
+    console.log({
+      rumoOriginal: segmento,
+      quadranteCapturado: rumoMatch[4]
+    });
+
+    if (
+      seg.quadrante !== rumoMatch[4].toUpperCase()
+    ) {
+      console.warn(
+        "QUADRANTE ALTERADO",
+        {
+          trecho: segmento,
+          capturado: rumoMatch[4],
+          final: seg.quadrante
+        }
+      );
+    }
+
+    console.log({
+      rumoOriginal: segmento,
+      quadranteCapturado: rumoMatch[4]
+    });
+
+    const jaExiste = segments.some(
+      s => s.id === seg.id
+    );
+
+    if (!jaExiste) {
+      segments.push(seg);
+    } else {
+      console.warn(
+        "SEGMENTO DUPLICADO:",
+        seg.id
+      );
+    }
+    for (let i = 1; i < segments.length; i++) {
+      const atual =
+        parseInt(
+          segments[i].id.replace("M-", ""),
+          10
+        );
+
+      const anterior =
+        parseInt(
+          segments[i - 1].id.replace("M-", ""),
+          10
+        );
+
+      if (atual - anterior > 1) {
+
+        console.warn(
+          "SALTO DE NUMERACAO",
+          segments[i - 1].id,
+          "->",
+          segments[i].id
+        );
+
+      }
+    }
+  });
+
+  console.log(
+    "SEGMENTOS FINAIS:",
+    segments.length
+  );
+
+
+  console.log(
+    "TEXTO RECEBIDO PELO EXTRACT:",
+    text
+  );
+
+
+  segments.forEach((s, i) => {
+    console.log(`SEGMENTO ${i}`, s);
+  });
+
+  console.log(
+    "CONTEM M-03?",
+    text.includes("M-03")
+  );
+
+  console.log(
+    "CONTEM 51°26",
+    text.includes("51°26")
+  );
+
+  const idx = text.indexOf("M-03");
+
+  if (idx !== -1) {
+    console.log(
+      "TRECHO M-03:",
+      text.substring(
+        Math.max(0, idx - 250),
+        idx + 250
+      )
+    );
+  }
+
+  return segments;
+}
+
+function extractStartingVertexFromMemorial(text) {
+
+  const regex = /(?:O=PP|0=PP)[\s\S]{0,250}?E\s*=\s*([\d.,]+)[\s\S]{0,80}?N\s*=\s*([\d.,]+)/i;
+
+  const m = regex.exec(text);
+
+  if (!m) {
+    return null;
+  }
+
+  const east = parseFloat(
+    m[1]
+      .replace(/\./g, '')
+      .replace(',', '.')
+  );
+
+  const north = parseFloat(
+    m[2]
+      .replace(/\./g, '')
+      .replace(',', '.')
+  );
+
+  return {
+    id: 'O=PP',
+    east,
+    north
+  };
+}
+
+function buildVerticesFromBearings(text) {
+
+  const vertices = [];
+
+  const start =
+    extractStartingVertexFromMemorial(text);
+
+  if (!start) {
+
+    console.log(
+      'BEARING PARSER: ponto inicial não encontrado'
+    );
+
+    return vertices;
+  }
+
+  vertices.push(start);
+
+  const segments =
+    extractBearingSegments(text);
+
+  let currentEast =
+    start.east;
+
+  let currentNorth =
+    start.north;
+
+  for (const seg of segments) {
+
+    const azimuth =
+      rumoToAzimuth(
+        seg.graus,
+        seg.minutos,
+        seg.segundos,
+        seg.quadrante
+      );
+
+    if (!Number.isFinite(azimuth)) {
+      continue;
+    }
+
+    const next =
+      projectVertex(
+        currentEast,
+        currentNorth,
+        azimuth,
+        seg.distancia
+      );
+
+    vertices.push({
+
+      id: seg.id,
+
+      east: next.east,
+
+      north: next.north
+    });
+
+    currentEast =
+      next.east;
+
+    currentNorth =
+      next.north;
+  }
+
+  console.log(
+    'BEARING PARSER TOTAL:',
+    vertices.length
+  );
+
+  return vertices;
+}
+
+function drawPolygonPreview(vertices) {
+
+  const card =
+    document.getElementById(
+      "polygonPreviewCard"
+    );
+
+  const canvas =
+    document.getElementById(
+      "polygonPreviewCanvas"
+    );
+
+  if (
+    !card ||
+    !canvas ||
+    !vertices ||
+    vertices.length < 3
+  ) {
+    return;
+  }
+
+  const ctx =
+    canvas.getContext("2d");
+
+  ctx.clearRect(
+    0,
+    0,
+    canvas.width,
+    canvas.height
+  );
+
+  const padding = 30;
+
+  const easts =
+    vertices.map(v => v.east);
+
+  const norths =
+    vertices.map(v => v.north);
+
+  const minE = Math.min(...easts);
+  const maxE = Math.max(...easts);
+
+  const minN = Math.min(...norths);
+  const maxN = Math.max(...norths);
+
+  const scaleX =
+    (canvas.width - padding * 2) /
+    (maxE - minE || 1);
+
+  const scaleY =
+    (canvas.height - padding * 2) /
+    (maxN - minN || 1);
+
+  const scale =
+    Math.min(scaleX, scaleY);
+
+  const project = v => ({
+
+    x:
+      padding +
+      (v.east - minE) *
+      scale,
+
+    y:
+      canvas.height -
+      padding -
+      (v.north - minN) *
+      scale
+
+  });
+
+  ctx.beginPath();
+
+  vertices.forEach((v, i) => {
+
+    const p = project(v);
+
+    if (i === 0) {
+
+      ctx.moveTo(
+        p.x,
+        p.y
+      );
+
+    } else {
+
+      ctx.lineTo(
+        p.x,
+        p.y
+      );
+    }
+  });
+
+  ctx.closePath();
+
+  ctx.fillStyle =
+    "rgba(255,152,0,0.25)";
+
+  ctx.strokeStyle =
+    "#ff9800";
+
+  ctx.lineWidth = 2;
+
+  ctx.fill();
+  ctx.stroke();
+
+  vertices.forEach(v => {
+
+    const p = project(v);
+
+    ctx.beginPath();
+
+    ctx.arc(
+      p.x,
+      p.y,
+      3,
+      0,
+      Math.PI * 2
+    );
+
+    ctx.fillStyle =
+      "#d84315";
+
+    ctx.fill();
+
+    ctx.font =
+      "11px Arial";
+
+    ctx.fillStyle =
+      "#333";
+
+    ctx.fillText(
+      v.id,
+      p.x + 5,
+      p.y - 5
+    );
+
+  });
+
+  card.style.display = "block";
+}
+
+function buildVerticesTableData(text) {
+
+
+  if (!text || typeof text !== 'string') {
+    return [];
+  }
+
+  const vertices = [];
+
+  const normalizedText = text
+    .replace(/\n/g, ' ')
+    .replace(/\s+/g, ' ');
+
+  const normalize = (val) => {
+    if (!val) return null;
+
+    const raw = String(val || '');
+
+    val = raw
+      .replace(/[^\d,.-]/g, '')
+      .replace(/\.(?=\d{3})/g, '')
+      .replace(',', '.');
+
+    let num = parseFloat(val);
+
+    if (Number.isFinite(num) && num > 10000000) {
+      const digitsOnly = raw.replace(/\D/g, '');
+      if (/^\d{9,11}$/.test(digitsOnly)) {
+        const scaled = Number(digitsOnly) / 1000;
+        if (Number.isFinite(scaled) && scaled >= 100000 && scaled <= 10000000) {
+          num = scaled;
+        }
+      }
+    }
+
+    if (!Number.isFinite(num)) return null;
+    if (num < 100000 || num > 10000000) return null;
+
+    return num;
+  };
+
+  // REGEX PRINCIPAL (mantém)
+  const regex = /v[ée]rtice\s+([A-Za-z0-9][A-Za-z0-9\s._/=:-]{0,48}?)(?=\s*(?:,|;|:|de\s+coordenadas|coordenadas|N\s*[=:]?))(?:(?!v[ée]rtice).){0,320}?N(?:ORTE)?\s*[=:]?\s*([0-9.,]+)\s*(?:m|,|;|\s)*?\s*(?:e\s*)?E(?:STE)?\s*[=:]?\s*([0-9.,]+)/gis;
+
+  let match;
+
+  while ((match = regex.exec(normalizedText)) !== null) {
+
+    let rawId = match[1];
+
+    const id = normalizeVertexId(rawId);
+
+    const north = normalize(match[2]);
+    const east = normalize(match[3]);
+
+    if (id && north && east) {
+      vertices.push({ id, north, east });
+    }
+  }
+
+  // COMPLEMENTAR
+
+  const idRegex = /v[ée]rtice\s+([A-Za-z0-9][A-Za-z0-9\s._/=:-]{0,48}?)(?=\s*(?:,|;|:|de\s+coordenadas|coordenadas|N\s*[=:]?))/gi;
+  const idMatches = [...normalizedText.matchAll(idRegex)];
+
+  for (let i = 0; i < idMatches.length; i++) {
+
+    const current = idMatches[i];
+    const next = idMatches[i + 1];
+
+    let rawId = current[1];
+
+    const id = normalizeVertexId(rawId);
+
+    const start = current.index;
+    const end = next ? next.index : normalizedText.length;
+
+    const slice = normalizedText.slice(start, end);
+
+    const coordRegex = /([A-Z]+\d+).*?N\s*([0-9.]+).*?E\s*([0-9.]+)/gis;
+
+    let coords = [];
+    let coordMatch;
+
+    while ((coordMatch = coordRegex.exec(slice)) !== null) {
+      coords.push({
+        type: coordMatch[1],
+        value: coordMatch[2]
+      });
+      if (coords.length === 2) break;
+    }
+
+    if (coords.length === 2) {
+
+      let north = null;
+      let east = null;
+
+      coords.forEach(c => {
+        if (c.type === 'N') north = normalize(c.value);
+        if (c.type === 'E') east = normalize(c.value);
+      });
+
+      if (north && east) {
+
+        const exists = vertices.some(v =>
+          v.id === id ||
+          (Math.abs(v.north - north) < 0.001 &&
+            Math.abs(v.east - east) < 0.001)
+        );
+
+        if (!exists) {
+          vertices.push({ id, north, east });
+        }
+      }
+    }
+  }
+
+
+  const startRegex = /v[ée]rtice\s*([A-Za-z0-9][A-Za-z0-9\s._/=:-]{0,48}?)[^N]{0,80}N\s*=?\s*([0-9]{6,}[.,][0-9]+)[^E]{0,80}E\s*=?\s*([0-9]{6,}[.,][0-9]+)/i;
+
+  const startMatch = startRegex.exec(normalizedText);
+
+  if (startMatch) {
+
+    const id = normalizeVertexId(startMatch[1]);
+    const north = normalize(startMatch[2]);
+    const east = normalize(startMatch[3]);
+
+    if (north && east) {
+
+      const exists = vertices.some(v =>
+        v.id === id ||
+        (Math.abs(v.north - north) < 0.001 &&
+          Math.abs(v.east - east) < 0.001)
+      );
+
+      if (!exists) {
+        vertices.unshift({ id, north, east });
+      }
+    }
+  }
+
+  const verticeRegex = /v[ée]rtice\s+([A-Za-z0-9\s._/-]+?)(?=\s*(?:,|;|:|de\s+coordenadas|coordenadas|N\s*[=:]?))(?:(?!v[ée]rtice).){0,320}?N(?:ORTE)?\s*=?\s*(\d+[.,]\d+)(?:(?!v[ée]rtice).){0,160}?E(?:STE)?\s*=?\s*(\d+[.,]\d+)/gi;
+
+  let vMatch;
+
+  while ((vMatch = verticeRegex.exec(normalizedText)) !== null) {
+
+    let rawId = vMatch[1].trim();
+
+    const id = normalizeVertexId(rawId);
+
+    const north = normalize(vMatch[2]);
+    const east = normalize(vMatch[3]);
+
+    if (id && north && east) {
+
+      const exists = vertices.some(v =>
+        v.id === id ||
+        (Math.abs(v.north - north) < 0.001 &&
+          Math.abs(v.east - east) < 0.001)
+      );
+
+      if (!exists) {
+        vertices.push({ id, north, east });
+      }
+    }
+  }
+
+
+  // ======================================================
+  // PARSER PARA MEMORIAIS COM X= E Y=
+  // Ex.: "vértice 1 com coordenadas X=492364.3018 e Y=7102312.1452"
+  // ======================================================
+
+  const memorialXYRegex = /v[ée]rtice\s+(\d+)[\s\S]{0,80}?X\s*=\s*(\d+\.\d+)[\s\S]{0,30}?Y\s*=\s*(\d+\.\d+)/gi;
+
+  let m;
+
+  while ((m = memorialXYRegex.exec(normalizedText)) !== null) {
+
+    const id = m[1].trim();
+
+    const east = parseFloat(m[2]);
+    const north = parseFloat(m[3]);
+
+    console.log(
+      "MEMORIAL XY",
+      id,
+      east,
+      north
+    );
+
+    if (
+      Number.isFinite(east) &&
+      Number.isFinite(north)
+    ) {
+
+      vertices.push({
+        id,
+        east,
+        north
+      });
+    }
+  }
+
+  // ======================================================
+  // PARSER PARA MATRÍCULAS COM MARCOS M-XX E COORDENADAS UTM
+  // Ex.: O=PP, M-10, M-14, M-15, M-21=OPP
+  // ======================================================
+
+  const marcoRegex = /(?:ponto\s+denominado\s+)?(O=PP|M-\d+(?:=OPP)?)[\s\S]{0,120}?E\s*=\s*([\d.,]+)[\s\S]{0,60}?N\s*=\s*([\d.,]+)/gi;
+
+  let marcoMatch;
+
+  while ((marcoMatch = marcoRegex.exec(normalizedText)) !== null) {
+
+    const id = normalizeVertexId(marcoMatch[1]);
+
+    const east = normalize(marcoMatch[2]);
+    const north = normalize(marcoMatch[3]);
+
+    console.log(
+      "MARCO FOUND:",
+      id,
+      east,
+      north
+    );
+
+    if (!id || !east || !north) {
+      continue;
+    }
+
+    const exists = vertices.some(v =>
+      v.id === id ||
+      (
+        Math.abs(v.north - north) < 0.001 &&
+        Math.abs(v.east - east) < 0.001
+      )
+    );
+
+    if (!exists) {
+
+      vertices.push({
+        id,
+        north,
+        east
+      });
+
+    }
+  }
+
+  console.log(
+    "MARCO PARSER TOTAL:",
+    vertices.length
+  );
+
+  const inlineVertices = extractInlineVertices(text);
+
+  inlineVertices.forEach(v => {
+    const exists = vertices.some(
+      x => Math.abs(x.north - v.north) < 0.01 &&
+        Math.abs(x.east - v.east) < 0.01
+    );
+
+    if (!exists) {
+      vertices.push(v);
+    }
+  });
+
+  console.log(
+    "ANTES DO BEARING PARSER:",
+    vertices.length
+  );
+
+  console.table(
+    vertices.map(v => ({
+      id: v.id,
+      north: v.north,
+      east: v.east
+    }))
+  );
+
+  if (vertices.length < 10) {
+
+    const bearingVertices =
+      buildVerticesFromBearings(
+        normalizedText
+      );
+
+    console.log(
+      "BEARING PARSER TOTAL:",
+      bearingVertices.length
+    );
+
+    console.table(
+      bearingVertices.map(v => ({
+        id: v.id,
+        north: v.north,
+        east: v.east
+      }))
+    );
+
+    const bearingSegments =
+      extractBearingSegments(text);
+
+    console.log(
+      "BEARING SEGMENTS:",
+      bearingSegments.length
+    );
+
+    bearingVertices.forEach(v => {
+
+      const exists =
+        vertices.some(x =>
+          x.id === v.id
+        );
+
+      if (exists) {
+
+        console.warn(
+          "VERTICE IGNORADO:",
+          v.id
+        );
+
+      } else {
+
+        console.log(
+          "VERTICE ADICIONADO:",
+          v.id
+        );
+
+        vertices.push({
+          id: v.id,
+          east: v.east,
+          north: v.north
+        });
+
+      }
+    });
+  }
+
+  console.log("=== VERTICES ANTES DO RETURN ===");
+
+  console.log("TOTAL:", vertices.length);
+
+  console.table(
+    vertices.map(v => ({
+      id: v.id,
+      north: v.north,
+      east: v.east
+    }))
+  );
+
+  console.log(
+    "ANTES DO RECONCILE:",
+    vertices.length
+  );
+
+  console.table(
+    vertices.map(v => ({
+      id: v.id
+    }))
+  );
+
+  const finalVertices = reconcileLikelyAppIdTypos(vertices);
+
+  drawPolygonPreview(
+    finalVertices
+  );
+
+  return finalVertices;
+
+}

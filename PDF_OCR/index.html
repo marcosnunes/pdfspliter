@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Extrator de Dados para DOC</title>
+
+    <link rel="stylesheet" href="/vendor/bulma/css/bulma.min.css">
+    <link rel="stylesheet" href="/vendor/fontawesome/css/all.min.css">
+
+    <link rel="stylesheet" href="style.css">
+
+    <script src="../PDFtoArcgis/vendor/pdf.min.js"></script>
+    <script src="../local-ocr-client.js"></script>
+</head>
+
+<body>
+
+    <div id="mySidenav" class="sidenav">
+        <a href="javascript:void(0)" class="closebtn" onclick="closeNav()">×</a>
+        <a href="/pdfspliter/Dividir/index.html">Dividir</a>
+        <a href="/pdfspliter/UnirPDF/index.html">Unir PDF</a>
+        <a href="/pdfspliter/PDF_OCR/index.html" class="active-nav-link">PDF OCR</a>
+        <a href="/pdfspliter/DividirApenas/index.html">Dividir Apenas</a>
+        <a href="/pdfspliter/JPGtoPDF/index.html">JPG to PDF</a>
+        <a href="/pdfspliter/PDFtoJPG/index.html">PDF to JPG</a>
+        <a href="/pdfspliter/PDFtoArcgis/index.html">PDF to ArcGIS</a>
+    </div>
+
+    <div class="navigation">
+        <nav>
+            <div class="nav-wrapper">
+                <!-- Ícone do Menu (Hamburger) -->
+                <span class="open-nav" onclick="openNav()">☰</span>
+            </div>
+        </nav>
+    </div>
+
+    <main class="ocr-page">
+        <div class="ocr-shell">
+            <header class="ocr-hero">
+                <div>
+                    <p class="eyebrow"><i class="fas fa-crosshairs"></i> Ferramenta de extração local</p>
+                    <h1>PDF OCR</h1>
+                    <p class="hero-copy">Recorte uma área do documento, reconheça o conteúdo e exporte o resultado para um arquivo editável.</p>
+                </div>
+                <div class="hero-badge"><i class="fas fa-shield-halved"></i><span>Processamento local</span></div>
+            </header>
+
+            <section class="ocr-workflow" aria-label="Fluxo de extração">
+                <div class="workflow-step is-active"><span>1</span><div><strong>Carregar</strong><small>PDF ou imagem</small></div></div>
+                <div class="workflow-line"></div>
+                <div class="workflow-step"><span>2</span><div><strong>Selecionar</strong><small>Área de interesse</small></div></div>
+                <div class="workflow-line"></div>
+                <div class="workflow-step"><span>3</span><div><strong>Extrair</strong><small>OCR e download</small></div></div>
+            </section>
+
+            <section class="ocr-controls" aria-label="Controles do documento">
+                <div class="control-main">
+                    <div class="file has-name is-fullwidth ocr-file-control">
+                        <label class="file-label">
+                            <input class="file-input" type="file" id="fileInput" accept=".pdf,.png,.jpg,.jpeg">
+                            <span class="file-cta"><span class="file-icon"><i class="fas fa-upload"></i></span><span class="file-label" id="fileInputLabel">Escolher arquivo</span></span>
+                            <span class="file-name" id="fileNameDisplay">Nenhum arquivo selecionado</span>
+                        </label>
+                    </div>
+                </div>
+                <div id="pageSelector" class="page-control">
+                    <div class="page-actions"><input class="input" type="number" id="pageNumInput" value="1" min="1" disabled><button id="goToPageBtn" class="button btn-gold" disabled>Ir</button></div>
+                </div>
+                <div class="action-control">
+                    <button id="processBtn" class="button btn-gold is-medium" data-loading-label="Processando..." disabled><i class="fas fa-wand-magic-sparkles"></i><span>Processar área (OCR 4x)</span></button>
+                </div>
+                <div id="status" class="ocr-status is-info">Aguardando arquivo PDF ou imagem...</div>
+                <progress id="ocrProgress" class="progress is-primary is-small" value="0" max="100" style="display:none;"></progress>
+            </section>
+
+            <section class="ocr-workspace" aria-label="Área de trabalho OCR">
+                <div class="workspace-header"><div><p class="eyebrow">Área de trabalho</p><h2>Pré-visualização do documento</h2></div></div>
+                <div class="preview-frame"><div id="canvasContainer" class="is-relative"><canvas id="pdfCanvas"></canvas><div id="cropOverlay"></div></div></div>
+            </section>
+
+            <section class="ocr-result" aria-label="Resultado da extração">
+                <div class="result-header"><div><p class="eyebrow">Saída</p><h2>Resultado da extração</h2></div><span class="result-format"><i class="fas fa-file-word"></i> Word / DOCX</span></div>
+                <pre id="output"></pre>
+                <button id="downloadBtn" class="button btn-gold" style="display:none;"><i class="fas fa-download"></i><span>Baixar Word / DOCX</span></button>
+            </section>
+        </div>
+    </main>
+
+    <script src="script.js"></script>
+
+</body>
+
+</html>

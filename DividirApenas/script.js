@@ -1,86 +1,11 @@
-// Menu lateral (Sidenav)
 function openNav() {
-    document.getElementById("mySidenav").style.width = "250px";
-    if (typeof isAppInstalled === 'function' && typeof hideInstallBtn === 'function') {
-        if (isAppInstalled()) hideInstallBtn();
-    }
+    const sidenav = document.getElementById('mySidenav');
+    if (sidenav) sidenav.style.width = '250px';
 }
 
 function closeNav() {
-    document.getElementById("mySidenav").style.width = "0";
-}
-
-// --- PWA: Instalar App (com feedback visual) ---
-let deferredPrompt = null;
-const installBtn = document.getElementById('installPwaBtn');
-function hideInstallBtn() {
-    if (installBtn) installBtn.style.display = 'none';
-}
-function isAppInstalled() {
-    // Checa standalone (PWA instalado) e display-mode
-    if (window.matchMedia('(display-mode: standalone)').matches) return true;
-    if (window.navigator.standalone === true) return true;
-    // Checa se já existe service worker controlando e não há prompt
-    if (window.matchMedia('(display-mode: minimal-ui)').matches) return true;
-    // iOS: verifica se está rodando como app
-    if (window.navigator && window.navigator.standalone) return true;
-    // Android Chrome: verifica se não há prompt e já está instalado
-    if (window.matchMedia('(display-mode: fullscreen)').matches) return true;
-    return false;
-}
-if (isAppInstalled()) {
-    hideInstallBtn();
-}
-window.addEventListener('appinstalled', hideInstallBtn);
-window.addEventListener('DOMContentLoaded', function() {
-    if (isAppInstalled()) hideInstallBtn();
-});
-window.addEventListener('beforeinstallprompt', (e) => {
-    if (isAppInstalled()) {
-        hideInstallBtn();
-        return;
-    }
-    e.preventDefault();
-    deferredPrompt = e;
-    if (installBtn) {
-        installBtn.style.display = 'block';
-        installBtn.classList.remove('success', 'error');
-        installBtn.textContent = 'Instalar App';
-    }
-});
-if (installBtn) {
-    installBtn.addEventListener('click', async () => {
-        if (deferredPrompt) {
-            try {
-                deferredPrompt.prompt();
-                const { outcome } = await deferredPrompt.userChoice;
-                if (outcome === 'accepted') {
-                    installBtn.classList.add('success');
-                    installBtn.textContent = 'App instalado!';
-                    setTimeout(() => {
-                        installBtn.style.display = 'none';
-                        installBtn.classList.remove('success');
-                        installBtn.textContent = 'Instalar App';
-                    }, 2000);
-                } else {
-                    installBtn.classList.add('error');
-                    installBtn.textContent = 'Instalação cancelada';
-                    setTimeout(() => {
-                        installBtn.classList.remove('error');
-                        installBtn.textContent = 'Instalar App';
-                    }, 2000);
-                }
-            } catch (err) {
-                installBtn.classList.add('error');
-                installBtn.textContent = 'Erro ao instalar';
-                setTimeout(() => {
-                    installBtn.classList.remove('error');
-                    installBtn.textContent = 'Instalar App';
-                }, 2000);
-            }
-            deferredPrompt = null;
-        }
-    });
+    const sidenav = document.getElementById('mySidenav');
+    if (sidenav) sidenav.style.width = '0';
 }
 
 // Carrega jsPDF e pdf-lib de forma assíncrona
@@ -127,6 +52,11 @@ function displayLogMessage(message) {
         logMessages.textContent = message;
     }
     console.log("Log:", message);
+}
+
+function notifyUser(message, type = 'info') {
+    const prefix = type === 'error' ? '❌' : (type === 'warning' ? '⚠️' : '✅');
+    displayLogMessage(`${prefix} ${message}`);
 }
 
 // Lê arquivo como ArrayBuffer (async)
@@ -193,9 +123,9 @@ async function processarPdf() {
     const processarPDFButton = document.getElementById("processarPDF");
     const pdfPagesContainer = document.getElementById("pdf-pages-container");
 
-    if (!PDFLib) { alert("Erro: Biblioteca pdf-lib não carregada."); return; }
-    if (!file) { alert("Selecione um arquivo PDF."); return; }
-    if (file.type !== "application/pdf") { alert("Selecione um arquivo PDF válido."); return; }
+    if (!PDFLib) { notifyUser('Não foi possível iniciar: biblioteca pdf-lib não foi carregada.', 'error'); return; }
+    if (!file) { notifyUser('Selecione um arquivo PDF para continuar.', 'warning'); return; }
+    if (file.type !== "application/pdf") { notifyUser('Selecione um arquivo PDF válido para continuar.', 'warning'); return; }
 
     pdfPagesContainer.innerHTML = "";
     displayLogMessage("Iniciando processamento...");
@@ -224,6 +154,7 @@ async function processarPdf() {
                 downloadLink.download = downloadFileName;
                 downloadLink.textContent = `Página ${i + 1}`;
                 downloadLink.target = "_blank";
+                downloadLink.classList.add("custom-download-link");
 
                 const revokeObjectUrl = () => {
                     setTimeout(() => {
@@ -244,13 +175,13 @@ async function processarPdf() {
             }
         }
 
-        displayLogMessage("Concluído!");
+        notifyUser('Processamento concluído. Arquivos prontos para download.', 'success');
         scrollToPdfPagesContainer();
 
     } catch (error) {
         console.error("Erro processamento:", error);
         displayLogMessage(`Erro: ${error.message || 'Erro desconhecido.'}`);
-        alert("Ocorreu um erro ao processar o PDF.");
+        notifyUser('Não foi possível concluir o processamento do PDF.', 'error');
     } finally {
         processarPDFButton.textContent = "Processar PDF";
         processarPDFButton.disabled = false;
@@ -259,8 +190,8 @@ async function processarPdf() {
 
 // Inicialização: carrega bibliotecas e configura UI
 document.addEventListener('DOMContentLoaded', function () {
-    const pdfLibUrl = "https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js";
-    const jspdfUrl = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
+    const pdfLibUrl = "/vendor/pdf-lib/pdf-lib.min.js";
+    const jspdfUrl = "/vendor/jspdf/jspdf.umd.min.js";
     const initialProcessButton = document.getElementById("processarPDF");
     const fileInput = document.getElementById("pdfUpload");
 

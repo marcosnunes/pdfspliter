@@ -1,0 +1,301 @@
+/* Footer*/
+.app-footer {
+    width: 100%;
+    background: linear-gradient(90deg, #ff9800 60%, #fb8c00 100%);
+    color: white;
+    text-align: center;
+    font-size: 16px;
+    font-weight: 500;
+    padding: 14px 0 10px 0;
+    letter-spacing: 0.5px;
+    box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.07);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    margin-top: 40px;
+}
+
+.footer-main {
+    font-size: 1em;
+    font-weight: 500;
+    display: block;
+}
+
+.footer-copy {
+    font-size: 0.95em;
+    opacity: 0.85;
+    display: block;
+}
+
+@media (max-width: 600px) {
+    .app-footer {
+        font-size: 13px;
+        padding: 10px 0 6px 0;
+    }
+
+    .footer-main,
+    .footer-copy {
+        font-size: 0.95em;
+    }
+}
+
+/* Footer */
+
+@media (max-width: 600px) {
+    .app-footer {
+        font-size: 13px;
+        padding: 12px 0 8px 0;
+    }
+}
+
+.navigation {
+    position: sticky;
+    width: 100%;
+    top: 0;
+    z-index: 1000;
+}
+
+.nav-wrapper {
+    background-color: #ffc107;
+    padding: 10px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    text-align: right;
+    /* Alinha o conteúdo (span) à direita */
+    height: 60px;
+    /* Define uma altura fixa para a barra */
+    box-sizing: border-box;
+    /* Garante que padding não adicione altura */
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+}
+
+/* Estilos para o ícone de abrir o menu */
+.open-nav {
+    font-size: 28px;
+    cursor: pointer;
+    color: white;
+    padding-right: 20px;
+}
+
+/* Estilos para o menu lateral (Sidenav) */
+.sidenav {
+    height: 100%;
+    width: 0;
+    /* Começa fechado */
+    position: fixed;
+    z-index: 1001;
+    /* Fica acima de outros conteúdos */
+    top: 0;
+    right: 0;
+    background-color: #ff9800;
+    /* Cor de fundo */
+    overflow-x: hidden;
+    /* Desabilita scroll horizontal */
+    transition: 0.5s;
+    /* Efeito de transição */
+    padding-top: 60px;
+    /* Espaço no topo */
+}
+
+/* Estilos para os links do menu lateral */
+.sidenav a {
+    padding: 8px 8px 8px 32px;
+    text-decoration: none;
+    font-size: 22px;
+    color: white;
+    display: block;
+    transition: 0.3s;
+}
+
+/* Efeito hover nos links */
+.sidenav a:hover {
+    color: #f1f1f1;
+    background-color: #fb8c00;
+}
+
+.sidenav a.active-nav-link {
+    background-color: #fff3e0;
+    border-left: 4px solid #ffb74d;
+    color: #e65100;
+    font-weight: 700;
+}
+
+/* Estilo para o botão de fechar (X) */
+.sidenav .closebtn {
+    position: absolute;
+    top: 0;
+    right: 25px;
+    font-size: 36px;
+    margin-left: 50px;
+}
+
+.nav-wrapper span a {
+    color: white;
+}
+
+
+body {
+    font-family: Arial, sans-serif;
+    margin: 0;
+    background-color: #f9f9f9;
+}
+
+/* Bulma lida com h1 e buttons */
+
+#status {
+    margin-top: 15px;
+    font-weight: bold;
+}
+
+#output {
+    margin-top: 20px;
+    padding: 10px;
+    background: #fff;
+    border: 1px solid #ccc;
+    max-height: 400px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+}
+
+#canvasContainer {
+  position: relative;
+  display: block;      /* VOLTA ao normal */
+  width: 100%;
+  margin-top: 20px;
+  overflow-x: auto;
+  cursor: crosshair;
+  text-align: center;  /* ESSENCIAL */
+}
+
+#pdfCanvas {
+  display: inline-block;  /* IMPORTANTE */
+  border: 1px solid #dbdbdb;
+  width: auto;
+  max-width: 100%;
+}
+
+#cropOverlay {
+    position: absolute;
+    border: 2px dashed #ff3860;
+    background-color: rgba(255, 56, 96, 0.2);
+    pointer-events: none;
+    display: none;
+    box-sizing: border-box; 
+}
+
+/* Estilo para a caixa de status para se adequar ao design Bulma */
+#status.notification {
+    padding: 10px;
+}
+
+/* PDF OCR workspace: shared orange visual language with the PDF Spliter. */
+:root {
+    --ocr-ink: #263238;
+    --ocr-muted: #68747a;
+    --ocr-line: #eadfd4;
+    --ocr-surface: #ffffff;
+    --ocr-soft: #fff8f0;
+    --ocr-orange: #ff9800;
+    --ocr-orange-dark: #ef6c00;
+    --ocr-shadow: 0 10px 30px rgba(71, 48, 28, 0.08);
+}
+
+body {
+    background: #f7f4f0;
+    color: var(--ocr-ink);
+    font-family: Arial, sans-serif;
+}
+
+.ocr-page {
+    padding: 34px 18px 52px;
+}
+
+.ocr-shell {
+    width: min(1180px, 100%);
+    margin: 0 auto;
+}
+
+.ocr-hero {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 24px;
+    padding: 32px 36px;
+    border-radius: 14px;
+    color: #fff;
+    background: linear-gradient(135deg, #ff9800 0%, #ef6c00 100%);
+    box-shadow: var(--ocr-shadow);
+}
+
+.ocr-hero h1 { margin: 4px 0 8px; color: #fff; font-size: 2.25rem; line-height: 1.1; }
+.hero-copy { max-width: 630px; margin: 0; color: rgba(255, 255, 255, 0.9); font-size: 1rem; }
+.eyebrow { margin: 0; color: var(--ocr-orange-dark); font-size: 0.72rem; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; }
+.ocr-hero .eyebrow { color: #fff3e0; }
+.hero-badge { display: flex; align-items: center; gap: 9px; padding: 10px 14px; border: 1px solid rgba(255,255,255,.35); border-radius: 999px; color: #fff; font-size: .82rem; white-space: nowrap; }
+
+.ocr-workflow {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 18px 4px 22px;
+}
+.workflow-step { display: flex; align-items: center; gap: 10px; color: var(--ocr-muted); }
+.workflow-step span { display: grid; width: 30px; height: 30px; place-items: center; border-radius: 50%; background: #e7e0d9; color: #667076; font-weight: 800; }
+.workflow-step strong, .workflow-step small { display: block; }
+.workflow-step strong { color: var(--ocr-ink); font-size: .85rem; }
+.workflow-step small { font-size: .72rem; }
+.workflow-step.is-active span { background: var(--ocr-orange); color: #fff; }
+.workflow-line { height: 1px; flex: 1; background: #d9cec3; }
+
+.ocr-controls, .ocr-workspace, .ocr-result {
+    border: 1px solid var(--ocr-line);
+    border-radius: 12px;
+    background: var(--ocr-surface);
+    box-shadow: var(--ocr-shadow);
+}
+.ocr-controls { display: grid; grid-template-columns: minmax(0, 1fr) 150px minmax(245px, 300px); gap: 16px; align-items: center; padding: 24px; }
+.panel-heading, .workspace-header, .result-header { display: flex; align-items: center; gap: 11px; }
+.panel-heading { min-height: 30px; margin-bottom: 14px; }
+.panel-heading h2, .workspace-header h2, .result-header h2 { margin: 0; color: var(--ocr-ink); font-size: 1.05rem; font-weight: 750; }
+.panel-index { color: var(--ocr-orange-dark); font-size: .72rem; font-weight: 800; }
+.ocr-file-control .file-label { width: 100%; }
+.ocr-file-control .file-cta { background: var(--ocr-soft); border-color: #ffc477; color: var(--ocr-orange-dark); font-weight: 700; }
+.ocr-file-control .file-name { border-color: #ffc477; color: var(--ocr-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.page-actions { display: flex; gap: 8px; align-items: center; }
+.page-actions .input { width: 68px; }
+.page-control { min-width: 0; align-self: center; }
+.page-control .button:disabled, .page-control .input:disabled, .action-control .button:disabled { cursor: not-allowed; opacity: .55; }
+.btn-gold { border: 0; color: #fff !important; background: linear-gradient(135deg, #ff9800 0%, #ef6c00 100%) !important; box-shadow: 0 2px 6px rgba(239,108,0,.26); font-weight: 700; }
+.btn-gold:hover { background: linear-gradient(135deg, #f57c00 0%, #e65100 100%) !important; }
+.action-control { min-width: 0; align-self: center; }
+.action-control .button { width: 100%; }
+.ocr-status { grid-column: 1 / -1; margin-top: -4px; padding: 10px 12px; border-left: 3px solid var(--ocr-orange); border-radius: 5px; background: var(--ocr-soft); color: var(--ocr-orange-dark); font-size: .85rem; font-weight: 700; }
+.ocr-status.is-danger { border-left-color: #d64545; background: #fff1f1; color: #a12626; }
+.ocr-status.is-success { border-left-color: #4b8f5a; background: #eef9f0; color: #31663b; }
+.ocr-controls progress { grid-column: 1 / -1; margin: 0; }
+
+.ocr-workspace { margin-top: 22px; padding: 20px; }
+.workspace-header, .result-header { justify-content: space-between; margin-bottom: 14px; }
+.workspace-tip, .result-format { color: var(--ocr-muted); font-size: .78rem; }
+.preview-frame { min-height: 440px; overflow: auto; border: 1px solid #dfd5cc; border-radius: 8px; background: #f1ede8; }
+#canvasContainer { display: block; width: 100%; min-height: 440px; margin: 0; padding: 22px; box-sizing: border-box; cursor: crosshair; text-align: center; }
+#pdfCanvas { display: inline-block; max-width: 100%; border: 1px solid #cfc3b9; background: #fff; box-shadow: 0 3px 12px rgba(0,0,0,.1); }
+#cropOverlay { border-color: var(--ocr-orange-dark); background-color: rgba(255, 152, 0, .2); }
+
+.ocr-result { margin-top: 22px; padding: 24px; }
+.result-format { padding: 6px 10px; border: 1px solid #ffc477; border-radius: 999px; background: var(--ocr-soft); color: var(--ocr-orange-dark); font-weight: 700; }
+#output { min-height: 150px; max-height: 360px; margin: 0; padding: 16px; overflow: auto; border: 1px solid #dfd5cc; border-radius: 8px; background: #2e2925; color: #fff7ef; font: 0.82rem/1.55 Consolas, monospace; white-space: pre-wrap; }
+#downloadBtn { margin-top: 14px; }
+
+@media (max-width: 760px) {
+    .ocr-page { padding: 20px 12px 36px; }
+    .ocr-hero { align-items: flex-start; flex-direction: column; padding: 24px; }
+    .ocr-hero h1 { font-size: 1.8rem; }
+    .ocr-workflow { gap: 8px; }
+    .workflow-line { min-width: 10px; }
+    .ocr-controls { grid-template-columns: 1fr; gap: 18px; }
+    .ocr-status, .ocr-controls progress { grid-column: auto; }
+    .preview-frame, #canvasContainer { min-height: 300px; }
+}
