@@ -14,7 +14,7 @@ function isLocalPdfToArcgisHost() {
 
 function buildWorkspaceAiExtractorCandidates() {
   const cfg = getPdfToArcgisConfig();
-  const configured = String(cfg.workspaceAiExtractorUrl || '').trim() || '/api/pdf-to-geojson';
+  const configured = String(cfg.workspaceAiExtractorUrl || '').trim() || '/api/llama-3.1-8b-instant';
   const candidates = [configured];
 
   if (isLocalPdfToArcgisHost() && /^\/api\//.test(configured)) {
@@ -26,41 +26,11 @@ function buildWorkspaceAiExtractorCandidates() {
 }
 
 function getWorkspaceAiExtractorUrl() {
-  return buildWorkspaceAiExtractorCandidates()[0] || '/api/pdf-to-geojson';
+  return buildWorkspaceAiExtractorCandidates()[0] || '/api/llama-3.1-8b-instant';
 }
 
 function getSelectedProcessingMode() {
   return 'complete';
-}
-
-async function askLocalAssistivePdfTask(task, ocrText = '', context = {}) {
-  const rawText = String(context?.rawText || ocrText || '');
-  const body = {
-    features: [],
-    text: String(ocrText || ''),
-    rawText,
-    config: { task },
-    context: {
-      task,
-      stage: 'pdf-to-arcgis',
-      source: 'pdf-to-arcgis-roi-ocr-or-coordinates',
-      ...context
-    }
-  };
-
-  try {
-    const response = await fetch('/api/desktop/assist-inference', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json; charset=utf-8', Accept: 'application/json' },
-      body: JSON.stringify(body)
-    });
-    if (!response.ok) return null;
-    const payload = await response.json().catch(() => null);
-    if (!payload?.ok) return null;
-    return payload;
-  } catch {
-    return null;
-  }
 }
 
 const PROGRESS_HINT_MESSAGES = [
@@ -824,96 +794,131 @@ function buildBackendRetryTextCandidates(baseText) {
   return unique;
 }
 
-async function callWorkspaceAiExtractor(fileName, totalPagesHint = 0, ocrText = '', retryCount = 0, patternHint = '', flowMode = 'auto', rawOcrText = '') {
-  if (!getWorkspaceAiExtractorUrl()) {
-    throw new Error('API desativada - usando fallback local');
+function buildGeoJsonExtractionPrompt(text, totalPagesHint, patternHint) {
+  const lines = String(text || '').split(/\r?\n/);
+  const coordinateLine = /(?:v[ée]rtice|coordenad|latitude|longitude|utm|sirgas|wgs\s*84|sad[\s-]?69|azimute|dist[âa]ncia|confront|fuso|zona|graus|°|[NS]\s*[-+]?\d{1,2}\s*[°º]|\d[\d.,-]{4,}.*\d[\d.,-]{4,})/i;
+  const relevantLines = lines
+    .map((line) => line.trim())
+    .filter((line) => line && coordinateLine.test(line))
+    .slice(0, 1200);
+  const sourceText = relevantLines.join('\n')
+    .replace(/\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b/g, '[CPF omitido]')
+    .replace(/\b\d{2}\.?\d{3}\.?\d{3}-?\d\b/g, '[RG omitido]')
+    .slice(0, 60000);
+  if (!sourceText) {
+    throw new Error('Não foram encontrados trechos de coordenadas no texto do PDF.');
   }
 
-  // Fluxo principal e único no PDFtoArcGIS: a matrícula deve ser a fonte
-  // canônica de contexto textual que alimenta o extrator de geometria.
-  const inferenceRawText = String(rawOcrText || ocrText || '');
-  const matSelectAssistive = await askLocalAssistivePdfTask('pdf-matricula-choice', inferenceRawText, {
-    fileName,
-    totalPagesHint: Number.isFinite(Number(totalPagesHint)) ? Number(totalPagesHint) : 0,
-    flowMode: String(flowMode || 'auto'),
-    rawText: inferenceRawText
-  });
-  const matChoiceCandidates = Array.isArray(matSelectAssistive?.candidates)
-    ? matSelectAssistive.candidates
-        .map((item) => String(item?.line || item || '').trim())
-        .filter(Boolean)
+  return [
+    'Extraia os vértices de um único imóvel do texto de um documento fundiário brasileiro.',
+    'O texto foi extraído localmente do PDF. Nunca suponha coordenadas ausentes, complete pontos por adivinhação ou misture imóveis.',
+    'Priorize tabelas com coordenadas explícitas. Preserve a ordem e os identificadores dos vértices.',
+    'Se houver longitude/latitude em graus, converta DMS para graus decimais e informe east=longitude, north=latitude e projectionKey="WGS84".',
+    'Se houver coordenadas UTM, informe east=E/leste, north=N/norte e o datum/zona indicado (por exemplo SIRGAS2000_23S, SAD69_22S).',
+    'Se houver somente memorial por azimutes e distâncias, derive pontos apenas quando houver coordenada inicial e todos os segmentos necessários; informe baixa confiança e inclua aviso.',
+    'Não inclua nomes, CPFs, dados registrais ou texto que não seja necessário para localizar os vértices.',
+    'Retorne somente JSON válido, sem markdown, neste formato: {"success":true,"vertices":[{"id":"V1","east":500000.0,"north":7200000.0}],"projectionKey":"SIRGAS2000_22S","extractionConfidence":"high","sourcePattern":"utm-coordinate-table","warnings":[],"matricula":null}.',
+    'Se não houver pelo menos três vértices utilizáveis, retorne {"success":false,"error":"motivo claro","vertices":[],"warnings":[]}.',
+    `Páginas: ${Number(totalPagesHint) || 0}; padrão detectado: ${String(patternHint || 'não identificado')}.`,
+    'Texto relevante:',
+    sourceText
+  ].join('\n\n');
+}
+
+function normalizeGeoJsonExtractionResponse(modelText, sourceText) {
+  let parsed;
+  try {
+    const jsonText = String(modelText || '').trim().replace(/^```(?:json)?\s*|\s*```$/gi, '');
+    parsed = JSON.parse(jsonText);
+  } catch {
+    throw new Error('O serviço de extração retornou uma resposta que não é JSON válido.');
+  }
+
+  if (parsed?.success === false) {
+    throw new Error(String(parsed.error || 'Não foram encontrados três vértices válidos no documento.'));
+  }
+
+  const vertices = Array.isArray(parsed?.vertices)
+    ? parsed.vertices
+        .map((vertex, index) => ({
+          id: String(vertex?.id || `V${index + 1}`),
+          east: Number(vertex?.east),
+          north: Number(vertex?.north)
+        }))
+        .filter((vertex) => Number.isFinite(vertex.east) && Number.isFinite(vertex.north))
     : [];
 
-  const coordinateHints = [...new Set(matChoiceCandidates)].join('\n');
+  if (vertices.length < 3) {
+    throw new Error('Não foram encontrados pelo menos três vértices utilizáveis no documento.');
+  }
 
-  const rawText = inferenceRawText.trim();
+  const requestedProjectionKey = String(parsed?.projectionKey || '').trim();
+  const detectedProjectionKey = detectProjectionFromText(sourceText, vertices).key;
+  const projectionKey = PROJECTIONS[requestedProjectionKey]
+    ? requestedProjectionKey
+    : detectedProjectionKey;
+  if (!PROJECTIONS[projectionKey]) {
+    throw new Error(`Sistema de coordenadas não suportado: ${projectionKey}.`);
+  }
+  const ring = vertices.map((vertex) => [vertex.east, vertex.north]);
+  if (ring.length && (ring[0][0] !== ring[ring.length - 1][0] || ring[0][1] !== ring[ring.length - 1][1])) {
+    ring.push([...ring[0]]);
+  }
 
-  const routes = buildWorkspaceAiExtractorCandidates();
+  return {
+    ...parsed,
+    success: true,
+    projectionKey,
+    vertices,
+    geojson: {
+      type: 'FeatureCollection',
+      features: [{
+        type: 'Feature',
+        properties: {},
+        geometry: { type: 'Polygon', coordinates: [ring] }
+      }]
+    },
+    warnings: Array.isArray(parsed?.warnings) ? parsed.warnings : []
+  };
+}
+
+async function callWorkspaceAiExtractor(fileName, totalPagesHint = 0, ocrText = '', retryCount = 0, patternHint = '', flowMode = 'auto', rawOcrText = '') {
+  const inferenceText = String(rawOcrText || ocrText || '').trim();
+  if (!inferenceText) {
+    throw new Error('Não há texto extraído do PDF para analisar.');
+  }
+
+  const prompt = buildGeoJsonExtractionPrompt(inferenceText, totalPagesHint, patternHint);
   const cfg = getPdfToArcgisConfig();
   const maxRetries = Number.isFinite(Number(cfg.maxWorkspaceRetries))
     ? Math.max(0, Number(cfg.maxWorkspaceRetries))
     : 1;
-  const processingMode = getSelectedProcessingMode();
-
-  let lastError = null;
-
-  for (let routeIndex = 0; routeIndex < routes.length; routeIndex++) {
-    const route = routes[routeIndex];
-    try {
-      const response = await fetch(route, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          fileName,
-          totalPagesHint: Number.isFinite(Number(totalPagesHint)) ? Number(totalPagesHint) : 0,
-          ocrText: rawText.slice(0, 120000),
-          rawText: rawText.slice(0, 120000),
-          coordinateHints: coordinateHints.slice(0, 12000),
-          processingMode,
-          patternHint: String(patternHint || ''),
-          flowMode: String(flowMode || 'auto')
-        })
-      });
-
-      const raw = await response.text().catch(() => '');
-      let payload = {};
-      if (raw) {
-        try {
-          payload = JSON.parse(raw);
-        } catch {
-          payload = { error: raw.slice(0, 600) };
-        }
-      }
-
-      if (!response.ok) {
-        if (response.status === 404 && routeIndex + 1 < routes.length) {
-          continue;
-        }
-
-        const transient = new Set([429, 500, 503, 504]);
-        if (transient.has(response.status) && retryCount < maxRetries) {
-          await new Promise((resolve) => setTimeout(resolve, 1200 * Math.pow(2, retryCount)));
-          return callWorkspaceAiExtractor(fileName, totalPagesHint, ocrText, retryCount + 1, patternHint, flowMode, rawOcrText);
-        }
-      }
-
-      if (!response.ok || !payload?.success) {
-        const reason = payload?.error || `HTTP ${response.status}`;
-        const handledError = new Error(`Serviço de extração online indisponível: ${reason}`);
-        handledError.handledResponse = true;
-        throw handledError;
-      }
-
-      return payload;
-    } catch (error) {
-      lastError = error;
-      if (!error?.handledResponse && routeIndex + 1 < routes.length) {
-        continue;
-      }
-    }
+  let response;
+  try {
+    response = await fetch(getWorkspaceAiExtractorUrl(), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ prompt })
+    });
+  } catch (error) {
+    throw new Error(`Não foi possível conectar ao serviço de extração: ${error?.message || error}`);
   }
 
-  throw lastError || new Error('Serviço de extração online indisponível.');
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) {
+    if ([429, 500, 503, 504].includes(response.status) && retryCount < maxRetries) {
+      await new Promise((resolve) => setTimeout(resolve, 1200 * Math.pow(2, retryCount)));
+      return callWorkspaceAiExtractor(fileName, totalPagesHint, ocrText, retryCount + 1, patternHint, flowMode, rawOcrText);
+    }
+    throw new Error(payload?.error || `Serviço de extração indisponível (HTTP ${response.status}).`);
+  }
+
+  const modelText = payload?.choices?.[0]?.message?.content;
+  if (typeof modelText !== 'string' || !modelText.trim()) {
+    throw new Error('O serviço de extração retornou uma resposta vazia.');
+  }
+
+  return normalizeGeoJsonExtractionResponse(modelText, inferenceText);
 }
 
 function mergeUniqueTextBlocks(baseText, nextText) {
@@ -1352,14 +1357,20 @@ async function runParserLayoutFallbackBranch(fileName, totalPagesHint, extracted
   return apiResult;
 }
 
-async function inferPdfPageCount(arrayBuffer) {
-  try {
-    const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer, enableXfa: true });
-    const pdfDoc = await loadingTask.promise;
-    return Number.isFinite(pdfDoc?.numPages) ? pdfDoc.numPages : 0;
-  } catch {
-    return 0;
+function createPdfLoadingTask(arrayBuffer, options = {}) {
+  if (!(arrayBuffer instanceof ArrayBuffer)) {
+    throw new Error('O arquivo selecionado não contém dados PDF válidos.');
   }
+  return pdfjsLib.getDocument({
+    ...options,
+    data: new Uint8Array(arrayBuffer.slice(0))
+  });
+}
+
+async function inferPdfPageCount(arrayBuffer) {
+  const loadingTask = createPdfLoadingTask(arrayBuffer, { enableXfa: true });
+  const pdfDoc = await loadingTask.promise;
+  return Number.isFinite(pdfDoc?.numPages) ? pdfDoc.numPages : 0;
 }
 
 async function extractAcroFormFieldValues(page) {
@@ -1376,9 +1387,12 @@ async function extractAcroFormFieldValues(page) {
 
 async function extractPdfTextLocally(arrayBuffer, maxPages = 200) {
   try {
-    const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer, enableXfa: true });
+    const loadingTask = createPdfLoadingTask(arrayBuffer, { enableXfa: true });
     const pdfDoc = await loadingTask.promise;
     const totalPagesDoc = Number(pdfDoc?.numPages || 0);
+    if (!totalPagesDoc) {
+      throw new Error('O arquivo não contém páginas legíveis.');
+    }
     const safeMaxPages = Number.isFinite(Number(maxPages)) && Number(maxPages) > 0
       ? Number(maxPages)
       : totalPagesDoc;
@@ -1420,8 +1434,8 @@ async function extractPdfTextLocally(arrayBuffer, maxPages = 200) {
     });
 
     return finalText;
-  } catch {
-    return '';
+  } catch (error) {
+    throw new Error(`Não foi possível ler o conteúdo do PDF: ${error?.message || error}`);
   }
 }
 
@@ -1701,108 +1715,94 @@ function _buildOcrRoiCandidates(canvas, includeExtraRoi = false) {
 }
 
 async function extractTextWithLocalOcr(arrayBuffer, maxPages = 10, scale = 5, options = {}) {
-  const paddleText = await extractTextWithPaddleOcr(arrayBuffer, maxPages, Math.min(scale, 3.2));
-  if (paddleText?.rawText && paddleText.rawText.length > 200) {
-    window._OCR_PROVIDER = 'paddleocr-local';
-    window._OCR_FULL_TEXT = paddleText.rawText;
-    return options?.returnStages === true
-      ? paddleText
-      : paddleText;
+  const hasDesktopOcrBridge = typeof window.__vetorizadorBridge?.assistRuntime?.getStatus === 'function';
+  if (hasDesktopOcrBridge) {
+    const paddleText = await extractTextWithPaddleOcr(arrayBuffer, maxPages, Math.min(scale, 3.2));
+    if (paddleText?.rawText && paddleText.rawText.length > 200) {
+      window._OCR_PROVIDER = 'paddleocr-local';
+      window._OCR_FULL_TEXT = paddleText.rawText;
+      return paddleText;
+    }
   }
 
+  const browserOcr = await extractTextWithBrowserTesseract(
+    arrayBuffer,
+    maxPages,
+    Math.min(scale, 3.2),
+    options
+  );
+  if (browserOcr.rawText) {
+    window._OCR_PROVIDER = 'tesseract-browser';
+    window._OCR_FULL_TEXT = browserOcr.rawText;
+  }
+  return browserOcr;
+}
+
+async function extractTextWithBrowserTesseract(arrayBuffer, maxPages = 10, scale = 3.2, options = {}) {
+  if (!window.Tesseract || typeof window.Tesseract.createWorker !== 'function') {
+    throw new Error('A biblioteca de OCR local não foi carregada.');
+  }
+
+  const loadingTask = createPdfLoadingTask(arrayBuffer);
+  const pdfDoc = await loadingTask.promise;
+  const totalPages = Math.min(pdfDoc.numPages, Math.max(1, Number(maxPages) || 1));
+  const workerPath = new URL('vendor/tesseract/worker.min.js', document.baseURI).href;
+  const corePath = new URL('vendor/tesseract/tesseract-core.wasm.js', document.baseURI).href;
+  const langPath = new URL('vendor/tesseract/lang-data', document.baseURI).href;
+  let worker;
+
   try {
-    setProgressExperience('Executando OCR otimizado...', null);
+    worker = await window.Tesseract.createWorker('por', window.Tesseract.OEM.LSTM_ONLY, {
+      workerPath,
+      corePath,
+      langPath,
+      gzip: true
+    });
 
-    if (!paddleText?.rawText) {
-      throw new Error('PaddleOCR local não retornou texto.');
-    }
-
-    const worker = { recognize: async () => ({ data: { text: '' } }) };
-
-    const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
-    const pdfDoc = await loadingTask.promise;
-
-    const totalPages = Math.min(pdfDoc.numPages, maxPages);
-
-    let fullRawText = '';
-
-    for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
-      setProgressExperience(`Processando página ${pageNum}/${totalPages}...`, null);
-
+    let rawText = '';
+    for (let pageNum = 1; pageNum <= totalPages; pageNum += 1) {
+      if (options?.suppressUi !== true) {
+        setProgressExperience(`OCR local no navegador: página ${pageNum}/${totalPages}...`, null);
+      }
       const page = await pdfDoc.getPage(pageNum);
-
-      // RENDER EM ALTA RESOLUÇÃO (igual ao outro app)
       const viewport = page.getViewport({ scale });
-
       const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
+      canvas.width = Math.ceil(viewport.width);
+      canvas.height = Math.ceil(viewport.height);
+      const context = canvas.getContext('2d', { alpha: false });
+      if (!context) {
+        throw new Error(`Não foi possível preparar a página ${pageNum} para OCR.`);
+      }
 
-      canvas.width = viewport.width;
-      canvas.height = viewport.height;
-
-      await page.render({
-        canvasContext: ctx,
-        viewport: viewport
-      }).promise;
-
-      // Usa contraste local, binarização adaptativa, denoise e deskew leve.
-      // A limiarização fixa degradava acentos, separadores DMS e dígitos OCR.
+      await page.render({ canvasContext: context, viewport }).promise;
       _preprocessCanvasForOcr(canvas, {
         enableDeskew: options.enableDeskew === true,
         profile: 'default'
       });
-
       const result = await worker.recognize(canvas);
-
-      const text = String(result?.data?.text || '').trim();
-
-      if (text) {
-        fullRawText += `\n\n--- PAGINA ${pageNum} ---\n${text}`;
-      }
+      const pageText = String(result?.data?.text || '').trim();
+      if (pageText) rawText += `\n\n--- PAGINA ${pageNum} ---\n${pageText}`;
+      canvas.width = 0;
+      canvas.height = 0;
     }
 
-    const rawText = fullRawText.trim();
-
-    // salva o OCR globalmente para uso posterior
-    window._OCR_FULL_TEXT = rawText;
-
-    const verticesFinal = buildVerticesTableData(rawText);
-
-    extractedCoordinates = verticesFinal.map(v => ({
-      id: v.id,
-      north: v.north,
-      east: v.east
-    }));
-
-    const cleanedText = buildCleanOcrStageText(rawText);
-
-    // mantém compatibilidade com o restante do sistema
-    if (options?.returnStages === true) {
-      return {
-        rawText,
-        cleanedText
-      };
-    }
-
-
+    const cleanText = rawText.trim();
     return {
-      rawText,
-      cleanedText
+      rawText: cleanText,
+      cleanedText: buildCleanOcrStageText(cleanText),
+      stage1RawText: cleanText,
+      provider: 'tesseract-browser'
     };
-
-  } catch (e) {
-    console.warn('[PDFtoArcgis][OCR] erro:', e?.message || e);
-
-    return options?.returnStages === true
-      ? { rawText: '', cleanedText: '' }
-      : '';
+  } catch (error) {
+    throw new Error(`Falha no OCR local do navegador: ${error?.message || error}`);
+  } finally {
+    if (worker) await worker.terminate();
   }
 }
 
 async function extractTextWithPaddleOcr(arrayBuffer, maxPages = 10, scale = 3) {
-  const endpoint = 'http://127.0.0.1:11437/api/ocr';
   try {
-    const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+    const loadingTask = createPdfLoadingTask(arrayBuffer);
     const pdfDoc = await loadingTask.promise;
     const totalPages = Math.min(pdfDoc.numPages, maxPages);
     const images = [];
@@ -1896,7 +1896,8 @@ async function runOcrEnhancementFlow(arrayBuffer, localText, totalPagesHint, ocr
       {
         enableDeskew: ocrPlan.pass1.enableDeskew,
         fullScan: ocrPlan.pass1.fullScan,
-        maxTotalMs: ocrPlan.pass1.maxTotalMs
+        maxTotalMs: ocrPlan.pass1.maxTotalMs,
+        suppressUi: runtime?.suppressUi === true
       }
     );
 
@@ -1954,7 +1955,8 @@ async function runOcrEnhancementFlow(arrayBuffer, localText, totalPagesHint, ocr
     const stage1Pass2Raw = await runStage1RawOcr(arrayBuffer, pass2MaxPages, ocrPlan.pass2.scale, {
       enableDeskew: ocrPlan.pass2.enableDeskew,
       fullScan: ocrPlan.pass2.fullScan,
-      maxTotalMs: ocrPlan.pass2.maxTotalMs
+      maxTotalMs: ocrPlan.pass2.maxTotalMs,
+      suppressUi: runtime?.suppressUi === true
     });
     stage1RawText = mergeUniqueTextBlocks(stage1RawText, stage1Pass2Raw);
     stage2Text = runStage2NormalizeText(stage1RawText);

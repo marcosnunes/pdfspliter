@@ -261,9 +261,19 @@ body {
 .panel-heading h2, .workspace-header h2, .result-header h2 { margin: 0; color: var(--ocr-ink); font-size: 1.05rem; font-weight: 750; }
 .panel-index { color: var(--ocr-orange-dark); font-size: .72rem; font-weight: 800; }
 .ocr-file-control .file-label { width: 100%; }
+.file-label { position: relative; display: flex; align-items: stretch; cursor: pointer; }
+.file-input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+.file-cta, .file-name { display: flex; align-items: center; padding: 10px 12px; border: 1px solid #ffc477; }
+.file-cta { gap: 8px; }
+.file-name { flex: 1; min-width: 0; }
 .ocr-file-control .file-cta { background: var(--ocr-soft); border-color: #ffc477; color: var(--ocr-orange-dark); font-weight: 700; }
 .ocr-file-control .file-name { border-color: #ffc477; color: var(--ocr-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .page-actions { display: flex; gap: 8px; align-items: center; }
+.button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 40px; padding: 8px 14px; border-radius: 6px; cursor: pointer; font: inherit; }
+.button.is-medium { min-height: 48px; padding: 10px 18px; }
+.input { min-height: 40px; padding: 8px 10px; border: 1px solid #d8c9ba; border-radius: 6px; color: var(--ocr-ink); font: inherit; }
+.is-relative { position: relative; }
+.progress { width: 100%; accent-color: var(--ocr-orange); }
 .page-actions .input { width: 68px; }
 .page-control { min-width: 0; align-self: center; }
 .page-control .button:disabled, .page-control .input:disabled, .action-control .button:disabled { cursor: not-allowed; opacity: .55; }

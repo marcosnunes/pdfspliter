@@ -23,11 +23,12 @@ export default async function handler(req, res) {
       body: JSON.stringify({
         model: 'llama-3.1-8b-instant',
         messages: [
-          { role: 'system', content: 'Você é um assistente especialista em georreferenciamento de imóveis rurais brasileiros. Extraia apenas os vértices do polígono em UTM/SIRGAS2000, ordem correta, polígono fechado.' },
+          { role: 'system', content: 'Você é um assistente especialista em georreferenciamento de imóveis rurais brasileiros. Responda somente com um objeto JSON válido. Extraia vértices presentes no texto, preserve a ordem e não invente coordenadas.' },
           { role: 'user', content: prompt }
         ],
         temperature: 0.1,
-        max_tokens: 2048
+        max_tokens: 4096,
+        response_format: { type: 'json_object' }
       })
     });
     const data = await groqRes.json();
