@@ -1,4 +1,4 @@
-// --- VARIÁVEIS DE ESTADO GLOBAIS ---
+﻿// --- VARIÁVEIS DE ESTADO GLOBAIS ---
 let pdfDoc = null;
 let currentPageNum = 1; 
 let pdfPage = null;
@@ -31,10 +31,10 @@ let fileNameBase = 'extracao_geral';
 // Define o caminho para o worker do PDF.js
 if (typeof pdfjsLib !== 'undefined') {
   try {
-                pdfjsLib.GlobalWorkerOptions.workerSrc = "/vendor/pdfjs/2.16.105/pdf.worker.min.js";
+                pdfjsLib.GlobalWorkerOptions.workerSrc = "/vendor/pdfjs/3.11.174/pdf.worker.min.js";
   } catch (e) {
     pdfjsLib.GlobalWorkerOptions.workerSrc =
-            "/vendor/pdfjs/2.16.105/pdf.worker.min.js";
+            "/vendor/pdfjs/3.11.174/pdf.worker.min.js";
   }
 }
 
@@ -411,11 +411,23 @@ if (!finalExtractedText) {
 
     tctx.putImageData(img, 0, 0);
 
-    // OCR local compartilhado: preserva linhas e estrutura do recorte.
-    const ocrClient = window.VetorizadorLocalOcr;
-    if (!ocrClient) throw new Error('Cliente OCR local indisponível.');
-    const result = await ocrClient.recognizeCanvas(tempCanvas);
-    finalExtractedText = String(result?.text || '').trim();
+    // OCR local no navegador (Tesseract); nenhum dado sai do dispositivo.
+    if (!window.Tesseract || typeof window.Tesseract.createWorker !== 'function') {
+        throw new Error('Biblioteca de OCR local indisponível.');
+    }
+    const base = '../PDFtoArcgis/vendor/tesseract/';
+    const ocrWorker = await window.Tesseract.createWorker('por', window.Tesseract.OEM.LSTM_ONLY, {
+        workerPath: new URL(base + 'worker.min.js', document.baseURI).href,
+        corePath: new URL(base + 'tesseract-core.wasm.js', document.baseURI).href,
+        langPath: new URL(base + 'lang-data', document.baseURI).href,
+        gzip: true
+    });
+    try {
+        const result = await ocrWorker.recognize(tempCanvas);
+        finalExtractedText = String(result?.data?.text || '').trim();
+    } finally {
+        await ocrWorker.terminate();
+    }
 }
 
         // --- 3. EXIBIR RESULTADO E PREPARAR DOWNLOAD (CSV/DOC) ---
