@@ -910,7 +910,9 @@ async function callWorkspaceAiExtractor(fileName, totalPagesHint = 0, ocrText = 
       await new Promise((resolve) => setTimeout(resolve, 1200 * Math.pow(2, retryCount)));
       return callWorkspaceAiExtractor(fileName, totalPagesHint, ocrText, retryCount + 1, patternHint, flowMode, rawOcrText);
     }
-    throw new Error(payload?.error || `Serviço de extração indisponível (HTTP ${response.status}).`);
+    const apiError = payload?.error;
+    const apiMessage = typeof apiError === 'string' ? apiError : apiError?.message;
+    throw new Error(apiMessage || `Serviço de extração indisponível (HTTP ${response.status}).`);
   }
 
   const modelText = payload?.choices?.[0]?.message?.content;
@@ -3953,19 +3955,29 @@ fileInput.addEventListener("change", async (event) => {
           msg: `OCR principal falhou; usando texto nativo como fallback: ${ocrError?.message || ocrError}`,
           error: String(ocrError?.message || ocrError)
         });
-        apiResult = await runParserLayoutFallbackBranch(
-          file.name,
-          totalPagesHint,
-          localText,
-          processingMode,
-          {
-            branchLabel: 'Fallback de texto nativo',
-            diagPrefix: 'native-fallback',
-            suppressUi: true,
-            patternHint: docPattern.id,
-            flowMode: 'no-ocr'
-          }
-        );
+        try {
+          apiResult = await runParserLayoutFallbackBranch(
+            file.name,
+            totalPagesHint,
+            localText,
+            processingMode,
+            {
+              branchLabel: 'Fallback de texto nativo',
+              diagPrefix: 'native-fallback',
+              suppressUi: true,
+              patternHint: docPattern.id,
+              flowMode: 'no-ocr'
+            }
+          );
+        } catch (fallbackError) {
+          const ocrReason = String(ocrError?.message || ocrError || '');
+          const fallbackReason = String(fallbackError?.message || fallbackError || '');
+          throw new Error(
+            ocrReason && ocrReason !== fallbackReason
+              ? `${fallbackReason} (leitura OCR: ${ocrReason})`
+              : fallbackReason
+          );
+        }
       }
     } else {
       apiResult = await runParserLayoutFallbackBranch(

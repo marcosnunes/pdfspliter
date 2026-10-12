@@ -21,7 +21,7 @@ export default async function handler(req, res) {
         'Authorization': 'Bearer ' + apiKey
       },
       body: JSON.stringify({
-        model: 'llama-3.1-8b-instant',
+        model: process.env.GROQ_MODEL || 'openai/gpt-oss-20b',
         messages: [
           { role: 'system', content: 'Você é um assistente especialista em georreferenciamento de imóveis rurais brasileiros. Responda somente com um objeto JSON válido. Extraia vértices presentes no texto, preserve a ordem e não invente coordenadas.' },
           { role: 'user', content: prompt }
